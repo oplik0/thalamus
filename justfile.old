@@ -1,0 +1,102 @@
+# Justfile for Thalmus development commands
+
+# Default recipe (list all commands)
+default:
+    @just --list
+
+# Build the project
+build:
+    cargo build
+
+# Build in release mode
+build-release:
+    cargo build --release
+
+# Run the server
+run:
+    cargo run
+
+# Run with watch mode (requires cargo-watch)
+watch:
+    cargo watch -x run
+
+# Run all tests
+test:
+    cargo nextest run
+
+# Run tests with output
+test-verbose:
+    cargo nextest run --success-output immediate
+
+# Run tests in CI mode
+test-ci:
+    cargo nextest run --profile ci
+
+# Run specific test
+test-one TEST:
+    cargo nextest run {{TEST}}
+
+# Run tests with cargo test (fallback)
+test-cargo:
+    cargo test
+
+# Check code without building
+check:
+    cargo check --all-targets
+
+# Run clippy linter
+lint:
+    cargo clippy --all-targets --all-features -- -D warnings
+
+# Format code
+fmt:
+    cargo fmt --all
+
+# Check formatting without modifying
+fmt-check:
+    cargo fmt --all -- --check
+
+# Run all CI checks (fmt, lint, test)
+ci: fmt-check lint test-ci
+
+# Start devenv services (PostgreSQL and Redis)
+test-setup:
+    @echo "Starting devenv services..."
+    devenv up -d
+    @echo "Services started! Use 'devenv up' to see logs."
+
+# Stop devenv services
+test-teardown:
+    @echo "Stopping devenv services..."
+    devenv processes down
+
+# Clean test database
+test-clean:
+    @echo "Cleaning test database..."
+    psql -h localhost -U postgres -d thalmus_test -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+
+# View devenv service logs
+test-logs:
+    devenv processes logs
+
+# Run database migrations
+db-migrate:
+    sqlx migrate run
+
+# Create a new migration
+db-migration NAME:
+    sqlx migrate add {{NAME}}
+
+# Clean build artifacts
+clean:
+    cargo clean
+
+# Update dependencies
+update:
+    cargo update
+
+# Install development tools
+install-tools:
+    cargo install cargo-nextest
+    cargo install cargo-watch
+    cargo install sqlx-cli --no-default-features --features postgres,rustls

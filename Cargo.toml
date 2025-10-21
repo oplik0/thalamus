@@ -2,5 +2,95 @@
 name = "thalmus"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89.0"
+authors = ["Thalmus Contributors"]
+description = "Backend-centric LLM router and load balancer"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/thalmus"
 
 [dependencies]
+# Web framework
+axum = { version = "0.8", features = ["macros", "multipart"] }
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["util", "timeout", "limit"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "request-id", "util"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+
+# Database
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "migrate",
+] }
+
+# Configuration
+kclvm-runtime = { git = "https://github.com/oplik0/kcl", branch = "serde_json_bump" }
+kcl-lang = { git = "https://github.com/oplik0/kcl-lib", branch = "serde_json_bump"}
+notify = { version = "6", default-features = false, features = ["macos_kqueue"] }
+
+# Authorization
+casbin = { version = "2", default-features = false, features = ["runtime-tokio"] }
+sqlx-adapter = "1.8"
+
+# Authentication
+pasetors = { version = "0.7", features = ["v4", "paserk", "std"] }
+argon2 = { version = "0.5", features = ["std"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+uuid = { version = "1", features = ["serde", "v4", "v7"] }
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+
+# HTTP client for backends
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+    "stream",
+] }
+
+# Rate limiting
+governor = "0.7"
+
+# Caching (optional)
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"], optional = true }
+
+[dev-dependencies]
+# Testing
+tokio-test = "0.4"
+wiremock = "0.6"
+tower = { version = "0.5", features = ["util"] }
+
+[features]
+default = ["caching"]
+caching = ["dep:redis"]
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.test]
+opt-level = 1
+debug = true
