@@ -1,10 +1,13 @@
 //! KCL configuration loader
 
 use super::types::Config;
-use kcl_lang::*;
+use kcl_lang::{API, ExecProgramArgs};
 use std::path::Path;
 
 /// Load KCL configuration from a file
+///
+/// # Errors
+/// Returns an error if the configuration file doesn't exist, has syntax errors, or fails validation
 pub fn load_config<P: AsRef<Path>>(path: P) -> crate::Result<Config> {
     let path = path.as_ref();
 
@@ -29,12 +32,12 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> crate::Result<Config> {
     // Execute KCL program
     let result = api
         .exec_program(args)
-        .map_err(|e| crate::Error::Config(format!("Failed to execute KCL program: {}", e)))?;
+        .map_err(|e| crate::Error::Config(format!("Failed to execute KCL program: {e}")))?;
 
     // Parse JSON output
     let json_str = result.json_result;
     let config: Config = serde_json::from_str(&json_str)
-        .map_err(|e| crate::Error::Config(format!("Failed to parse KCL output as JSON: {}", e)))?;
+        .map_err(|e| crate::Error::Config(format!("Failed to parse KCL output as JSON: {e}")))?;
 
     // Validate configuration
     config.validate()?;
@@ -68,8 +71,7 @@ mod tests {
                 let error_msg = e.to_string();
                 assert!(
                     !error_msg.contains("syntax error"),
-                    "Config has syntax errors: {}",
-                    error_msg
+                    "Config has syntax errors: {error_msg}"
                 );
             }
         }

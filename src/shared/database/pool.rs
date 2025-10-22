@@ -30,6 +30,9 @@ impl Default for PoolConfig {
 }
 
 /// Create a database connection pool with the given configuration
+///
+/// # Errors
+/// Returns an error if the database connection cannot be established
 pub async fn create_pool(config: &PoolConfig) -> crate::Result<PgPool> {
     tracing::info!(
         database_url = %config.database_url,
@@ -56,6 +59,9 @@ pub async fn create_pool(config: &PoolConfig) -> crate::Result<PgPool> {
 }
 
 /// Run database migrations
+///
+/// # Errors
+/// Returns an error if any migration fails to execute
 pub async fn run_migrations(pool: &PgPool) -> crate::Result<()> {
     tracing::info!("Running database migrations");
 

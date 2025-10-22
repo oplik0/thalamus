@@ -236,6 +236,9 @@ pub struct Config {
 
 impl Config {
     /// Validate the configuration
+    ///
+    /// # Errors
+    /// Returns an error if any configuration value is invalid
     pub fn validate(&self) -> crate::Result<()> {
         if self.server.port == 0 {
             return Err(crate::Error::Config("Server port cannot be 0".to_string()));
