@@ -14,6 +14,11 @@
     curl
     just
     kcl
+    sqlx-cli
+    cargo-nextest # advanced test runner
+    cargo-fuzz # fuzz testing
+    cargo-rr # debugging tool
+    # cargo-dist # TODO: consider adding for releases
   ];
 
   # https://devenv.sh/languages/
@@ -31,9 +36,6 @@
       { name = "thalmus"; }
       { name = "thalmus_test"; }
     ];
-    initialScript = ''
-      CREATE USER IF NOT EXISTS postgres WITH PASSWORD 'postgres' SUPERUSER;
-    '';
   };
 
   services.redis = {
@@ -84,7 +86,6 @@
     # Service management
     services-up.exec = "devenv up -d";
     services-down.exec = "devenv processes down";
-    services-logs.exec = "devenv processes logs";
 
     # Utilities
     clean.exec = "cargo clean";
@@ -93,8 +94,8 @@
 
   # https://devenv.sh/basics/
   enterShell = ''
-    export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/thalmus"
-    export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/thalmus_test"
+    export DATABASE_URL="postgresql://$USER@localhost:5432/thalmus"
+    export TEST_DATABASE_URL="postgresql://$USER@localhost:5432/thalmus_test"
     export REDIS_URL="redis://localhost:6379"
 
     echo "╔════════════════════════════════════════════════════════════════╗"
@@ -123,7 +124,6 @@
     echo "⚙️  Services:"
     echo "  services-up    - Start PostgreSQL and Redis"
     echo "  services-down  - Stop services"
-    echo "  services-logs  - View service logs"
     echo ""
     echo "Run 'devenv --help' for more options"
     echo ""
@@ -134,7 +134,7 @@
     # Run migrations on shell entry if database is available
     "thalmus:db-check" = {
       exec = ''
-        if pg_isready -h localhost -U postgres -d thalmus > /dev/null 2>&1; then
+        if pg_isready -h localhost -U ${USER} -d thalmus > /dev/null 2>&1; then
           echo "✓ Database is ready"
         else
           echo "⚠️  Database not running. Start with: services-up"
