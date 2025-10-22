@@ -1,6 +1,6 @@
 //! Database infrastructure
 //!
-//! SQLx connection pool and migration management.
+//! `SQLx` connection pool and migration management.
 
 pub mod pool;
 

@@ -7,7 +7,7 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitEx
 /// Initialize tracing
 ///
 /// Sets up structured logging with environment-based filtering.
-/// Use RUST_LOG environment variable to control log levels.
+/// Use `RUST_LOG` environment variable to control log levels.
 pub fn init_tracing() {
     tracing_subscriber::registry()
         .with(

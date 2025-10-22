@@ -18,6 +18,9 @@ pub struct ConfigWatcher {
 
 impl ConfigWatcher {
     /// Create a new configuration watcher
+    ///
+    /// # Errors
+    /// Returns an error if the configuration file cannot be loaded or is invalid
     pub fn new<P: AsRef<Path>>(path: P) -> crate::Result<Self> {
         let path = path.as_ref().to_path_buf();
         let config = load_config(&path)?;
@@ -29,11 +32,15 @@ impl ConfigWatcher {
     }
 
     /// Get a reference to the current configuration
+    #[must_use]
     pub fn config(&self) -> Arc<RwLock<Config>> {
         Arc::clone(&self.config)
     }
 
     /// Manually reload the configuration
+    ///
+    /// # Errors
+    /// Returns an error if the configuration file cannot be loaded or is invalid
     pub async fn reload(&self) -> crate::Result<()> {
         tracing::info!("Reloading configuration");
 
@@ -48,6 +55,10 @@ impl ConfigWatcher {
     }
 
     /// Start watching for configuration file changes
+    ///
+    /// # Errors
+    /// Returns an error if the file watcher cannot be created or the configuration file cannot be watched
+    #[expect(clippy::unused_async)] // todo: check if actual impl needs async
     pub async fn start_watching(self: Arc<Self>) -> crate::Result<()> {
         let (tx, mut rx) = tokio::sync::mpsc::channel(100);
 
@@ -60,13 +71,13 @@ impl ConfigWatcher {
             },
             notify::Config::default().with_poll_interval(Duration::from_secs(2)),
         )
-        .map_err(|e| crate::Error::Config(format!("Failed to create file watcher: {}", e)))?;
+        .map_err(|e| crate::Error::Config(format!("Failed to create file watcher: {e}")))?;
 
         // Watch the config file
         watcher
             .watch(&self.path, RecursiveMode::NonRecursive)
             .map_err(|e| {
-                crate::Error::Config(format!("Failed to watch configuration file: {}", e))
+                crate::Error::Config(format!("Failed to watch configuration file: {e}"))
             })?;
 
         // Also watch the pkg/ directory for schema changes
@@ -86,6 +97,7 @@ impl ConfigWatcher {
 
         // Spawn task to handle file change events
         tokio::spawn(async move {
+            #[expect(unused_assignments)] // TODO: finish debounce logic
             let mut debounce_timer: Option<tokio::time::Instant> = None;
             let debounce_duration = Duration::from_millis(500);
 
@@ -96,16 +108,17 @@ impl ConfigWatcher {
                 tokio::time::sleep(debounce_duration).await;
 
                 // Check if another event came in during the debounce period
-                if let Some(timer) = debounce_timer {
-                    if timer.elapsed() >= debounce_duration {
-                        // Reload configuration
-                        if let Err(e) = self.reload().await {
-                            tracing::error!(error = %e, "Failed to reload configuration");
-                        } else {
-                            tracing::info!("Configuration hot-reloaded successfully");
-                        }
-                        debounce_timer = None;
+                #[expect(unused_assignments)] // TODO: finish debounce logic
+                if let Some(timer) = debounce_timer
+                    && timer.elapsed() >= debounce_duration
+                {
+                    // Reload configuration
+                    if let Err(e) = self.reload().await {
+                        tracing::error!(error = %e, "Failed to reload configuration");
+                    } else {
+                        tracing::info!("Configuration hot-reloaded successfully");
                     }
+                    debounce_timer = None;
                 }
             }
 
@@ -125,15 +138,12 @@ mod tests {
     async fn test_config_watcher_creation() {
         let result = ConfigWatcher::new("config.example.k");
         // May fail due to missing env vars, but should not panic
-        match result {
-            Ok(watcher) => {
-                let config = watcher.config();
-                let config_read = config.read().await;
-                assert!(!config_read.backends.is_empty());
-            }
-            Err(_) => {
-                // Expected in test environment without proper setup
-            }
+        if let Ok(watcher) = result {
+            let config = watcher.config();
+            let config_read = config.read().await;
+            assert!(!config_read.backends.is_empty());
+        } else {
+            // Expected in test environment without proper setup
         }
     }
 }
