@@ -8,11 +8,12 @@
 
 {
   # https://devenv.sh/packages/
-  packages = [
-    pkgs.git
-    pkgs.jq
-    pkgs.curl
-    pkgs.just
+  packages = with pkgs; [
+    git
+    jq
+    curl
+    just
+    kcl
   ];
 
   # https://devenv.sh/languages/

@@ -27,7 +27,7 @@ pub fn build_router() -> Router {
 /// - Connects to the database
 /// - Loads configuration
 /// - Initializes shared services
-#[allow(clippy::unused_async)] // Will be async when we add real initialization
+#[expect(clippy::unused_async)] // Will be async when we add real initialization
 pub async fn init_app_state() -> crate::Result<AppState> {
     Ok(AppState {
         // Initialize components here

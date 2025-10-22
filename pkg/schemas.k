@@ -57,6 +57,7 @@ schema EndpointConfig:
     url: str
     capacity: int = 10
     models: [str]
+    infer_models: bool = True
     currently_loaded_models?: [str] = []
     model_loading_aware: bool = False
     tags: [str] = []
@@ -65,7 +66,7 @@ schema EndpointConfig:
     check:
         capacity > 0, "Capacity must be positive"
         weight > 0, "Weight must be positive"
-        len(models) > 0, "At least one model must be specified"
+        len(models) > 0 or infer_models, "At least one model must be specified or infer_models must be enabled"
         url.startswith("http://") or url.startswith("https://"), \
             "URL must start with http:// or https://"
 
