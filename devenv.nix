@@ -226,6 +226,7 @@
             cargo
             rustc
             pkg-config
+            sccache
           ];
 
           buildInputs = lib.optionals pkgs.stdenv.isDarwin [
