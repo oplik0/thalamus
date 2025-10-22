@@ -1,6 +1,6 @@
 //! Feature modules
 //!
-//! Each feature is organized using clean architecture principles:
+//! Each feature is organized into a separate module with the following structure:
 //! - api: HTTP handlers and routing
 //! - domain: Business logic and trait definitions
 //! - infra: Infrastructure implementations (repositories, external services)

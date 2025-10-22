@@ -1,5 +1,3 @@
-//! Thalmus server entry point
-
 use thalmus::{bootstrap, shared::observability};
 
 #[tokio::main]
