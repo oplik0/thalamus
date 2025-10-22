@@ -1,5 +1,19 @@
 {
   "nodes": {
+    "crane": {
+      "locked": {
+        "lastModified": 1760924934,
+        "owner": "ipetkov",
+        "repo": "crane",
+        "rev": "c6b4d5308293d0d04fcfeee92705017537cad02f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ipetkov",
+        "repo": "crane",
+        "type": "github"
+      }
+    },
     "devenv": {
       "locked": {
         "dir": "src/modules",
@@ -122,6 +136,7 @@
     },
     "root": {
       "inputs": {
+        "crane": "crane",
         "devenv": "devenv",
         "git-hooks": "git-hooks",
         "mk-shell-bin": "mk-shell-bin",
