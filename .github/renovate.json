@@ -1,0 +1,55 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":maintainLockFilesWeekly"
+  ],
+  "schedule": [
+    "after 10pm every weekday",
+    "before 5am every weekday",
+    "every weekend"
+  ],
+  "labels": ["dependencies"],
+  "rangeStrategy": "bump",
+  "packageRules": [
+    {
+      "description": "Group Rust dependencies",
+      "matchManagers": ["cargo"],
+      "groupName": "Rust dependencies",
+      "groupSlug": "rust-deps"
+    },
+    {
+      "description": "Automerge patch updates for Rust dependencies with branch automerge",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "automergeType": "branch"
+    },
+    {
+      "description": "Group GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "groupSlug": "github-actions",
+      "automerge": true,
+      "automergeType": "branch"
+    },
+    {
+      "description": "Separate major and minor Rust updates for manual review",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["major", "minor"],
+      "groupName": "Rust major and minor updates",
+      "groupSlug": "rust-major-minor",
+      "automerge": false
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "automerge": true,
+    "automergeType": "branch"
+  },
+  "rust": {
+    "enabled": true
+  }
+}
