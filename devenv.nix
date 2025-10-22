@@ -204,6 +204,70 @@
     };
   };
 
+  # https://devenv.sh/containers/
+  containers.prod = {
+    name = "thalmus";
+
+    # Build the production image with only runtime dependencies
+    copyToRoot = pkgs.buildEnv {
+      name = "thalmus-root";
+      paths = [
+        # Minimal runtime dependencies
+        pkgs.cacert # CA certificates for HTTPS
+        pkgs.bashInteractive # Minimal shell for debugging
+        pkgs.coreutils # Basic utilities
+
+        # The application binary and assets
+        (pkgs.stdenv.mkDerivation {
+          name = "thalmus-app";
+          src = ./.;
+
+          nativeBuildInputs = with pkgs; [
+            cargo
+            rustc
+            pkg-config
+          ];
+
+          buildInputs = lib.optionals pkgs.stdenv.isDarwin [
+            pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
+          ];
+
+          buildPhase = ''
+            export CARGO_HOME=$TMPDIR/cargo
+            cargo build --release --locked
+          '';
+
+          installPhase = ''
+            mkdir -p $out/bin
+            mkdir -p $out/migrations
+            mkdir -p $out/pkg
+
+            # Copy the binary
+            cp target/release/thalmus $out/bin/
+
+            # Copy migrations
+            cp -r migrations/* $out/migrations/
+
+            # Copy KCL schemas
+            cp -r pkg/* $out/pkg/
+          '';
+
+          # Skip checking since we want minimal dependencies
+          dontStrip = false;
+        })
+      ];
+      pathsToLink = [
+        "/bin"
+        "/migrations"
+        "/pkg"
+        "/etc"
+      ];
+    };
+
+    # Startup command
+    startupCommand = "/bin/thalmus";
+  };
+
   # other integrations
   delta.enable = true;
   devcontainer.enable = true;
