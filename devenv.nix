@@ -79,7 +79,17 @@
 
     # Run commands
     run.exec = "cargo run";
-    dev.exec = "cargo watch -x run";
+    dev.exec = ''
+      ${lib.getExe pkgs.bacon} --config-toml '
+            default_job = "run"
+            [jobs.run]
+            command = ["cargo", "run"]
+            need_stdout = true
+            background = false
+            on_change_strategy = "kill_then_restart"
+            kill = ["kill", "-s", "INT"]
+            '
+    '';
 
     # Test commands
     test.exec = "cargo nextest run";
@@ -111,7 +121,7 @@
     '';
 
     # Service management
-    services-up.exec = "devenv up -d";
+    services-up.exec = "devenv up -d postgres redis";
     services-down.exec = "devenv processes down";
 
     # Utilities
