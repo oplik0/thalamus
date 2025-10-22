@@ -1,7 +1,7 @@
 //! Application bootstrap and dependency injection
 //!
 //! This module wires together all the application components,
-//! creates the AppState, and builds the Axum router.
+//! creates the `AppState`, and builds the Axum router.
 
 use axum::Router;
 
@@ -27,6 +27,9 @@ pub fn build_router() -> Router {
 /// - Connects to the database
 /// - Loads configuration
 /// - Initializes shared services
+///
+/// # Errors
+/// TODO: document specific error conditions once initialization logic is implemented
 #[expect(clippy::unused_async)] // Will be async when we add real initialization
 pub async fn init_app_state() -> crate::Result<AppState> {
     Ok(AppState {

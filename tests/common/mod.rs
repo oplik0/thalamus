@@ -74,20 +74,21 @@ impl TestFixtures {
         cleanup_database(&pool).await;
         Self { pool }
     }
-
+    // TODO: use the pool in tests
+    #[expect(dead_code)]
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
 
     /// Create a test user (placeholder for when we implement user management)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub async fn create_user(&self, _username: &str, _email: &str) -> uuid::Uuid {
         // Will be implemented when we add user tables
         uuid::Uuid::new_v4()
     }
 
     /// Create a test team (placeholder)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub async fn create_team(&self, _name: &str) -> uuid::Uuid {
         // Will be implemented when we add team tables
         uuid::Uuid::new_v4()

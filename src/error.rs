@@ -54,8 +54,9 @@ impl Error {
     #[must_use]
     pub const fn status_code(&self) -> StatusCode {
         match self {
-            Self::Database(_) | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Database(_) | Self::Internal(_) | Self::Config(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
             Self::Authentication(_) => StatusCode::UNAUTHORIZED,
             Self::Authorization(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
