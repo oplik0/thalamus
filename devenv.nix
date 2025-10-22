@@ -15,6 +15,7 @@
     just
     kcl
     sqlx-cli
+    bacon
     cargo-nextest # advanced test runner
     cargo-fuzz # fuzz testing
     cargo-rr # debugging tool
@@ -26,7 +27,33 @@
   languages.typescript.enable = true;
 
   # https://devenv.sh/processes/
-  # processes.dev.exec = "${lib.getExe pkgs.watchexec} -n -- ls -la";
+  processes.thalmus = {
+    exec = ''
+      ${lib.getExe pkgs.bacon} --headless --config-toml '
+      default_job = "run"
+      [jobs.run]
+      command = ["cargo", "run"]
+      need_stdout = true
+      background = false
+      on_change_strategy = "kill_then_restart"
+      kill = ["kill", "-s", "INT"]
+      '
+    '';
+    process-compose = {
+      readiness_probe = {
+        http_get = {
+          host = "127.0.0.1";
+          port = 3000;
+          path = "/health";
+        };
+        initial_delay_seconds = 5;
+        period_seconds = 10;
+        timeout_seconds = 5;
+        success_threshold = 1;
+        failure_threshold = 3;
+      };
+    };
+  };
 
   # https://devenv.sh/services/
   services.postgres = {
@@ -134,7 +161,7 @@
     # Run migrations on shell entry if database is available
     "thalmus:db-check" = {
       exec = ''
-        if pg_isready -h localhost -U ${USER} -d thalmus > /dev/null 2>&1; then
+        if pg_isready -h localhost -U $USER -d thalmus > /dev/null 2>&1; then
           echo "✓ Database is ready"
         else
           echo "⚠️  Database not running. Start with: services-up"
