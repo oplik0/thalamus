@@ -17,10 +17,12 @@ pub fn init_test_logging() {
 
 /// Create a test database pool
 ///
-/// Uses the DATABASE_URL from .env.test or defaults to localhost:5433
+/// Uses the DATABASE_URL from .env.test or defaults to system user on localhost:5432
 pub async fn create_test_pool() -> PgPool {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5433/thalmus_test".to_string());
+    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        let user = std::env::var("USER").unwrap_or_else(|_| "postgres".to_string());
+        format!("postgres://{user}@localhost:5432/thalmus_test")
+    });
 
     PgPool::connect(&database_url)
         .await

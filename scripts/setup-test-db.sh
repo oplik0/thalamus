@@ -6,7 +6,7 @@ devenv up -d
 
 echo "Waiting for PostgreSQL to be ready..."
 for i in {1..30}; do
-    if pg_isready -h localhost -U postgres > /dev/null 2>&1; then
+    if pg_isready -h localhost -U ${USER} > /dev/null 2>&1; then
         echo "PostgreSQL is ready!"
         break
     fi
