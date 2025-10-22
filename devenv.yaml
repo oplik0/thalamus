@@ -1,4 +1,6 @@
 inputs:
+  crane:
+    url: github:ipetkov/crane
   mk-shell-bin:
     url: github:rrbutani/nix-mk-shell-bin
   nix2container:

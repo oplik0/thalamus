@@ -205,69 +205,101 @@
   };
 
   # https://devenv.sh/containers/
-  containers.prod = {
-    name = "thalmus";
+  containers.prod =
+    let
+      # Create Crane library instance
+      craneLib = inputs.crane.mkLib pkgs;
 
-    # Build the production image with only runtime dependencies
-    copyToRoot = pkgs.buildEnv {
-      name = "thalmus-root";
-      paths = [
-        # Minimal runtime dependencies
-        pkgs.cacert # CA certificates for HTTPS
-        pkgs.bashInteractive # Minimal shell for debugging
-        pkgs.coreutils # Basic utilities
+      # Filter source to only include relevant files for Rust builds
+      src = lib.cleanSourceWith {
+        src = ./.;
+        filter =
+          path: type:
+          # Include migrations and pkg directories
+          (lib.hasSuffix "/migrations" path)
+          || (lib.hasSuffix "/pkg" path)
+          ||
+            # Include all Rust source files
+            (craneLib.filterCargoSources path type);
+      };
 
-        # The application binary and assets
-        (pkgs.stdenv.mkDerivation {
-          name = "thalmus-app";
-          src = ./.;
+      # Common arguments for crane builds
+      commonArgs = {
+        inherit src;
+        pname = "thalmus";
+        version = "0.1.0";
+        strictDeps = true;
 
-          nativeBuildInputs = with pkgs; [
-            cargo
-            rustc
-            pkg-config
-            sccache
-          ];
+        nativeBuildInputs = with pkgs; [
+          pkg-config
+        ];
 
-          buildInputs = lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
-          ];
+        buildInputs = lib.optionals pkgs.stdenv.isDarwin [
+          pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
+        ];
+      };
 
-          buildPhase = ''
-            export CARGO_HOME=$TMPDIR/cargo
-            cargo build --release --locked
-          '';
+      # Build dependencies first for better caching
+      cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
-          installPhase = ''
-            mkdir -p $out/bin
+      # Build the actual application
+      thalmusApp = craneLib.buildPackage (
+        commonArgs
+        // {
+          inherit cargoArtifacts;
+
+          # Copy additional assets alongside the binary
+          postInstall = ''
             mkdir -p $out/migrations
             mkdir -p $out/pkg
 
-            # Copy the binary
-            cp target/release/thalmus $out/bin/
+            # Copy migrations if they exist
+            if [ -d migrations ]; then
+              cp -r migrations/* $out/migrations/ 2>/dev/null || true
+            fi
 
-            # Copy migrations
-            cp -r migrations/* $out/migrations/
-
-            # Copy KCL schemas
-            cp -r pkg/* $out/pkg/
+            # Copy KCL schemas if they exist
+            if [ -d pkg ]; then
+              cp -r pkg/* $out/pkg/ 2>/dev/null || true
+            fi
           '';
 
-          # Skip checking since we want minimal dependencies
-          dontStrip = false;
-        })
-      ];
-      pathsToLink = [
-        "/bin"
-        "/migrations"
-        "/pkg"
-        "/etc"
-      ];
-    };
+          meta = {
+            description = "Backend-centric LLM router and load balancer";
+            license = with lib.licenses; [
+              mit
+              asl20
+            ];
+          };
+        }
+      );
+    in
+    {
+      name = "thalmus";
 
-    # Startup command
-    startupCommand = "/bin/thalmus";
-  };
+      # Build the production image with only runtime dependencies
+      copyToRoot = pkgs.buildEnv {
+        name = "thalmus-root";
+        paths = [
+          # Minimal runtime dependencies
+          pkgs.cacert # CA certificates for HTTPS
+          pkgs.bashInteractive # Minimal shell for debugging
+          pkgs.coreutils # Basic utilities
+
+          # The application
+          thalmusApp
+        ];
+        pathsToLink = [
+          "/bin"
+          "/migrations"
+          "/pkg"
+          "/etc"
+        ];
+      };
+
+      # Startup command
+      startupCommand = "${thalmusApp}/bin/thalmus";
+    };
 
   # other integrations
   delta.enable = true;
