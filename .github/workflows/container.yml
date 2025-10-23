@@ -75,9 +75,8 @@ jobs:
         run: |
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
-          # Parse tags from metadata action and push each one
-          IFS=$'\n'
-          for tag in ${{ steps.meta.outputs.tags }}; do
+          # Parse tags from metadata action JSON output and push each one
+          echo '${{ steps.meta.outputs.json }}' | jq -r '.tags[]' | while read -r tag; do
             # Extract just the tag part after the colon
             TAG_NAME="${tag##*:}"
             echo "Pushing tag: ${TAG_NAME}"
