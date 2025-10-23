@@ -31,7 +31,7 @@ sqlx = { version = "0.8", features = [
 # Configuration
 kclvm-runtime = { git = "https://github.com/oplik0/kcl", branch = "serde_json_bump" }
 kcl-lang = { git = "https://github.com/oplik0/kcl-lib", branch = "serde_json_bump"}
-notify = { version = "6", default-features = false, features = ["macos_kqueue"] }
+notify = { version = "8.2.0", default-features = false, features = ["macos_kqueue"] }
 
 # Authorization
 casbin = { version = "2", default-features = false, features = ["runtime-tokio", "logging", "incremental"] }
@@ -47,7 +47,7 @@ serde_json = "1"
 
 # Error handling
 anyhow = "1"
-thiserror = "1"
+thiserror = "2.0.17"
 
 # Observability
 tracing = "0.1"
