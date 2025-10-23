@@ -1,12 +1,13 @@
 name: Container
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
     branches:
       - main
       - 'v[0-9]+*'
-    tags:
-      - 'v*'
 
 permissions:
   contents: read
@@ -15,6 +16,11 @@ permissions:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.head_branch == 'main' ||
+       startsWith(github.event.workflow_run.head_branch, 'v') ||
+       startsWith(github.ref, 'refs/tags/v'))
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
