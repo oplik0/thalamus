@@ -12,8 +12,8 @@ repository = "https://github.com/yourusername/thalmus"
 # Web framework
 axum = { version = "0.8", features = ["macros", "multipart"] }
 tokio = { version = "1", features = ["full"] }
-tower = { version = "0.5", features = ["util", "timeout", "limit"] }
-tower-http = { version = "0.6", features = ["trace", "cors", "request-id", "util"] }
+tower = { version = "0.5", features = ["util", "timeout", "load-shed", "limit"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "request-id", "util", "compression-gzip"] }
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
@@ -34,8 +34,8 @@ kcl-lang = { git = "https://github.com/oplik0/kcl-lib", branch = "serde_json_bum
 notify = { version = "6", default-features = false, features = ["macos_kqueue"] }
 
 # Authorization
-casbin = { version = "2", default-features = false, features = ["runtime-tokio"] }
-sqlx-adapter = "1.8"
+casbin = { version = "2", default-features = false, features = ["runtime-tokio", "logging", "incremental"] }
+sqlx-adapter = { version = "1.8", features = ["postgres", "runtime-tokio-rustls"], default-features = false}
 
 # Authentication
 pasetors = { version = "0.7", features = ["v4", "paserk", "std"] }
@@ -52,6 +52,8 @@ thiserror = "1"
 # Observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+opentelemetry = { version = "0.31", features = ["trace"] }
+opentelemetry-otlp = { version = "0.31", features = ["reqwest-rustls"] }
 
 # Utilities
 uuid = { version = "1", features = ["serde", "v4", "v7"] }
@@ -59,17 +61,13 @@ chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 
 # HTTP client for backends
-reqwest = { version = "0.12", default-features = false, features = [
-    "rustls-tls",
-    "json",
-    "stream",
-] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "charset", "http2", "system-proxy", "zstd", "cookies"] }
 
 # Rate limiting
-governor = "0.7"
+governor = "0.10"
 
 # Caching (optional)
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager"], optional = true }
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"], optional = true }
 
 [dev-dependencies]
 # Testing
