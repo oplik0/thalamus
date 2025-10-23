@@ -5623,7 +5623,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "thalmus"
+name = "thalamus"
 version = "0.1.0"
 dependencies = [
  "anyhow",

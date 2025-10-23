@@ -18,7 +18,7 @@ impl Default for PoolConfig {
     fn default() -> Self {
         Self {
             database_url: std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-                "postgresql://postgres:postgres@localhost:5432/thalmus".to_string()
+                "postgresql://postgres:postgres@localhost:5432/thalamus".to_string()
             }),
             max_connections: 20,
             min_connections: 2,

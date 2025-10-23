@@ -15,7 +15,7 @@ async fn test_health_check_returns_ok() {
     common::init_test_logging();
 
     // Build the router
-    let app = thalmus::bootstrap::build_router();
+    let app = thalamus::bootstrap::build_router();
 
     // Make request to health endpoint
     let response = app
@@ -45,7 +45,7 @@ async fn test_health_check_returns_ok() {
 async fn test_health_check_response_structure() {
     common::init_test_logging();
 
-    let app = thalmus::bootstrap::build_router();
+    let app = thalamus::bootstrap::build_router();
 
     let response = app
         .oneshot(

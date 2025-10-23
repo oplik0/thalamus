@@ -1,9 +1,9 @@
-# Thalmus - Backend-Centric LLM Router
+# Thalamus - Backend-Centric LLM Router
 
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 [![Rust](https://img.shields.io/badge/rust-1.89%2B-orange)](https://www.rust-lang.org/)
 
-A configuration-based, backend-centric LLM router and load balancer built with Rust and Axum. Thalmus provides advanced routing capabilities, team-based access control, and comprehensive observability for LLM deployments.
+A configuration-based, backend-centric LLM router and load balancer built with Rust and Axum. Thalamus provides advanced routing capabilities, team-based access control, and comprehensive observability for LLM deployments.
 
 ## Features (Planned)
 
@@ -37,8 +37,8 @@ This project uses [devenv](https://devenv.sh/) for a reproducible development en
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/thalmus.git
-cd thalmus
+git clone https://github.com/yourusername/thalamus.git
+cd thalamus
 
 # Enter the development environment
 devenv shell
@@ -96,7 +96,7 @@ When in the devenv shell, you have access to these commands:
 ## Project Structure
 
 ```
-thalmus/
+thalamus/
 ├── src/
 │   ├── features/          # Feature modules (clean architecture)
 │   │   ├── health/        # Health check
@@ -122,7 +122,7 @@ thalmus/
 
 ## Architecture
 
-Thalmus follows **clean architecture** principles:
+Thalamus follows **clean architecture** principles:
 
 - **Features**: Organized by domain (health, auth, teams, etc.)
   - `api.rs` - HTTP handlers and routing
@@ -192,7 +192,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ## License
 
-Thalmus is dual-licensed under MIT and Apache 2.0.
+Thalamus is dual-licensed under MIT and Apache 2.0.
 
 ## Acknowledgments
 

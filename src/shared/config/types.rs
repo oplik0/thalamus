@@ -194,7 +194,7 @@ fn default_ttl() -> String {
 }
 
 fn default_key_prefix() -> String {
-    "thalmus:".to_string()
+    "thalamus:".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

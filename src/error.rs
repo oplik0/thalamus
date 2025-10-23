@@ -1,4 +1,4 @@
-//! Global error types for Thalmus
+//! Global error types for Thalamus
 //!
 //! This module defines the error types used throughout the application,
 //! with conversions from various underlying error types.

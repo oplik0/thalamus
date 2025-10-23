@@ -1,8 +1,8 @@
-# Thalmus Configuration Schemas
+# Thalamus Configuration Schemas
 # Defines type-safe configuration structures with validation
 
 schema ServerConfig:
-    """Server configuration for the Thalmus HTTP server"""
+    """Server configuration for the Thalamus HTTP server"""
     host: str = "0.0.0.0"
     port: int = 3000
     workers?: int  # Optional, auto-detected if not specified
@@ -155,7 +155,7 @@ schema CacheConfig:
     redis_url: str
     default_ttl: str = "300s"
     max_memory?: str
-    key_prefix: str = "thalmus:"
+    key_prefix: str = "thalamus:"
 
     check:
         redis_url.startswith("redis://") or redis_url.startswith("rediss://"), \
@@ -174,8 +174,8 @@ schema RateLimitConfig:
         burst_size > 0, "Burst size must be positive"
 
 # Root configuration schema
-schema ThalmusConfig:
-    """Root configuration for Thalmus LLM Router"""
+schema ThalamusConfig:
+    """Root configuration for Thalamus LLM Router"""
     server: ServerConfig
     database: DatabaseConfig
     backends: {str: BackendConfig}

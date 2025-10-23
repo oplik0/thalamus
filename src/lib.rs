@@ -1,4 +1,4 @@
-//! Thalmus - Backend-centric LLM Router
+//! Thalamus - Backend-centric LLM Router
 //!
 //! This library provides a clean-architecture implementation of an LLM router
 //! with team-based access control, advanced routing strategies, and comprehensive observability.

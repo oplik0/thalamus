@@ -1,4 +1,4 @@
--- Initial database schema for Thalmus
+-- Initial database schema for Thalamus
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -211,7 +211,7 @@ INSERT INTO teams (name, description, rate_limit_rpm, rate_limit_burst, logging_
 VALUES ('default', 'Default team for development', 1000, 50, 'metadata');
 
 INSERT INTO users (username, email, is_service_account, is_active)
-VALUES ('admin', 'admin@thalmus.local', false, true);
+VALUES ('admin', 'admin@thalamus.local', false, true);
 
 -- Add admin to default team as admin
 INSERT INTO team_memberships (user_id, team_id, role)

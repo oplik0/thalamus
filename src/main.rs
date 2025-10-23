@@ -1,11 +1,11 @@
-use thalmus::{bootstrap, shared::observability};
+use thalamus::{bootstrap, shared::observability};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing
     observability::init_tracing();
 
-    tracing::info!("Starting Thalmus LLM Router");
+    tracing::info!("Starting Thalamus LLM Router");
 
     // Initialize application state
     let _state = bootstrap::init_app_state().await?;
