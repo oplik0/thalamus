@@ -231,6 +231,9 @@
         version = "0.1.0";
         strictDeps = true;
 
+        # Skip tests in container builds (no database available)
+        doCheck = false;
+
         nativeBuildInputs = with pkgs; [
           pkg-config
         ];
