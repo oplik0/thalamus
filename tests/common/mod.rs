@@ -9,7 +9,7 @@ static INIT: Once = Once::new();
 pub fn init_test_logging() {
     INIT.call_once(|| {
         let _ = tracing_subscriber::fmt()
-            .with_env_filter("thalmus=debug,sqlx=warn")
+            .with_env_filter("thalamus=debug,sqlx=warn")
             .with_test_writer()
             .try_init();
     });
@@ -21,7 +21,7 @@ pub fn init_test_logging() {
 pub async fn create_test_pool() -> PgPool {
     let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         let user = std::env::var("USER").unwrap_or_else(|_| "postgres".to_string());
-        format!("postgres://{user}@localhost:5432/thalmus_test")
+        format!("postgres://{user}@localhost:5432/thalamus_test")
     });
 
     PgPool::connect(&database_url)

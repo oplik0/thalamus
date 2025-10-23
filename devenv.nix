@@ -11,6 +11,7 @@
   packages = with pkgs; [
     git
     jq
+    tokei
     curl
     just
     kcl
@@ -27,7 +28,7 @@
   languages.typescript.enable = true;
 
   # https://devenv.sh/processes/
-  processes.thalmus = {
+  processes.thalamus = {
     exec = ''
       ${lib.getExe pkgs.bacon} --headless --config-toml '
       default_job = "run"
@@ -60,8 +61,8 @@
     enable = true;
     listen_addresses = "127.0.0.1";
     initialDatabases = [
-      { name = "thalmus"; }
-      { name = "thalmus_test"; }
+      { name = "thalamus"; }
+      { name = "thalamus_test"; }
     ];
   };
 
@@ -116,7 +117,7 @@
       sqlx migrate add "$1"
     '';
     db-reset.exec = ''
-      psql -h localhost -U postgres -d thalmus_test -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" || true
+      psql -h localhost -U postgres -d thalamus_test -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" || true
       sqlx migrate run --database-url "$TEST_DATABASE_URL"
     '';
 
@@ -131,12 +132,12 @@
 
   # https://devenv.sh/basics/
   enterShell = ''
-    export DATABASE_URL="postgresql://$USER@localhost:5432/thalmus"
-    export TEST_DATABASE_URL="postgresql://$USER@localhost:5432/thalmus_test"
+    export DATABASE_URL="postgresql://$USER@localhost:5432/thalamus"
+    export TEST_DATABASE_URL="postgresql://$USER@localhost:5432/thalamus_test"
     export REDIS_URL="redis://localhost:6379"
 
     echo "╔════════════════════════════════════════════════════════════════╗"
-    echo "║  🦀 Thalmus Development Environment                           ║"
+    echo "║  🦀 Thalamus Development Environment                           ║"
     echo "╚════════════════════════════════════════════════════════════════╝"
     echo ""
     echo "📦 Services:"
@@ -169,9 +170,9 @@
   # https://devenv.sh/tasks/
   tasks = {
     # Run migrations on shell entry if database is available
-    "thalmus:db-check" = {
+    "thalamus:db-check" = {
       exec = ''
-        if pg_isready -h localhost -U $USER -d thalmus > /dev/null 2>&1; then
+        if pg_isready -h localhost -U $USER -d thalamus > /dev/null 2>&1; then
           echo "✓ Database is ready"
         else
           echo "⚠️  Database not running. Start with: services-up"
@@ -226,7 +227,7 @@
       # Common arguments for crane builds
       commonArgs = {
         inherit src;
-        pname = "thalmus";
+        pname = "thalamus";
         version = "0.1.0";
         strictDeps = true;
 
@@ -243,7 +244,7 @@
       cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
       # Build the actual application
-      thalmusApp = craneLib.buildPackage (
+      thalamusApp = craneLib.buildPackage (
         commonArgs
         // {
           inherit cargoArtifacts;
@@ -275,11 +276,11 @@
       );
     in
     {
-      name = "thalmus";
+      name = "thalamus";
 
       # Build the production image with only runtime dependencies
       copyToRoot = pkgs.buildEnv {
-        name = "thalmus-root";
+        name = "thalamus-root";
         paths = [
           # Minimal runtime dependencies
           pkgs.cacert # CA certificates for HTTPS
@@ -287,7 +288,7 @@
           pkgs.coreutils # Basic utilities
 
           # The application
-          thalmusApp
+          thalamusApp
         ];
         pathsToLink = [
           "/bin"
@@ -298,7 +299,7 @@
       };
 
       # Startup command
-      startupCommand = "${thalmusApp}/bin/thalmus";
+      startupCommand = "${thalamusApp}/bin/thalamus";
     };
 
   # other integrations

@@ -1,4 +1,4 @@
-# Thalmus Configuration Example
+# Thalamus Configuration Example
 # Copy this to config.k and customize for your environment
 # KCL provides type-safe configuration with validation and hot-reload
 
@@ -15,7 +15,7 @@ server = pkg.ServerConfig {
 # Database configuration
 # Use environment variables or devenv-provided DATABASE_URL
 database = pkg.DatabaseConfig {
-    url = "postgresql://postgres:postgres@localhost:5432/thalmus"
+    url = "postgresql://postgres:postgres@localhost:5432/thalamus"
     max_connections = 20
     min_connections = 2
     pool_timeout = "30s"
@@ -170,7 +170,7 @@ cache = pkg.CacheConfig {
     redis_url = "redis://localhost:6379"
     default_ttl = "300s"
     max_memory = "1GB"
-    key_prefix = "thalmus:"
+    key_prefix = "thalamus:"
 }
 
 # Optional: Rate limiting configuration
