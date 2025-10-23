@@ -26,12 +26,12 @@ sqlx = { version = "0.8", features = [
     "uuid",
     "chrono",
     "migrate",
-] }
+], default-features = false}
 
 # Configuration
 kclvm-runtime = { git = "https://github.com/oplik0/kcl", branch = "serde_json_bump" }
 kcl-lang = { git = "https://github.com/oplik0/kcl-lib", branch = "serde_json_bump"}
-notify = { version = "6", default-features = false, features = ["macos_kqueue"] }
+notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
 
 # Authorization
 casbin = { version = "2", default-features = false, features = ["runtime-tokio", "logging", "incremental"] }
@@ -47,7 +47,7 @@ serde_json = "1"
 
 # Error handling
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 
 # Observability
 tracing = "0.1"
@@ -58,7 +58,7 @@ opentelemetry-otlp = { version = "0.31", features = ["reqwest-rustls"] }
 # Utilities
 uuid = { version = "1", features = ["serde", "v4", "v7"] }
 chrono = { version = "0.4", features = ["serde"] }
-rand = "0.8"
+rand = "0.9"
 
 # HTTP client for backends
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "charset", "http2", "system-proxy", "zstd", "cookies"] }
@@ -67,7 +67,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 governor = "0.10"
 
 # Caching (optional)
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"], optional = true }
+redis = { version = "0.32", features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"], optional = true }
 
 [dev-dependencies]
 # Testing
