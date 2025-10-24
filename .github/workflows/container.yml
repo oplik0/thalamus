@@ -77,14 +77,12 @@ jobs:
 
           # Parse tags from metadata action JSON output and push each one
           echo '${{ steps.meta.outputs.json }}' | jq -r '.tags[]' | while read -r tag; do
-            # Extract just the tag part after the colon
-            TAG_NAME="${tag##*:}"
-            echo "Pushing tag: ${TAG_NAME}"
+            echo "Pushing tag: ${tag}"
 
             devenv container \
-              --registry docker://ghcr.io/${REPO_LOWER}/ \
+              --registry "docker://${tag}" \
               --copy-args="--dest-creds=${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" \
-              copy prod --tag "${TAG_NAME}"
+              copy prod
           done
 
       - name: Output image information
