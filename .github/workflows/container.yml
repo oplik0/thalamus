@@ -7,7 +7,7 @@ on:
       - completed
     branches:
       - main
-      - 'v[0-9]+*'
+      - "v[0-9]+*"
 
 permissions:
   contents: read
@@ -74,16 +74,10 @@ jobs:
       - name: Copy container to GitHub Container Registry
         run: |
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-
-          # Parse tags from metadata action JSON output and push each one
-          echo '${{ steps.meta.outputs.json }}' | jq -r '.tags[]' | while read -r tag; do
-            echo "Pushing tag: ${tag}"
-
-            devenv container \
-              --registry "docker://${tag}" \
-              --copy-args="--dest-creds=${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" \
-              copy prod
-          done
+          devenv container \
+            --registry "docker://ghcr.io/" \
+              --copy-args="--dest-creds=${{ github.actor }}:${{ secrets.GITHUB_TOKEN }} --additional-tags=${{ steps.meta.outputs.tags }}" \
+            copy prod
 
       - name: Output image information
         run: |
