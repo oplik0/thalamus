@@ -49,7 +49,7 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
 
       - name: Cache Nix store
-        uses: nix-community/cache-nix-action@v6
+        uses: nix-community/cache-nix-action@v5
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
@@ -74,10 +74,16 @@ jobs:
       - name: Copy container to GitHub Container Registry
         run: |
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          devenv container \
-            --registry "docker://ghcr.io/" \
-              --copy-args="--dest-creds=${{ github.actor }}:${{ secrets.GITHUB_TOKEN }} --additional-tags=${{ steps.meta.outputs.tags }}" \
-            copy prod
+
+          # Parse tags from metadata action JSON output and push each one
+          echo '${{ steps.meta.outputs.json }}' | jq -r '.tags[]' | while read -r tag; do
+            echo "Pushing tag: ${tag}"
+
+            devenv container \
+              --registry "docker://ghcr.io/" \
+              --copy-args="--dest-creds=${{ github.actor }}:${{ secrets.GITHUB_TOKEN }} --additional-tag=${tag}" \
+              copy prod
+          done
 
       - name: Output image information
         run: |
