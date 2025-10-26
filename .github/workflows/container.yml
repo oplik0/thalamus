@@ -80,7 +80,7 @@ jobs:
             echo "Pushing tag: ${tag}"
 
             devenv container \
-              --registry "docker://ghcr.io/" \
+              --registry "docker://ghcr.io/${{ github.repository_owner }}" \
               --copy-args="--dest-creds=${{ github.actor }}:${{ secrets.GITHUB_TOKEN }} --additional-tag=${tag}" \
               copy prod
           done
