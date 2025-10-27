@@ -21,6 +21,8 @@
     cargo-fuzz # fuzz testing
     cargo-rr # debugging tool
     # cargo-dist # TODO: consider adding for releases
+
+    gh
   ];
 
   # https://devenv.sh/languages/
@@ -307,6 +309,15 @@
 
   # other integrations
   delta.enable = true;
-  devcontainer.enable = true;
+  devcontainer = {
+    enable = true;
+    settings.customizations.vscode.extensions = [
+      "mkhl.direnv"
+      "rust-lang.rust-analyzer"
+      "vadimcn.vscode-lldb"
+      "kcl.kcl-vscode-extension"
+      "tamasfe.even-better-toml"
+    ];
+  };
   # See full reference at https://devenv.sh/reference/options/
 }

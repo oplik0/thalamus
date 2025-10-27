@@ -2,7 +2,11 @@
   "customizations": {
     "vscode": {
       "extensions": [
-        "mkhl.direnv"
+        "mkhl.direnv",
+        "rust-lang.rust-analyzer",
+        "vadimcn.vscode-lldb",
+        "kcl.kcl-vscode-extension",
+        "tamasfe.even-better-toml"
       ]
     }
   },
