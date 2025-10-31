@@ -34,7 +34,7 @@ kcl-lang = { git = "https://github.com/oplik0/kcl-lib", branch = "serde_json_bum
 notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
 
 # Authorization
-casbin = { version = "2", default-features = false, features = ["runtime-tokio", "logging", "incremental"] }
+casbin = { version = "2.15.0", default-features = false, features = ["runtime-tokio", "logging", "incremental"] }
 sqlx-adapter = { version = "1.8", features = ["postgres", "runtime-tokio-rustls"], default-features = false}
 
 # Authentication
