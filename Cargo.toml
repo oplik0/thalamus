@@ -68,6 +68,8 @@ governor = "0.10.1"
 
 # Caching (optional)
 redis = { version = "0.32.7", features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"], optional = true }
+base64 = "0.22.1"
+rand_hc = "0.4.0"
 
 [dev-dependencies]
 # Testing
