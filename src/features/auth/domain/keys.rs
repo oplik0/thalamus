@@ -3,6 +3,8 @@ use rand::prelude::*;
 use rand_hc::Hc128Rng;
 
 use crate::bootstrap::AppState;
+use crate::error::Result;
+use crate::features::auth::domain::api_key::{CreateApiKeyRequest, CreateApiKeyResponse};
 use crate::features::auth::infra::store_key;
 
 const KEY_LENGTH: usize = 32;
@@ -32,16 +34,19 @@ impl std::fmt::Display for Prefix {
     }
 }
 
-pub fn generate_key(
+/// Generate a new API key with the given prefix and store it in the database
+pub async fn generate_key(
     prefix: Prefix,
+    request: CreateApiKeyRequest,
     state: &AppState,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<CreateApiKeyResponse> {
     let mut key_bytes = vec![0u8; KEY_LENGTH];
     let mut rng: Hc128Rng = Hc128Rng::from_os_rng();
     rng.fill(&mut key_bytes[..]);
     // Encode the key in URL-safe base64. Padding is not necessary here.
     let key_base64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&key_bytes);
     let full_key = format!("{}{}", prefix, key_base64);
-    store_key(&full_key, state)?;
-    Ok(full_key)
+
+    // Store the key and return the response
+    store_key(&full_key, request, state).await
 }

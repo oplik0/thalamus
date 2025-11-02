@@ -1,4 +1,6 @@
+use axum_tasks::spawn_task_workers;
 use thalamus::{bootstrap, shared::observability};
+use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -11,10 +13,23 @@ async fn main() -> anyhow::Result<()> {
     let config_path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config.k".to_string());
 
     // Initialize application state
-    let _state = bootstrap::init_app_state(&config_path).await?;
+    let state = bootstrap::init_app_state(&config_path).await?;
 
-    // Build router
-    let app = bootstrap::build_router();
+    // Create cancellation token for graceful shutdown
+    let shutdown_token = CancellationToken::new();
+
+    // Spawn background task workers
+    // Pass None to use default worker count: max(4, num_cpus / 2)
+    tracing::info!("Starting background task workers");
+
+    spawn_task_workers(
+        state.tasks.clone(),
+        shutdown_token.clone(),
+        None, // Use default worker count
+    );
+
+    // Build router with state
+    let app = bootstrap::build_router(state);
 
     // Determine bind address from environment or use default
     let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
@@ -23,9 +38,17 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Listening on {}", addr);
 
-    // Start server
+    // Start server with graceful shutdown
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to listen for shutdown signal");
+            tracing::info!("Shutdown signal received, stopping task workers");
+            shutdown_token.cancel();
+        })
+        .await?;
 
     Ok(())
 }
