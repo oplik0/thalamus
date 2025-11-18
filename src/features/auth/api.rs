@@ -11,7 +11,12 @@ use crate::bootstrap::AppState;
 use crate::error::Result;
 use crate::features::auth::domain::api_key::{CreateApiKeyRequest, CreateApiKeyResponse};
 use crate::features::auth::domain::keys::{Prefix, generate_key};
-use crate::features::auth::infra::{list_user_keys, revoke_key};
+use crate::features::auth::domain::opaque::{
+    LoginFinishRequest, LoginRequest, LoginResponse, RegistrationRequest, RegistrationResponse,
+};
+use crate::features::auth::infra::{
+    list_user_keys, login_finish, login_start, registration_finish, registration_start, revoke_key,
+};
 use crate::middleware::{ApiKeyAuth, require_scope};
 
 /// Request body for creating a new API key
@@ -121,7 +126,49 @@ pub async fn whoami(ApiKeyAuth(auth): ApiKeyAuth) -> Result<Json<serde_json::Val
         "user_id": auth.user_id,
         "team_id": auth.team_id,
         "key_id": auth.key_id,
+        "token_id": auth.token_id,
         "scopes": auth.scopes,
+        "roles": auth.roles,
+    })))
+}
+
+/// Start OPAQUE registration
+pub async fn register_start_handler(
+    State(state): State<AppState>,
+    Json(req): Json<RegistrationRequest>,
+) -> Result<Json<RegistrationResponse>> {
+    let response = registration_start(req, &state).await?;
+    Ok(Json(response))
+}
+
+/// Finish OPAQUE registration
+pub async fn register_finish_handler(
+    State(state): State<AppState>,
+    Json(req): Json<RegistrationRequest>,
+) -> Result<Json<serde_json::Value>> {
+    registration_finish(req, &state).await?;
+    Ok(Json(serde_json::json!({
+        "message": "Registration successful"
+    })))
+}
+
+/// Start OPAQUE login
+pub async fn login_start_handler(
+    State(state): State<AppState>,
+    Json(req): Json<LoginRequest>,
+) -> Result<Json<LoginResponse>> {
+    let response = login_start(req, &state).await?;
+    Ok(Json(response))
+}
+
+/// Finish OPAQUE login
+pub async fn login_finish_handler(
+    State(state): State<AppState>,
+    Json(req): Json<LoginFinishRequest>,
+) -> Result<Json<serde_json::Value>> {
+    let token = login_finish(req, &state).await?;
+    Ok(Json(serde_json::json!({
+        "token": token
     })))
 }
 
@@ -132,6 +179,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/keys", get(list_keys))
         .route("/api/keys/revoke", post(revoke_key_handler))
         .route("/api/auth/whoami", get(whoami))
+        .route("/api/auth/register/start", post(register_start_handler))
+        .route("/api/auth/register/finish", post(register_finish_handler))
+        .route("/api/auth/login/start", post(login_start_handler))
+        .route("/api/auth/login/finish", post(login_finish_handler))
 }
 
 #[cfg(test)]

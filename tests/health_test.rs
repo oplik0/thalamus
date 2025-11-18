@@ -14,8 +14,11 @@ async fn test_health_check_returns_ok() {
     // Initialize logging for tests
     common::init_test_logging();
 
+    // Initialize test state
+    let state = common::init_test_state().await;
+
     // Build the router
-    let app = thalamus::bootstrap::build_router();
+    let app = thalamus::bootstrap::build_router(state);
 
     // Make request to health endpoint
     let response = app
@@ -45,7 +48,8 @@ async fn test_health_check_returns_ok() {
 async fn test_health_check_response_structure() {
     common::init_test_logging();
 
-    let app = thalamus::bootstrap::build_router();
+    let state = common::init_test_state().await;
+    let app = thalamus::bootstrap::build_router(state);
 
     let response = app
         .oneshot(

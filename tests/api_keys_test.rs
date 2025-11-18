@@ -1,19 +1,52 @@
+#[path = "common/mod.rs"]
+mod common;
+
 use chrono::{Duration, Utc};
-use thalamus::bootstrap::init_app_state;
 use thalamus::features::auth::domain::api_key::CreateApiKeyRequest;
 use thalamus::features::auth::domain::keys::{Prefix, generate_key};
-use thalamus::features::auth::infra::{list_user_keys, revoke_key, validate_key};
+use thalamus::features::auth::infra::key_storage::{list_user_keys, revoke_key, validate_key};
 use uuid::Uuid;
 
 #[tokio::test]
 async fn test_api_key_lifecycle() {
     // Initialize app state (requires a test database)
-    let state = init_app_state("config.example.k")
-        .await
-        .expect("Failed to initialize app state");
+    let state = common::init_test_state().await;
 
+    // Create a test user and team
     let user_id = Uuid::new_v4();
     let team_id = Uuid::new_v4();
+    let username = format!("user_{}", user_id);
+    let email = format!("user_{}@example.com", user_id);
+    let team_name = format!("team_{}", team_id);
+
+    sqlx::query!(
+        "INSERT INTO users (id, username, email) VALUES ($1, $2, $3)",
+        user_id,
+        username,
+        email
+    )
+    .execute(&state.db_pool)
+    .await
+    .expect("Failed to create test user");
+
+    sqlx::query!(
+        "INSERT INTO teams (id, name) VALUES ($1, $2)",
+        team_id,
+        team_name
+    )
+    .execute(&state.db_pool)
+    .await
+    .expect("Failed to create test team");
+
+    sqlx::query!(
+        "INSERT INTO team_memberships (user_id, team_id, role) VALUES ($1, $2, $3)",
+        user_id,
+        team_id,
+        "admin"
+    )
+    .execute(&state.db_pool)
+    .await
+    .expect("Failed to create team membership");
 
     // Create a new API key
     let request = CreateApiKeyRequest {
@@ -53,7 +86,7 @@ async fn test_api_key_lifecycle() {
     assert_eq!(keys[0].name, "Test Key");
 
     // Revoke the key
-    revoke_key(&response.key, &state)
+    revoke_key(&keys[0].key_id, &state)
         .await
         .expect("Failed to revoke key");
 
@@ -64,12 +97,42 @@ async fn test_api_key_lifecycle() {
 
 #[tokio::test]
 async fn test_expired_key() {
-    let state = init_app_state("config.example.k")
-        .await
-        .expect("Failed to initialize app state");
+    let state = common::init_test_state().await;
 
     let user_id = Uuid::new_v4();
     let team_id = Uuid::new_v4();
+    let username = format!("expired_{}", user_id);
+    let email = format!("expired_{}@example.com", user_id);
+    let team_name = format!("expired_team_{}", team_id);
+
+    sqlx::query!(
+        "INSERT INTO users (id, username, email) VALUES ($1, $2, $3)",
+        user_id,
+        username,
+        email
+    )
+    .execute(&state.db_pool)
+    .await
+    .expect("Failed to create test user");
+
+    sqlx::query!(
+        "INSERT INTO teams (id, name) VALUES ($1, $2)",
+        team_id,
+        team_name
+    )
+    .execute(&state.db_pool)
+    .await
+    .expect("Failed to create test team");
+
+    sqlx::query!(
+        "INSERT INTO team_memberships (user_id, team_id, role) VALUES ($1, $2, $3)",
+        user_id,
+        team_id,
+        "admin"
+    )
+    .execute(&state.db_pool)
+    .await
+    .expect("Failed to create team membership");
 
     // Create a key that's already expired
     let request = CreateApiKeyRequest {

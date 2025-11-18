@@ -41,6 +41,9 @@ CREATE TABLE users (
     -- Status
     is_active BOOLEAN DEFAULT TRUE,
 
+    -- Authentication
+    opaque_registration BYTEA,
+
     -- Timestamps
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

@@ -17,12 +17,30 @@ pub async fn store_key(
     request: CreateApiKeyRequest,
     state: &AppState,
 ) -> Result<CreateApiKeyResponse> {
-    // Hash the key for storage
+    // Parse the key format: prefix_id_secret
+    // Find the last underscore to split id and secret
+    let last_underscore = full_key
+        .rfind('_')
+        .ok_or_else(|| Error::Internal("Invalid key format".to_string()))?;
+
+    let (prefix_and_id, secret) = full_key.split_at(last_underscore);
+    let secret = &secret[1..]; // Remove the underscore
+
+    // Find the prefix (e.g., "thl_")
+    let key_id = if let Some(pos) = prefix_and_id.find('_') {
+        &prefix_and_id[pos + 1..]
+    } else {
+        return Err(Error::Internal(
+            "Invalid key format: no prefix found".to_string(),
+        ));
+    };
+
+    // Hash only the secret part for storage
     let salt = SaltString::generate(&mut OsRng);
 
+    let secret_bytes = state.config.security.api_key_secret.as_bytes();
     let argon2 = Argon2::new_with_secret(
-        // TODO: use config secret here
-        b"some_secret_key_for_argon2",
+        secret_bytes,
         argon2::Algorithm::Argon2id,
         argon2::Version::V0x13,
         // we have a random input so this is overkill anyway
@@ -32,12 +50,9 @@ pub async fn store_key(
     .map_err(|e| Error::Internal(format!("Failed to create Argon2 instance: {}", e)))?;
 
     let key_hash = argon2
-        .hash_password(full_key.as_bytes(), &salt)
+        .hash_password(secret.as_bytes(), &salt)
         .map_err(|e| Error::Internal(format!("Failed to hash key: {}", e)))?
         .to_string();
-
-    // Extract the key_id (the part after the prefix, used for lookups)
-    let key_id = full_key.to_string();
 
     // Extract prefix for display (first 8-12 chars depending on prefix length)
     let key_prefix = if full_key.len() >= 12 {
@@ -49,7 +64,7 @@ pub async fn store_key(
     let id = Uuid::new_v4();
     let created_at = Utc::now();
 
-    // Store the hashed key in the database
+    // Store the public key_id (not the secret!) and the hash
     sqlx::query!(
         r#"
         INSERT INTO api_keys (
@@ -79,6 +94,7 @@ pub async fn store_key(
         key: full_key.to_string(),
         key_prefix,
         name: request.name,
+        scopes: request.scopes,
         created_at,
         expires_at: request.expires_at,
     })
@@ -86,7 +102,32 @@ pub async fn store_key(
 
 /// Validate an API key and return the associated key information
 pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey> {
-    // Look up the key in the database by key_id
+    // Early prefix validation - fail fast if the key doesn't start with a known prefix
+    let has_valid_prefix = crate::features::auth::domain::keys::PREFIXES
+        .iter()
+        .any(|prefix| key.starts_with(prefix));
+
+    if !has_valid_prefix {
+        return Err(Error::Authentication("Invalid API key format".to_string()));
+    }
+
+    // Parse the key format: prefix_id_secret
+    // Find the last underscore to split id and secret
+    let last_underscore = key
+        .rfind('_')
+        .ok_or_else(|| Error::Authentication("Invalid API key format".to_string()))?;
+
+    let (prefix_and_id, secret) = key.split_at(last_underscore);
+    let secret = &secret[1..]; // Remove the underscore
+
+    // Extract the key_id (the public part after the prefix)
+    let key_id = if let Some(pos) = prefix_and_id.find('_') {
+        &prefix_and_id[pos + 1..]
+    } else {
+        return Err(Error::Authentication("Invalid API key format".to_string()));
+    };
+
+    // Look up the key in the database by key_id (public part only)
     let result = sqlx::query_as!(
         ApiKey,
         r#"
@@ -98,7 +139,7 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
         FROM api_keys
         WHERE key_id = $1
         "#,
-        key
+        key_id
     )
     .fetch_optional(&state.db_pool)
     .await?;
@@ -124,12 +165,13 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
         }
     }
 
-    // Verify the key hash
+    // Verify the secret hash
     let parsed_hash = PasswordHash::new(&api_key.key_hash)
         .map_err(|e| Error::Internal(format!("Failed to parse stored hash: {}", e)))?;
 
+    let secret_bytes = state.config.security.api_key_secret.as_bytes();
     let argon2 = Argon2::new_with_secret(
-        b"some_secret_key_for_argon2",
+        secret_bytes,
         argon2::Algorithm::Argon2id,
         argon2::Version::V0x13,
         // note: these params are overriden by the parsed ones in verify
@@ -138,7 +180,7 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
     .map_err(|e| Error::Internal(format!("Failed to create Argon2 instance: {}", e)))?;
 
     argon2
-        .verify_password(key.as_bytes(), &parsed_hash)
+        .verify_password(secret.as_bytes(), &parsed_hash)
         .map_err(|_| Error::Authentication("Invalid API key".to_string()))?;
 
     // Queue background task to update last_used_at
