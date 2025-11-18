@@ -53,6 +53,11 @@ impl Auth {
 /// Use this in your route handlers to automatically authenticate requests:
 ///
 /// ```rust
+/// use axum::Json;
+/// use serde_json::json;
+/// use axum::response::IntoResponse;
+/// use thalamus::middleware::ApiKeyAuth;
+///
 /// async fn protected_route(
 ///     ApiKeyAuth(auth): ApiKeyAuth,
 /// ) -> impl IntoResponse {
