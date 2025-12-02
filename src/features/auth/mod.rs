@@ -7,5 +7,5 @@
 
 // Module structure for future implementation
 // pub mod api;
-// pub mod domain;
-// pub mod infra;
+pub mod domain;
+pub mod infra;

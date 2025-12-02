@@ -7,8 +7,11 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting Thalamus LLM Router");
 
+    // Get config path from environment or use default
+    let config_path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config.k".to_string());
+
     // Initialize application state
-    let _state = bootstrap::init_app_state().await?;
+    let _state = bootstrap::init_app_state(&config_path).await?;
 
     // Build router
     let app = bootstrap::build_router();
