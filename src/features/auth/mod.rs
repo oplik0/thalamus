@@ -5,7 +5,8 @@
 //! - PASETO tokens (stateful sessions)
 //! - HTTP Signatures (RFC 9421) - planned
 
-// Module structure for future implementation
-// pub mod api;
+pub mod api;
 pub mod domain;
 pub mod infra;
+
+pub use api::router;

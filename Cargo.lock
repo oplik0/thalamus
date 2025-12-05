@@ -306,6 +306,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "axum-tasks"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2f66839fe54d9cc7ce2bcbd82c69721d822b244f50ffbfa3e491aa3e815abd1"
+dependencies = [
+ "async-trait",
+ "axum",
+ "axum-tasks-derive",
+ "chrono",
+ "error-stack",
+ "flume",
+ "inventory",
+ "num_cpus",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util 0.7.17",
+ "tower",
+ "tower-http",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "axum-tasks-derive"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e91b25c0c4b0da3abbc6a3602b4c5f1a5da9dd304d17f8ad8cb8c373db03589e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.108",
+]
+
+[[package]]
 name = "backon"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -613,7 +648,7 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
 ]
 
 [[package]]
@@ -1280,6 +1315,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "error-stack"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe413319145d1063f080f27556fd30b1d70b01e2ba10c2a6e40d4be982ffc5d1"
+dependencies = [
+ "anyhow",
+ "rustc_version 0.4.1",
+]
+
+[[package]]
 name = "etcetera"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1409,6 +1454,7 @@ checksum = "da0e4dd2a88388a1f4ccc7c9ce104604dab68d9f408dc34cd45823d5a9069095"
 dependencies = [
  "futures-core",
  "futures-sink",
+ "nanorand",
  "spin 0.9.8",
 ]
 
@@ -1669,7 +1715,7 @@ dependencies = [
  "indexmap 2.12.0",
  "slab",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
  "tracing",
 ]
 
@@ -3167,6 +3213,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 
 [[package]]
+name = "nanorand"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a51313c5820b0b02bd422f4b44776fbf47961755c74ce64afc73bfad10226c3"
+dependencies = [
+ "getrandom 0.2.16",
+]
+
+[[package]]
 name = "no-std-compat"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4284,7 +4339,7 @@ dependencies = [
  "socket2",
  "tokio",
  "tokio-rustls",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
  "url",
 ]
 
@@ -4389,7 +4444,7 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
  "tower",
  "tower-http",
  "tower-service",
@@ -5606,7 +5661,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "argon2",
+ "async-trait",
  "axum",
+ "axum-tasks",
  "base64 0.22.1",
  "casbin",
  "chrono",
@@ -5617,6 +5674,7 @@ dependencies = [
  "kcl-lang",
  "kclvm-runtime",
  "notify 8.2.0",
+ "once_cell",
  "opentelemetry",
  "opentelemetry-otlp",
  "pasetors",
@@ -5631,6 +5689,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-test",
+ "tokio-util 0.7.17",
  "tower",
  "tower-http",
  "tracing",
@@ -5889,9 +5948,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.16"
+version = "0.7.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14307c986784f72ef81c89db7d9e28d6ac26d16213b109ea501696195e6e3ce5"
+checksum = "2efa149fe76073d6e8fd97ef4f4eca7b67f599660115591483572e406e165594"
 dependencies = [
  "bytes",
  "futures-core",
@@ -5952,7 +6011,7 @@ dependencies = [
  "pin-project-lite",
  "sync_wrapper",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -5974,7 +6033,7 @@ dependencies = [
  "iri-string",
  "pin-project-lite",
  "tokio",
- "tokio-util 0.7.16",
+ "tokio-util 0.7.17",
  "tower",
  "tower-layer",
  "tower-service",

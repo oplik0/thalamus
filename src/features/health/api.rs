@@ -19,7 +19,13 @@ async fn health() -> Json<HealthResponse> {
 }
 
 /// Create health check router
-pub fn router() -> Router {
+///
+/// This router doesn't require state, but we make it generic to be compatible
+/// with routers that do require state when merging.
+pub fn router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     Router::new().route("/health", get(health))
 }
 
