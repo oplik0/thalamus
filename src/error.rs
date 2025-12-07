@@ -107,3 +107,15 @@ impl From<sqlx::migrate::MigrateError> for Error {
         Self::Database(sqlx::Error::Migrate(Box::new(err)))
     }
 }
+
+impl From<serde_json::Error> for Error {
+    fn from(err: serde_json::Error) -> Self {
+        Self::Internal(format!("Serialization error: {}", err))
+    }
+}
+
+impl From<pasetors::errors::Error> for Error {
+    fn from(err: pasetors::errors::Error) -> Self {
+        Self::Authentication(format!("Token error: {}", err))
+    }
+}

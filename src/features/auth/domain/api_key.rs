@@ -39,6 +39,7 @@ pub struct CreateApiKeyResponse {
     pub key: String, // Full key (only returned once)
     pub key_prefix: String,
     pub name: String,
+    pub scopes: Option<Vec<String>>,
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
 }

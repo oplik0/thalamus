@@ -119,8 +119,8 @@
       sqlx migrate add "$1"
     '';
     db-reset.exec = ''
-      psql -h localhost -U postgres -d thalamus_test -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" || true
-      sqlx migrate run --database-url "$TEST_DATABASE_URL"
+      psql -h localhost -d thalamus -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" || true
+      sqlx migrate run --database-url "$DATABASE_URL"
     '';
 
     # Service management
