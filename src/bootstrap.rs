@@ -36,7 +36,7 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         // Health check (no state needed)
-        .nest("/", crate::features::health::router())
+        .merge(crate::features::health::router())
         // Admin routes for task monitoring
         // TODO: Add authentication middleware - requires API key with "admin" or "tasks:monitor" scope
         // Currently the routes are unprotected for initial testing

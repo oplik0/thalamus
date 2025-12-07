@@ -222,6 +222,13 @@ fn default_burst() -> u32 {
     10
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    pub api_key_secret: String,
+    pub paseto_secret_key: String,
+    pub opaque_server_setup: String,
+}
+
 /// Root configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -232,6 +239,7 @@ pub struct Config {
     pub observability: ObservabilityConfig,
     pub cache: Option<CacheConfig>,
     pub rate_limiting: Option<RateLimitConfig>,
+    pub security: SecurityConfig,
 }
 
 impl Config {
