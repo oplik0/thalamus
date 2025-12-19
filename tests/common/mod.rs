@@ -168,17 +168,28 @@ pub async fn init_test_state() -> thalamus::bootstrap::AppState {
         },
         cache: None,
         rate_limiting: None,
+        oauth_providers: Vec::new(),
         security: thalamus::shared::config::types::SecurityConfig {
             api_key_secret: "test_secret_key_must_be_at_least_32_bytes_long".to_string(),
-            paseto_secret_key: "test_paseto_key_must_be_at_least_32_bytes_long".to_string(),
+            paseto_secret_key: "exactly_32_bytes_for_paseto_key!".to_string(),
             opaque_server_setup: "test_opaque_setup".to_string(),
         },
     };
     let tasks = axum_tasks::AppTasks::new();
 
+    // Create OAuth service with empty providers for tests
+    let oauth_service = std::sync::Arc::new(
+        thalamus::features::auth::infra::OAuthService::new(&config.oauth_providers)
+            .expect("Failed to create OAuth service for tests"),
+    );
+
     thalamus::bootstrap::AppState {
         db_pool: pool,
         config,
         tasks,
+        rate_limiter: None,
+        authorizer: None,
+        breach_detector: None,
+        oauth_service,
     }
 }

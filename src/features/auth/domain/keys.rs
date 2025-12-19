@@ -49,17 +49,7 @@ pub async fn generate_key(
 
     let api_key = format!("{}_{}_{}", prefix.as_str(), public_part, secret_part);
 
-    store_key(&api_key, request.clone(), state).await?;
-
-    Ok(CreateApiKeyResponse {
-        key: api_key,
-        key_prefix: prefix.as_str().to_string(),
-        name: request.name,
-        scopes: request.scopes,
-        created_at: chrono::Utc::now(), // Should match what store_key does or return from store_key
-        expires_at: request.expires_at,
-        id: uuid::Uuid::new_v4(), // This ID should ideally come from store_key result
-    })
+    store_key(&api_key, request.clone(), state).await
 }
 
 #[cfg(test)]
@@ -74,6 +64,13 @@ mod tests {
     }
 
     #[test]
+    fn test_prefix_display() {
+        assert_eq!(format!("{}", Prefix::Standard), "thl_");
+        assert_eq!(format!("{}", Prefix::Secret), "thl_sk_");
+        assert_eq!(format!("{}", Prefix::Full), "thalamus_");
+    }
+
+    #[test]
     fn test_key_generation_format() {
         // We can't easily test generate_key because it requires AppState and DB
         // But we can verify the logic manually if we extracted the formatting logic
@@ -85,5 +82,38 @@ mod tests {
 
         assert_eq!(full_key, "thl_public_secret");
         assert!(full_key.starts_with("thl_"));
+    }
+
+    #[test]
+    fn test_prefixes_array() {
+        assert_eq!(PREFIXES.len(), 3);
+        assert_eq!(PREFIXES[0], "thl_");
+        assert_eq!(PREFIXES[1], "thl_sk_");
+        assert_eq!(PREFIXES[2], "thalamus_");
+    }
+
+    #[test]
+    fn test_prefix_equality() {
+        assert_eq!(Prefix::Standard, Prefix::Standard);
+        assert_ne!(Prefix::Standard, Prefix::Secret);
+        assert_eq!(Prefix::Secret, Prefix::Secret);
+    }
+
+    #[test]
+    fn test_prefix_clone() {
+        let prefix = Prefix::Secret;
+        let cloned = prefix.clone();
+        assert_eq!(prefix, cloned);
+    }
+
+    #[test]
+    fn test_prefix_hash() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(Prefix::Standard);
+        set.insert(Prefix::Secret);
+        set.insert(Prefix::Full);
+        set.insert(Prefix::Standard); // Duplicate
+        assert_eq!(set.len(), 3);
     }
 }

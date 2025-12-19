@@ -3,10 +3,15 @@
 //! This module wires together all the application components,
 //! creates the `AppState`, and builds the Axum router.
 
+use crate::features::auth::infra::OAuthService;
+use crate::features::authorization::CasbinAuthorizer;
+use crate::middleware::breach_detection::BreachDetector;
+use crate::middleware::rate_limit::RateLimiter;
 use crate::shared::config::types::Config;
 use axum::Router;
 use axum_tasks::{AppTasks, HasTasks};
 use sqlx::PgPool;
+use std::sync::Arc;
 
 /// Application state shared across all handlers
 #[derive(Clone, HasTasks)]
@@ -17,6 +22,14 @@ pub struct AppState {
     pub config: Config,
     /// Background task queue
     pub tasks: AppTasks,
+    /// Rate limiter for API requests
+    pub rate_limiter: Option<Arc<RateLimiter>>,
+    /// Casbin authorizer for RBAC
+    pub authorizer: Option<Arc<CasbinAuthorizer>>,
+    /// Breach detector for security monitoring
+    pub breach_detector: Option<Arc<BreachDetector>>,
+    /// OAuth service for authentication
+    pub oauth_service: Arc<OAuthService>,
 }
 
 // Manual Debug implementation since AppTasks doesn't implement Debug
@@ -26,6 +39,9 @@ impl std::fmt::Debug for AppState {
             .field("db_pool", &"<PgPool>")
             .field("config", &self.config)
             .field("tasks", &"<AppTasks>")
+            .field("rate_limiter", &"<RateLimiter>")
+            .field("authorizer", &"<CasbinAuthorizer>")
+            .field("breach_detector", &"<BreachDetector>")
             .finish()
     }
 }
@@ -37,9 +53,13 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         // Health check (no state needed)
         .merge(crate::features::health::router())
-        // Admin routes for task monitoring
-        // TODO: Add authentication middleware - requires API key with "admin" or "tasks:monitor" scope
-        // Currently the routes are unprotected for initial testing
+        // API key and auth routes
+        .merge(crate::features::auth::router())
+        // Authorization management routes (admin only)
+        .nest("/admin/authz", crate::features::authorization::router())
+        // Admin routes for task monitoring (protected by auth middleware)
+        // Note: admin_routes returns Router<()> so we need to use a different approach
+        // We'll protect individual routes within admin_routes using middleware
         .nest("/admin/tasks", admin_routes::<AppState>())
         // Future stateful routes will go here
         .with_state(state)
@@ -109,12 +129,63 @@ pub async fn init_app_state(config_path: &str) -> crate::Result<AppState> {
         }
     }
 
+    // Initialize rate limiter if enabled
+    let rate_limiter = config.rate_limiting.as_ref().and_then(|rl| {
+        if rl.enabled {
+            let rate_limit_config = crate::middleware::rate_limit::RateLimitConfig {
+                key_rpm: rl.default_requests_per_minute,
+                user_rpm: rl.default_requests_per_minute * 2,
+                team_rpm: rl.default_requests_per_minute * 10,
+                global_rpm: rl.default_requests_per_minute / 2,
+                burst_multiplier: rl.burst_size,
+            };
+            tracing::info!(
+                key_rpm = rate_limit_config.key_rpm,
+                user_rpm = rate_limit_config.user_rpm,
+                team_rpm = rate_limit_config.team_rpm,
+                global_rpm = rate_limit_config.global_rpm,
+                "Rate limiting enabled"
+            );
+            Some(Arc::new(RateLimiter::new(rate_limit_config)))
+        } else {
+            tracing::info!("Rate limiting disabled");
+            None
+        }
+    });
+
+    // Initialize Casbin authorizer
+    let authorizer = match CasbinAuthorizer::new(db_pool.clone()).await {
+        Ok(authz) => {
+            tracing::info!("Casbin authorizer initialized successfully");
+            Some(Arc::new(authz))
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to initialize Casbin authorizer");
+            None
+        }
+    };
+
+    // Initialize breach detector
+    let breach_detector = {
+        let config = crate::middleware::breach_detection::BreachDetectionConfig::default();
+        tracing::info!("Breach detector initialized");
+        Some(Arc::new(BreachDetector::new(config)))
+    };
+
+    // Initialize OAuth service
+    let oauth_service = Arc::new(OAuthService::new(&config.oauth_providers)?);
+    tracing::info!("OAuth service initialized");
+
     tracing::info!("Application state initialized successfully");
 
     Ok(AppState {
         db_pool,
         config,
         tasks,
+        rate_limiter,
+        authorizer,
+        breach_detector,
+        oauth_service,
     })
 }
 

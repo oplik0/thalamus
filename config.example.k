@@ -23,6 +23,14 @@ database = pkg.DatabaseConfig {
     max_lifetime = "1800s"
 }
 
+# Security configuration
+# Set these via environment variables or replace with your actual secrets
+security = pkg.SecurityConfig {
+    api_key_secret = "${THALAMUS_API_KEY_SECRET}"
+    paseto_secret_key = "${THALAMUS_PASETO_SECRET_KEY}"
+    opaque_server_setup = "${THALAMUS_OPAQUE_SERVER_SETUP}"  # Use 'dev' for development
+}
+
 # Backend definitions
 backends = {
     # OpenAI backend
