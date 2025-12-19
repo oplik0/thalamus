@@ -43,3 +43,9 @@ devenv.local.yaml
 
 # pre-commit
 .pre-commit-config.yaml
+
+# Frontend (ui/)
+ui/node_modules/
+ui/.expo/
+ui/dist/
+.old

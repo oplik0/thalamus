@@ -95,3 +95,15 @@ async fn authenticate_and_check_scope(
 
     Ok(())
 }
+
+/// Admin auth middleware factory for use with `axum::middleware::from_fn_with_state`
+///
+/// This wrapper allows the middleware to be used with `from_fn_with_state`.
+/// The state is passed as the first parameter by `from_fn_with_state`.
+pub async fn admin_auth_middleware(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    require_task_monitor(State(state), request, next).await
+}

@@ -23,6 +23,8 @@
     # cargo-dist # TODO: consider adding for releases
 
     gh
+
+    kcl-language-server
   ];
 
   # https://devenv.sh/languages/

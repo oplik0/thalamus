@@ -1,6 +1,7 @@
 use crate::bootstrap::AppState;
 use crate::error::{Error, Result};
 use crate::features::auth::domain::token::TokenClaims;
+use crate::features::auth::infra::token_revocation::is_token_revoked;
 use pasetors::claims::{Claims, ClaimsValidationRules};
 use pasetors::keys::SymmetricKey;
 use pasetors::token::UntrustedToken;
@@ -47,7 +48,7 @@ pub fn create_token(claims: &TokenClaims, state: &AppState) -> Result<String> {
 }
 
 /// Validate and parse a PASETO v4.local token
-pub fn validate_token(token: &str, state: &AppState) -> Result<TokenClaims> {
+pub async fn validate_token(token: &str, state: &AppState) -> Result<TokenClaims> {
     // Get the symmetric key from config
     let key_bytes = state.config.security.paseto_secret_key.as_bytes();
     let symmetric_key = SymmetricKey::<V4>::from(key_bytes)
@@ -146,6 +147,11 @@ pub fn validate_token(token: &str, state: &AppState) -> Result<TokenClaims> {
         return Err(Error::Authentication(
             "Token is expired or not yet valid".to_string(),
         ));
+    }
+
+    // Check if token has been revoked
+    if is_token_revoked(token_claims.jti, state).await? {
+        return Err(Error::Authentication("Token has been revoked".to_string()));
     }
 
     Ok(token_claims)
