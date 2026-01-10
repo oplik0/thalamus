@@ -84,9 +84,10 @@ pub struct SigningKey {
 /// Generate a new Ed25519 key pair
 pub fn generate_ed25519_key_pair() -> Result<(String, String)> {
     use ed25519_dalek::SigningKey;
-    use rand::rngs::OsRng;
+    use rand_08::rngs::OsRng;
 
-    let signing_key = SigningKey::generate(&mut OsRng);
+    let mut rng = OsRng;
+    let signing_key = SigningKey::generate(&mut rng);
     let verifying_key = signing_key.verifying_key();
 
     // Format as PEM-like (base64 encoded raw bytes)
@@ -108,10 +109,11 @@ pub fn generate_ed25519_key_pair() -> Result<(String, String)> {
 
 /// Generate a new RSA-PSS key pair (4096 bits)
 pub fn generate_rsa_key_pair() -> Result<(String, String)> {
+    use rand_08::rngs::OsRng;
     use rsa::RsaPrivateKey;
     use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
 
-    let mut rng = rand::thread_rng();
+    let mut rng = OsRng;
     let private_key = RsaPrivateKey::new(&mut rng, 4096)
         .map_err(|e| Error::Internal(format!("Failed to generate RSA key: {}", e)))?;
 
@@ -133,9 +135,10 @@ pub fn generate_rsa_key_pair() -> Result<(String, String)> {
 pub fn generate_ecdsa_key_pair() -> Result<(String, String)> {
     use p256::ecdsa::SigningKey;
     use p256::pkcs8::{EncodePrivateKey, EncodePublicKey};
-    use rand::rngs::OsRng;
+    use rand_08::rngs::OsRng;
 
-    let signing_key = SigningKey::random(&mut OsRng);
+    let mut rng = OsRng;
+    let signing_key = SigningKey::random(&mut rng);
 
     let private_pem = signing_key
         .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)

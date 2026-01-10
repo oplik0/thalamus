@@ -1,6 +1,6 @@
 use base64::{Engine as _, engine::general_purpose};
-use rand::RngCore;
-use rand::rngs::OsRng;
+use rand_08::RngCore;
+use rand_08::rngs::OsRng;
 
 use crate::bootstrap::AppState;
 use crate::error::Result;
@@ -40,9 +40,9 @@ pub async fn generate_key(
 ) -> Result<CreateApiKeyResponse> {
     let mut secret_bytes = vec![0u8; 32];
     let mut public_bytes = vec![0u8; 16];
-    // Use OsRng directly as it implements RngCore and CryptoRng
-    OsRng.fill_bytes(&mut secret_bytes);
-    OsRng.fill_bytes(&mut public_bytes);
+    let mut rng = OsRng;
+    rng.fill_bytes(&mut secret_bytes);
+    rng.fill_bytes(&mut public_bytes);
 
     let secret_part = general_purpose::URL_SAFE_NO_PAD.encode(&secret_bytes);
     let public_part = general_purpose::URL_SAFE_NO_PAD.encode(&public_bytes);

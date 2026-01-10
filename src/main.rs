@@ -12,11 +12,11 @@ async fn main() -> anyhow::Result<()> {
     // Get config path from environment or use default
     let config_path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config.k".to_string());
 
-    // Initialize application state
-    let state = bootstrap::init_app_state(&config_path).await?;
-
     // Create cancellation token for graceful shutdown
     let shutdown_token = CancellationToken::new();
+
+    // Initialize application state
+    let state = bootstrap::init_app_state(&config_path, shutdown_token.clone()).await?;
 
     // Spawn background task workers
     // Pass None to use default worker count: max(4, num_cpus / 2)
