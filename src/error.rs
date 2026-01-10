@@ -114,6 +114,12 @@ impl From<serde_json::Error> for Error {
     }
 }
 
+impl From<reqwest::Error> for Error {
+    fn from(err: reqwest::Error) -> Self {
+        Self::Backend(format!("HTTP client error: {}", err))
+    }
+}
+
 impl From<pasetors::errors::Error> for Error {
     fn from(err: pasetors::errors::Error) -> Self {
         Self::Authentication(format!("Token error: {}", err))
