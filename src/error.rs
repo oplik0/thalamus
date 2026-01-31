@@ -44,6 +44,10 @@ pub enum Error {
     #[error("Backend error: {0}")]
     Backend(String),
 
+    /// Service unavailable (all backends at capacity)
+    #[error("Service unavailable: {0}")]
+    ServiceUnavailable(String),
+
     /// Internal server errors
     #[error("Internal error: {0}")]
     Internal(String),
@@ -62,6 +66,7 @@ impl Error {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::InvalidInput(_) => StatusCode::BAD_REQUEST,
             Self::Backend(_) => StatusCode::BAD_GATEWAY,
+            Self::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 }

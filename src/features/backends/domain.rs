@@ -57,6 +57,8 @@ pub struct EndpointSnapshot {
     pub capacity: u32,
     pub healthy: bool,
     pub active_requests: u32,
+    pub consecutive_failures: u32,
+    pub consecutive_successes: u32,
 }
 
 impl EndpointSnapshot {
