@@ -67,6 +67,8 @@ impl InMemoryBackendRegistry {
             capacity: state.config.capacity,
             healthy: state.healthy.load(Ordering::Acquire),
             active_requests: state.active_requests.load(Ordering::Relaxed),
+            consecutive_failures: state.consecutive_failures.load(Ordering::Relaxed),
+            consecutive_successes: state.consecutive_successes.load(Ordering::Relaxed),
         }
     }
 

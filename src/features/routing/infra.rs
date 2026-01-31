@@ -5,15 +5,17 @@ use crate::Result;
 use crate::features::backends::domain::{BackendRegistry, EndpointSnapshot};
 use crate::features::routing::domain::{RoutingContext, RoutingStrategy};
 use crate::features::routing::strategies::{
-    ModelAwareStrategy, RandomStrategy, RoundRobinStrategy, WeightedStrategy,
+    HealthWeightedStrategy, LeastBusyStrategy, LeastConnectionsStrategy, ModelAwareStrategy,
+    RandomStrategy, RoundRobinStrategy, WeightedStrategy,
 };
-use crate::shared::config::types::RoutingConfig;
+use crate::shared::config::types::{RoutingConfig, StrategyConfig};
 use crate::shared::models::LlmRequest;
 
 pub struct RouterService {
     registry: Arc<dyn BackendRegistry>,
     strategy: Box<dyn RoutingStrategy>,
     fallback_strategy: Option<Box<dyn RoutingStrategy>>,
+    admission_control: bool,
 }
 
 impl std::fmt::Debug for RouterService {
@@ -27,25 +29,29 @@ impl std::fmt::Debug for RouterService {
 impl RouterService {
     #[must_use]
     pub fn from_config(registry: Arc<dyn BackendRegistry>, routing_config: &RoutingConfig) -> Self {
-        let primary = strategy_from_name(
-            &routing_config.strategy.name,
-            routing_config.strategy.prefer_loaded_models,
-        );
+        let primary = strategy_from_config(&routing_config.strategy);
 
         let fallback_name = routing_config.strategy.fallback_strategy.trim();
         let fallback = if fallback_name.is_empty() {
             None
         } else {
-            Some(strategy_from_name(
-                fallback_name,
-                routing_config.strategy.prefer_loaded_models,
-            ))
+            let fallback_config = StrategyConfig {
+                name: fallback_name.to_string(),
+                prefer_loaded_models: routing_config.strategy.prefer_loaded_models,
+                consider_queue_depth: routing_config.strategy.consider_queue_depth,
+                fallback_strategy: String::new(),
+                hysteresis_threshold: routing_config.strategy.hysteresis_threshold,
+                health_weighted: routing_config.strategy.health_weighted,
+                admission_control: routing_config.strategy.admission_control,
+            };
+            Some(strategy_from_config(&fallback_config))
         };
 
         Self {
             registry,
             strategy: primary,
             fallback_strategy: fallback,
+            admission_control: routing_config.strategy.admission_control,
         }
     }
 
@@ -54,6 +60,14 @@ impl RouterService {
         if candidates.is_empty() {
             return Err(Error::InvalidInput(format!(
                 "No healthy backend endpoint supports model '{}'",
+                request.model()
+            )));
+        }
+
+        // Step 4: Capacity-aware admission control
+        if self.admission_control && candidates.iter().all(|e| e.active_requests >= e.capacity) {
+            return Err(Error::ServiceUnavailable(format!(
+                "All backend endpoints for model '{}' are at capacity",
                 request.model()
             )));
         }
@@ -79,16 +93,27 @@ impl RouterService {
     }
 }
 
-fn strategy_from_name(name: &str, prefer_loaded_models: bool) -> Box<dyn RoutingStrategy> {
-    let base: Box<dyn RoutingStrategy> = match name {
+fn strategy_from_config(config: &StrategyConfig) -> Box<dyn RoutingStrategy> {
+    let base: Box<dyn RoutingStrategy> = match config.name.as_str() {
         "random" => Box::<RandomStrategy>::default(),
         "weighted" => Box::<WeightedStrategy>::default(),
+        "least_busy" | "model_aware_least_busy" => {
+            Box::new(LeastBusyStrategy::new(config.hysteresis_threshold))
+        }
+        "least_connections" => Box::<LeastConnectionsStrategy>::default(),
         _ => Box::<RoundRobinStrategy>::default(),
     };
 
-    if prefer_loaded_models {
-        Box::new(ModelAwareStrategy::new(base))
+    // Composition order: base → HealthWeighted → ModelAware
+    let with_health: Box<dyn RoutingStrategy> = if config.health_weighted {
+        Box::new(HealthWeightedStrategy::new(base))
     } else {
         base
+    };
+
+    if config.prefer_loaded_models {
+        Box::new(ModelAwareStrategy::new(with_health))
+    } else {
+        with_health
     }
 }
