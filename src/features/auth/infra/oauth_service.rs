@@ -1,13 +1,17 @@
 //! OAuth service for handling OAuth flows and user provisioning
+//!
+//! This service uses oauth2 crate types and our concrete provider implementations.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::bootstrap::AppState;
 use crate::error::{Error, Result};
-use crate::features::auth::domain::oauth::OAuthUserInfo;
+use crate::features::auth::domain::oauth::{OAuthError, OAuthTokenResponse, OAuthUserInfo};
 use crate::features::auth::domain::token::TokenClaims;
+use crate::features::auth::infra::oauth_providers::{
+    GitHubEnterpriseProvider, GitHubOAuthProvider, OAuthProviderOps,
+};
 use crate::features::auth::infra::token_service::create_token;
 use crate::features::auth::infra::{
     InMemoryOAuthStateStore, OAuthStateStore, create_oauth_flow_state,
@@ -16,14 +20,22 @@ use crate::shared::config::types::{OAuthProvider as ConfigProvider, OAuthProvide
 
 /// OAuth service handling authentication flows
 pub struct OAuthService {
-    providers: HashMap<String, Arc<dyn crate::features::auth::domain::oauth::OAuthProvider>>,
+    /// GitHub provider (if configured)
+    github_provider: Option<Arc<GitHubOAuthProvider>>,
+    /// GitHub Enterprise provider (if configured)
+    github_enterprise_provider: Option<Arc<GitHubEnterpriseProvider>>,
+    /// State store for CSRF/PKCE
     state_store: Arc<dyn OAuthStateStore>,
 }
 
 impl std::fmt::Debug for OAuthService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OAuthService")
-            .field("providers", &self.providers.keys().collect::<Vec<_>>())
+            .field("github_provider", &self.github_provider.is_some())
+            .field(
+                "github_enterprise_provider",
+                &self.github_enterprise_provider.is_some(),
+            )
             .field("state_store", &"<OAuthStateStore>")
             .finish()
     }
@@ -45,53 +57,129 @@ pub struct OAuthAuthResponse {
     pub is_new_user: bool,
 }
 
+/// Provider info for listing
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProviderInfo {
+    pub name: String,
+    pub provider_type: String,
+}
+
+/// Enum to hold provider references
+enum ProviderRef<'a> {
+    GitHub(&'a GitHubOAuthProvider),
+    GitHubEnterprise(&'a GitHubEnterpriseProvider),
+}
+
+impl OAuthProviderOps for ProviderRef<'_> {
+    fn get_authorization_url(
+        &self,
+        csrf_state: &str,
+        pkce_challenge: &str,
+        redirect_uri: &str,
+    ) -> String {
+        match self {
+            ProviderRef::GitHub(p) => {
+                p.get_authorization_url(csrf_state, pkce_challenge, redirect_uri)
+            }
+            ProviderRef::GitHubEnterprise(p) => {
+                p.get_authorization_url(csrf_state, pkce_challenge, redirect_uri)
+            }
+        }
+    }
+
+    async fn exchange_code(
+        &self,
+        code: &str,
+        pkce_verifier: &str,
+        redirect_uri: &str,
+    ) -> std::result::Result<OAuthTokenResponse, OAuthError> {
+        match self {
+            ProviderRef::GitHub(p) => p.exchange_code(code, pkce_verifier, redirect_uri).await,
+            ProviderRef::GitHubEnterprise(p) => {
+                p.exchange_code(code, pkce_verifier, redirect_uri).await
+            }
+        }
+    }
+
+    async fn get_user_info(
+        &self,
+        access_token: &str,
+    ) -> std::result::Result<OAuthUserInfo, OAuthError> {
+        match self {
+            ProviderRef::GitHub(p) => p.get_user_info(access_token).await,
+            ProviderRef::GitHubEnterprise(p) => p.get_user_info(access_token).await,
+        }
+    }
+
+    async fn get_user_organizations(
+        &self,
+        access_token: &str,
+    ) -> std::result::Result<Vec<String>, OAuthError> {
+        match self {
+            ProviderRef::GitHub(p) => p.get_user_organizations(access_token).await,
+            ProviderRef::GitHubEnterprise(p) => p.get_user_organizations(access_token).await,
+        }
+    }
+}
+
 impl OAuthService {
     /// Create a new OAuth service from configuration
     pub fn new(config_providers: &[ConfigProvider]) -> Result<Self> {
-        let mut providers: HashMap<
-            String,
-            Arc<dyn crate::features::auth::domain::oauth::OAuthProvider>,
-        > = HashMap::new();
+        let mut github_provider: Option<Arc<GitHubOAuthProvider>> = None;
+        let mut github_enterprise_provider: Option<Arc<GitHubEnterpriseProvider>> = None;
 
         for provider_config in config_providers {
-            let provider: Arc<dyn crate::features::auth::domain::oauth::OAuthProvider> =
-                match provider_config.provider_type {
-                    OAuthProviderType::GitHub => Arc::new(
-                        crate::features::auth::infra::oauth_providers::GitHubOAuthProvider::new(
-                            provider_config.name.clone(),
-                            provider_config.client_id.clone(),
-                            provider_config.client_secret.clone(),
-                            provider_config.scopes.clone(),
-                        ),
-                    ),
-                    OAuthProviderType::GitHubEnterprise => {
-                        let base_url = provider_config.enterprise_url.clone().ok_or_else(|| {
-                            Error::Config(
-                                "enterprise_url required for GitHub Enterprise".to_string(),
-                            )
-                        })?;
-                        Arc::new(crate::features::auth::infra::oauth_providers::GitHubEnterpriseProvider::new(
+            match provider_config.provider_type {
+                OAuthProviderType::GitHub => {
+                    github_provider = Some(Arc::new(GitHubOAuthProvider::new(
+                        provider_config.name.clone(),
+                        provider_config.client_id.clone(),
+                        provider_config.client_secret.clone(),
+                        provider_config.scopes.clone(),
+                    )?));
+                }
+                OAuthProviderType::GitHubEnterprise => {
+                    let base_url = provider_config.enterprise_url.clone().ok_or_else(|| {
+                        Error::Config("enterprise_url required for GitHub Enterprise".to_string())
+                    })?;
+                    github_enterprise_provider = Some(Arc::new(GitHubEnterpriseProvider::new(
                         provider_config.name.clone(),
                         provider_config.client_id.clone(),
                         provider_config.client_secret.clone(),
                         provider_config.scopes.clone(),
                         base_url,
-                    ))
-                    }
-                    OAuthProviderType::Oidc => {
-                        return Err(Error::Config(
-                            "OIDC provider not yet implemented".to_string(),
-                        ));
-                    }
-                };
-
-            providers.insert(provider_config.name.clone(), provider);
+                    )?));
+                }
+                OAuthProviderType::Oidc => {
+                    return Err(Error::Config(
+                        "OIDC provider not yet implemented".to_string(),
+                    ));
+                }
+            }
         }
 
         Ok(Self {
-            providers,
+            github_provider,
+            github_enterprise_provider,
             state_store: Arc::new(InMemoryOAuthStateStore::new()),
         })
+    }
+
+    /// Get provider by name
+    fn get_provider(&self, name: &str) -> Option<ProviderRef<'_>> {
+        // Check GitHub provider
+        if let Some(ref provider) = self.github_provider {
+            if provider.name == name {
+                return Some(ProviderRef::GitHub(provider.as_ref()));
+            }
+        }
+        // Check GitHub Enterprise provider
+        if let Some(ref provider) = self.github_enterprise_provider {
+            if provider.name == name {
+                return Some(ProviderRef::GitHubEnterprise(provider.as_ref()));
+            }
+        }
+        None
     }
 
     /// Initiate OAuth login flow
@@ -101,23 +189,21 @@ impl OAuthService {
         redirect_url: Option<String>,
         callback_base_url: &str,
     ) -> Result<OAuthInitiateResponse> {
-        let provider = self.providers.get(provider_name).ok_or_else(|| {
+        // Check provider exists
+        let provider = self.get_provider(provider_name).ok_or_else(|| {
             Error::NotFound(format!("OAuth provider '{}' not found", provider_name))
         })?;
 
-        // Create OAuth state
+        // Create OAuth state with CSRF and PKCE
         let (state, state_token) = create_oauth_flow_state(
             provider_name.to_string(),
             redirect_url,
             10, // 10 minutes expiration
         );
 
-        // Store state
+        // Store state (clone to keep a copy for later)
+        let state_clone = state.clone();
         self.state_store.store_state(state)?;
-
-        // Generate PKCE challenge
-        let pkce_verifier = InMemoryOAuthStateStore::generate_pkce_verifier();
-        let pkce_challenge = InMemoryOAuthStateStore::generate_pkce_challenge(&pkce_verifier);
 
         // Build redirect URI
         let redirect_uri = format!(
@@ -125,8 +211,12 @@ impl OAuthService {
             callback_base_url, provider_name
         );
 
-        // Generate authorization URL
-        let auth_url = provider.get_authorization_url(&state_token, &pkce_challenge, &redirect_uri);
+        // Generate authorization URL using the provider
+        let auth_url = provider.get_authorization_url(
+            &state_clone.csrf_token,
+            &state_clone.pkce_challenge,
+            &redirect_uri,
+        );
 
         Ok(OAuthInitiateResponse {
             authorization_url: auth_url,
@@ -157,8 +247,7 @@ impl OAuthService {
 
         // Get provider
         let provider = self
-            .providers
-            .get(&oauth_state.provider_name)
+            .get_provider(&oauth_state.provider_name)
             .ok_or_else(|| {
                 Error::NotFound(format!(
                     "OAuth provider '{}' not found",
@@ -180,13 +269,13 @@ impl OAuthService {
 
         // Get user info
         let user_info = provider
-            .get_user_info(&token)
+            .get_user_info(&token.access_token)
             .await
             .map_err(|e| Error::Authentication(format!("Failed to get user info: {}", e)))?;
 
         // Get organizations for team mapping
         let orgs = provider
-            .get_user_organizations(&token)
+            .get_user_organizations(&token.access_token)
             .await
             .unwrap_or_default();
 
@@ -229,13 +318,35 @@ impl OAuthService {
 
         if let Some(user) = existing_user {
             // Get user's team from team_memberships
-            let team_id = sqlx::query_scalar!(
+            let team_id = match sqlx::query_scalar!(
                 "SELECT team_id FROM team_memberships WHERE user_id = $1 LIMIT 1",
                 user.id
             )
             .fetch_optional(&state.db_pool)
             .await?
-            .unwrap_or_else(Uuid::new_v4);
+            {
+                Some(id) => id,
+                None => {
+                    // User exists but has no team - create one
+                    let new_team_id = Uuid::new_v4();
+                    sqlx::query!(
+                        "INSERT INTO teams (id, name, description) VALUES ($1, $2, $3)",
+                        new_team_id,
+                        format!("team-{}", user.id),
+                        "Auto-created team for existing user"
+                    )
+                    .execute(&state.db_pool)
+                    .await?;
+                    sqlx::query!(
+                        "INSERT INTO team_memberships (user_id, team_id, role) VALUES ($1, $2, 'admin')",
+                        user.id,
+                        new_team_id
+                    )
+                    .execute(&state.db_pool)
+                    .await?;
+                    new_team_id
+                }
+            };
 
             // Update last login
             sqlx::query!(
@@ -292,19 +403,22 @@ impl OAuthService {
 
     /// List configured OAuth providers (public info only)
     pub fn list_providers(&self) -> Vec<ProviderInfo> {
-        self.providers
-            .values()
-            .map(|p| ProviderInfo {
-                name: p.name().to_string(),
-                provider_type: p.provider_type().to_string(),
-            })
-            .collect()
-    }
-}
+        let mut providers = Vec::new();
 
-/// Public information about an OAuth provider
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ProviderInfo {
-    pub name: String,
-    pub provider_type: String,
+        if let Some(ref p) = self.github_provider {
+            providers.push(ProviderInfo {
+                name: p.name.clone(),
+                provider_type: "github".to_string(),
+            });
+        }
+
+        if let Some(ref p) = self.github_enterprise_provider {
+            providers.push(ProviderInfo {
+                name: p.name.clone(),
+                provider_type: "github_enterprise".to_string(),
+            });
+        }
+
+        providers
+    }
 }
