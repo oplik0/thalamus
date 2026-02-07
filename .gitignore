@@ -49,3 +49,5 @@ ui/node_modules/
 ui/.expo/
 ui/dist/
 .old
+
+docs/.gen

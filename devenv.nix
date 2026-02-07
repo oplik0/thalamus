@@ -25,6 +25,12 @@
     gh
 
     kcl-language-server
+
+    glib
+    glibc
+
+    pnpm
+    nodejs_24
   ];
 
   # https://devenv.sh/languages/
@@ -121,7 +127,7 @@
       sqlx migrate add "$1"
     '';
     db-reset.exec = ''
-      psql -h localhost -d thalamus -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" || true
+      psql "$DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" || true
       sqlx migrate run --database-url "$DATABASE_URL"
     '';
 
