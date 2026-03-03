@@ -173,6 +173,42 @@ schema RateLimitConfig:
         default_requests_per_minute > 0, "Requests per minute must be positive"
         burst_size > 0, "Burst size must be positive"
 
+schema TeamMappingConfig:
+    """Configuration for OAuth team mapping"""
+    auto_create_team: bool = True
+    default_team_id?: str  # Optional team ID for fixed team assignment
+    org_to_team_mapping: {str: str} = {}  # Map of provider org names to team IDs
+
+schema OAuthProviderConfig:
+    """OAuth provider configuration"""
+    name: str  # Provider identifier (e.g., "github", "github-enterprise")
+    provider_type: "github" | "github_enterprise" | "oidc"
+    client_id: str
+    client_secret: str
+    authorization_endpoint?: str  # Optional override
+    token_endpoint?: str  # Optional override
+    userinfo_endpoint?: str  # Optional override
+    scopes: [str] = ["read:user", "user:email"]
+    enterprise_url?: str  # For GitHub Enterprise Server
+    team_mapping: TeamMappingConfig = TeamMappingConfig {}
+
+    check:
+        len(name) > 0, "Provider name cannot be empty"
+        len(client_id) > 0, "Client ID cannot be empty"
+        len(client_secret) > 0, "Client secret cannot be empty"
+        provider_type != "github_enterprise" or enterprise_url != None, \
+            "enterprise_url is required for github_enterprise provider type"
+
+schema SecurityConfig:
+    """Security secrets configuration"""
+    api_key_secret: str  # Secret for HMAC signing of API keys (min 32 bytes recommended)
+    paseto_secret_key: str  # Secret key for PASETO token signing (must be exactly 32 bytes)
+    opaque_server_setup: str = "dev"  # OPAQUE server setup string; use 'dev' for development
+
+    check:
+        len(api_key_secret) > 0, "api_key_secret cannot be empty"
+        len(paseto_secret_key) > 0, "paseto_secret_key cannot be empty"
+
 # Root configuration schema
 schema ThalamusConfig:
     """Root configuration for Thalamus LLM Router"""
@@ -181,8 +217,10 @@ schema ThalamusConfig:
     backends: {str: BackendConfig}
     routing: RoutingConfig
     observability: ObservabilityConfig
+    security: SecurityConfig
     cache?: CacheConfig
     rate_limiting?: RateLimitConfig
+    oauth_providers: [OAuthProviderConfig] = []
 
     check:
         len(backends) > 0, "At least one backend must be configured"

@@ -83,3 +83,164 @@ impl TokenClaims {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_token_claims_new() {
+        let user_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let roles = vec!["admin".to_string(), "user".to_string()];
+        let scopes = vec!["read".to_string(), "write".to_string()];
+
+        let claims = TokenClaims::new(
+            user_id,
+            team_id,
+            Some(roles.clone()),
+            Some(scopes.clone()),
+            3600,
+        );
+
+        assert_eq!(claims.sub, user_id);
+        assert_eq!(claims.dom, team_id);
+        assert_eq!(claims.roles, Some(roles));
+        assert_eq!(claims.scopes, Some(scopes));
+        assert!(!claims.is_expired());
+        assert!(claims.is_valid());
+        assert!(claims.nbf.is_none());
+    }
+
+    #[test]
+    fn test_token_claims_expiration() {
+        let claims = TokenClaims::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            None,
+            None,
+            3600, // 1 hour
+        );
+
+        assert!(!claims.is_expired());
+        assert!(claims.is_valid());
+    }
+
+    #[test]
+    fn test_token_claims_already_expired() {
+        // Create claims that expired 1 hour ago
+        let claims = TokenClaims::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            None,
+            None,
+            -3600, // Negative = already expired
+        );
+
+        assert!(claims.is_expired());
+        assert!(!claims.is_valid());
+    }
+
+    #[test]
+    fn test_token_claims_not_yet_valid() {
+        let user_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let now = Utc::now();
+
+        let claims = TokenClaims {
+            sub: user_id,
+            dom: team_id,
+            roles: None,
+            scopes: None,
+            iat: now,
+            exp: now + chrono::Duration::hours(1),
+            nbf: Some(now + chrono::Duration::minutes(5)), // Not valid for 5 minutes
+            jti: Uuid::new_v4(),
+        };
+
+        assert!(!claims.is_expired());
+        assert!(!claims.is_valid()); // Not yet valid due to nbf
+    }
+
+    #[test]
+    fn test_token_claims_with_past_nbf() {
+        let user_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let now = Utc::now();
+
+        let claims = TokenClaims {
+            sub: user_id,
+            dom: team_id,
+            roles: None,
+            scopes: None,
+            iat: now - chrono::Duration::hours(1),
+            exp: now + chrono::Duration::hours(1),
+            nbf: Some(now - chrono::Duration::minutes(5)), // Already valid
+            jti: Uuid::new_v4(),
+        };
+
+        assert!(!claims.is_expired());
+        assert!(claims.is_valid());
+    }
+
+    #[test]
+    fn test_token_claims_exactly_at_expiration() {
+        // This test is timing-sensitive, so we use a very short duration
+        let claims = TokenClaims::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            None,
+            None,
+            0, // Expires immediately
+        );
+
+        // Should be expired or very close to it
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        assert!(claims.is_expired());
+    }
+
+    #[test]
+    fn test_token_claims_serialization() {
+        let user_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let roles = vec!["admin".to_string()];
+        let scopes = vec!["read".to_string()];
+
+        let claims = TokenClaims::new(user_id, team_id, Some(roles), Some(scopes), 3600);
+
+        let json = serde_json::to_string(&claims).expect("Should serialize");
+        assert!(json.contains(&user_id.to_string()));
+        assert!(json.contains(&team_id.to_string()));
+        assert!(json.contains("admin"));
+        assert!(json.contains("read"));
+
+        let deserialized: TokenClaims = serde_json::from_str(&json).expect("Should deserialize");
+        assert_eq!(deserialized.sub, claims.sub);
+        assert_eq!(deserialized.dom, claims.dom);
+        assert_eq!(deserialized.roles, claims.roles);
+        assert_eq!(deserialized.scopes, claims.scopes);
+        assert_eq!(deserialized.jti, claims.jti);
+    }
+
+    #[test]
+    fn test_token_claims_without_optional_fields() {
+        let user_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+
+        let claims = TokenClaims::new(
+            user_id, team_id, None, // No roles
+            None, // No scopes
+            3600,
+        );
+
+        let json = serde_json::to_string(&claims).expect("Should serialize");
+        // Roles and scopes should be skipped in serialization when None
+        assert!(!json.contains("roles"));
+        assert!(!json.contains("scopes"));
+
+        let deserialized: TokenClaims = serde_json::from_str(&json).expect("Should deserialize");
+        assert!(deserialized.roles.is_none());
+        assert!(deserialized.scopes.is_none());
+    }
+}
