@@ -222,6 +222,56 @@ fn default_burst() -> u32 {
     10
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TeamMappingConfig {
+    #[serde(default = "default_true")]
+    pub auto_create_team: bool,
+    pub default_team_id: Option<String>,
+    #[serde(default)]
+    pub org_to_team_mapping: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuthProviderType {
+    GitHub,
+    GitHubEnterprise,
+    Oidc,
+}
+
+fn default_oauth_scopes() -> Vec<String> {
+    vec!["read:user".to_string(), "user:email".to_string()]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthProvider {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub provider_type: OAuthProviderType,
+    pub client_id: String,
+    pub client_secret: String,
+    pub authorization_endpoint: Option<String>,
+    pub token_endpoint: Option<String>,
+    pub userinfo_endpoint: Option<String>,
+    #[serde(default = "default_oauth_scopes")]
+    pub scopes: Vec<String>,
+    pub enterprise_url: Option<String>,
+    #[serde(default)]
+    pub team_mapping: TeamMappingConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    pub api_key_secret: String,
+    pub paseto_secret_key: String,
+    #[serde(default = "default_opaque_server_setup")]
+    pub opaque_server_setup: String,
+}
+
+fn default_opaque_server_setup() -> String {
+    "dev".to_string()
+}
+
 /// Root configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -232,6 +282,9 @@ pub struct Config {
     pub observability: ObservabilityConfig,
     pub cache: Option<CacheConfig>,
     pub rate_limiting: Option<RateLimitConfig>,
+    #[serde(default)]
+    pub oauth_providers: Vec<OAuthProvider>,
+    pub security: SecurityConfig,
 }
 
 impl Config {

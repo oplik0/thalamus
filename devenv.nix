@@ -23,6 +23,8 @@
     # cargo-dist # TODO: consider adding for releases
 
     gh
+
+    kcl-language-server
   ];
 
   # https://devenv.sh/languages/
@@ -119,8 +121,8 @@
       sqlx migrate add "$1"
     '';
     db-reset.exec = ''
-      psql -h localhost -U postgres -d thalamus_test -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" || true
-      sqlx migrate run --database-url "$TEST_DATABASE_URL"
+      psql -h localhost -d thalamus -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" || true
+      sqlx migrate run --database-url "$DATABASE_URL"
     '';
 
     # Service management
@@ -130,6 +132,11 @@
     # Utilities
     clean.exec = "cargo clean";
     update.exec = "cargo update";
+
+    # Frontend (ui)
+    ui-dev.exec = "cd ui && pnpm start --web";
+    ui-lint.exec = "cd ui && pnpm run lint";
+    ui-format.exec = "cd ui && pnpm run format";
   };
 
   # https://devenv.sh/basics/
@@ -201,7 +208,6 @@
       # biome.enable = true;
       end-of-file-fixer.enable = true;
       trim-trailing-whitespace.enable = true;
-      check-added-large-files.enable = true;
       check-json.enable = true;
       mixed-line-endings.enable = true;
     };

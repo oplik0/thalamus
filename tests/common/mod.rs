@@ -102,3 +102,94 @@ impl Drop for TestFixtures {
         // Cleanup happens automatically via PgPool drop
     }
 }
+
+/// Initialize a test AppState
+#[allow(dead_code)]
+pub async fn init_test_state() -> thalamus::bootstrap::AppState {
+    let pool = create_test_pool().await;
+    run_migrations(&pool).await;
+
+    // Initialize global task pool for tests
+    thalamus::features::auth::infra::init_task_db_pool(pool.clone());
+
+    let config = thalamus::shared::config::types::Config {
+        server: thalamus::shared::config::types::ServerConfig {
+            host: "127.0.0.1".to_string(),
+            port: 0, // Ephemeral port
+            workers: None,
+        },
+        database: thalamus::shared::config::types::DatabaseConfig {
+            url: std::env::var("DATABASE_URL")
+                .unwrap_or_else(|_| "postgres://postgres@localhost:5432/thalamus_test".to_string()),
+            max_connections: 5,
+            min_connections: 1,
+            pool_timeout: "30s".to_string(),
+            idle_timeout: "10m".to_string(),
+            max_lifetime: "30m".to_string(),
+        },
+        backends: std::collections::HashMap::new(),
+        routing: thalamus::shared::config::types::RoutingConfig {
+            strategy: thalamus::shared::config::types::StrategyConfig {
+                name: "round_robin".to_string(),
+                prefer_loaded_models: true,
+                consider_queue_depth: true,
+                fallback_strategy: "round_robin".to_string(),
+            },
+            priority_queues: {
+                let mut map = std::collections::HashMap::new();
+                map.insert(
+                    "realtime".to_string(),
+                    thalamus::shared::config::types::QueueConfig {
+                        priority: 1,
+                        max_queue_size: 100,
+                        timeout: "30s".to_string(),
+                    },
+                );
+                map
+            },
+            default_queue: "realtime".to_string(),
+        },
+        observability: thalamus::shared::config::types::ObservabilityConfig {
+            tracing: thalamus::shared::config::types::TracingConfig {
+                enabled: false,
+                level: "info".to_string(),
+                format: "json".to_string(),
+                otlp_endpoint: None,
+                sample_rate: 1.0,
+            },
+            metrics: thalamus::shared::config::types::MetricsConfig {
+                enabled: false,
+                prometheus_endpoint: "/metrics".to_string(),
+                collection_interval: "10s".to_string(),
+                include_per_backend: true,
+                include_per_model: true,
+            },
+            logging_per_team: None,
+        },
+        cache: None,
+        rate_limiting: None,
+        oauth_providers: Vec::new(),
+        security: thalamus::shared::config::types::SecurityConfig {
+            api_key_secret: "test_secret_key_must_be_at_least_32_bytes_long".to_string(),
+            paseto_secret_key: "exactly_32_bytes_for_paseto_key!".to_string(),
+            opaque_server_setup: "test_opaque_setup".to_string(),
+        },
+    };
+    let tasks = axum_tasks::AppTasks::new();
+
+    // Create OAuth service with empty providers for tests
+    let oauth_service = std::sync::Arc::new(
+        thalamus::features::auth::infra::OAuthService::new(&config.oauth_providers)
+            .expect("Failed to create OAuth service for tests"),
+    );
+
+    thalamus::bootstrap::AppState {
+        db_pool: pool,
+        config,
+        tasks,
+        rate_limiter: None,
+        authorizer: None,
+        breach_detector: None,
+        oauth_service,
+    }
+}
