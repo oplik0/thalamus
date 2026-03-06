@@ -101,6 +101,16 @@ pub struct StrategyConfig {
     pub consider_queue_depth: bool,
     #[serde(default = "default_fallback")]
     pub fallback_strategy: String,
+    #[serde(default = "default_hysteresis")]
+    pub hysteresis_threshold: f64,
+    #[serde(default)]
+    pub health_weighted: bool,
+    #[serde(default = "default_true")]
+    pub admission_control: bool,
+}
+
+fn default_hysteresis() -> f64 {
+    0.10
 }
 
 fn default_fallback() -> String {

@@ -140,6 +140,9 @@ pub async fn init_test_state() -> thalamus::bootstrap::AppState {
                 prefer_loaded_models: true,
                 consider_queue_depth: true,
                 fallback_strategy: "round_robin".to_string(),
+                hysteresis_threshold: 0.10,
+                health_weighted: false,
+                admission_control: true,
             },
             priority_queues: {
                 let mut map = std::collections::HashMap::new();
