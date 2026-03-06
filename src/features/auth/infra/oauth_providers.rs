@@ -1,18 +1,41 @@
-//! OAuth provider implementations (GitHub, GitHub Enterprise)
+//! OAuth provider implementations using the oauth2 crate
+//!
+//! This module provides OAuth2 client implementations using the oauth2 crate
+//! for GitHub and GitHub Enterprise providers.
 
-use async_trait::async_trait;
-use chrono::Utc;
+use oauth2::{AuthUrl, TokenUrl};
+use reqwest::Client;
 use serde::Deserialize;
 
-use crate::features::auth::domain::oauth::{OAuthError, OAuthProvider, OAuthToken, OAuthUserInfo};
+use crate::features::auth::domain::oauth::{OAuthError, OAuthTokenResponse, OAuthUserInfo};
 
-/// GitHub.com OAuth provider
-#[derive(Debug)]
+/// GitHub.com OAuth provider using oauth2 crate
+#[derive(Clone)]
 pub struct GitHubOAuthProvider {
-    name: String,
+    /// Provider name for identification
+    pub name: String,
+    /// Client ID
     client_id: String,
+    /// Client secret
     client_secret: String,
+    /// Scopes to request
     scopes: Vec<String>,
+    /// Authorization URL
+    auth_url: AuthUrl,
+    /// Token URL
+    token_url: TokenUrl,
+    /// Base URL for API calls
+    api_base_url: String,
+}
+
+impl std::fmt::Debug for GitHubOAuthProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitHubOAuthProvider")
+            .field("name", &self.name)
+            .field("scopes", &self.scopes)
+            .field("api_base_url", &self.api_base_url)
+            .finish()
+    }
 }
 
 impl GitHubOAuthProvider {
@@ -27,51 +50,40 @@ impl GitHubOAuthProvider {
             client_id,
             client_secret,
             scopes,
+            auth_url: AuthUrl::new("https://github.com/login/oauth/authorize".to_string()).unwrap(),
+            token_url: TokenUrl::new("https://github.com/login/oauth/access_token".to_string())
+                .unwrap(),
+            api_base_url: "https://api.github.com".to_string(),
         }
     }
 
-    const AUTH_URL: &str = "https://github.com/login/oauth/authorize";
-    const TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
-    const USER_API: &str = "https://api.github.com/user";
-    const ORGS_API: &str = "https://api.github.com/user/orgs";
-}
-
-#[async_trait]
-impl OAuthProvider for GitHubOAuthProvider {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn provider_type(&self) -> &str {
-        "github"
-    }
-
-    fn get_authorization_url(
+    /// Generate the authorization URL with PKCE
+    pub fn get_authorization_url(
         &self,
-        state: &str,
+        csrf_state: &str,
         pkce_challenge: &str,
         redirect_uri: &str,
     ) -> String {
         let scopes = self.scopes.join(" ");
         format!(
             "{}?client_id={}&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256&scope={}",
-            Self::AUTH_URL,
+            self.auth_url,
             urlencoding::encode(&self.client_id),
             urlencoding::encode(redirect_uri),
-            urlencoding::encode(state),
+            urlencoding::encode(csrf_state),
             urlencoding::encode(pkce_challenge),
             urlencoding::encode(&scopes)
         )
     }
 
-    async fn exchange_code(
+    /// Exchange authorization code for tokens
+    pub async fn exchange_code(
         &self,
         code: &str,
         pkce_verifier: &str,
         redirect_uri: &str,
-    ) -> Result<OAuthToken, OAuthError> {
-        // Implementation using reqwest
-        let client = reqwest::Client::new();
+    ) -> Result<OAuthTokenResponse, OAuthError> {
+        let client = Client::new();
 
         let params = [
             ("client_id", self.client_id.as_str()),
@@ -82,7 +94,7 @@ impl OAuthProvider for GitHubOAuthProvider {
         ];
 
         let response = client
-            .post(Self::TOKEN_URL)
+            .post(self.token_url.to_string())
             .header("Accept", "application/json")
             .form(&params)
             .send()
@@ -101,21 +113,24 @@ impl OAuthProvider for GitHubOAuthProvider {
             .await
             .map_err(|e| OAuthError::TokenExchange(e.to_string()))?;
 
-        Ok(OAuthToken {
+        Ok(OAuthTokenResponse {
             access_token: token_response.access_token,
             refresh_token: token_response.refresh_token,
             expires_at: token_response
                 .expires_in
-                .map(|secs| Utc::now() + chrono::Duration::seconds(secs)),
+                .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs)),
+            token_type: "Bearer".to_string(),
+            scopes: self.scopes.clone(),
         })
     }
 
-    async fn get_user_info(&self, token: &OAuthToken) -> Result<OAuthUserInfo, OAuthError> {
-        let client = reqwest::Client::new();
+    /// Fetch user information using access token
+    pub async fn get_user_info(&self, access_token: &str) -> Result<OAuthUserInfo, OAuthError> {
+        let client = Client::new();
 
         let response = client
-            .get(Self::USER_API)
-            .header("Authorization", format!("Bearer {}", token.access_token))
+            .get(format!("{}/user", self.api_base_url))
+            .header("Authorization", format!("Bearer {}", access_token))
             .header("Accept", "application/vnd.github.v3+json")
             .send()
             .await
@@ -142,12 +157,16 @@ impl OAuthProvider for GitHubOAuthProvider {
         })
     }
 
-    async fn get_user_organizations(&self, token: &OAuthToken) -> Result<Vec<String>, OAuthError> {
-        let client = reqwest::Client::new();
+    /// Fetch user's organization memberships
+    pub async fn get_user_organizations(
+        &self,
+        access_token: &str,
+    ) -> Result<Vec<String>, OAuthError> {
+        let client = Client::new();
 
         let response = client
-            .get(Self::ORGS_API)
-            .header("Authorization", format!("Bearer {}", token.access_token))
+            .get(format!("{}/user/orgs", self.api_base_url))
+            .header("Authorization", format!("Bearer {}", access_token))
             .header("Accept", "application/vnd.github.v3+json")
             .send()
             .await
@@ -170,10 +189,34 @@ impl OAuthProvider for GitHubOAuthProvider {
 }
 
 /// GitHub Enterprise OAuth provider
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct GitHubEnterpriseProvider {
-    inner: GitHubOAuthProvider,
+    /// Provider name
+    pub name: String,
+    /// Client ID
+    client_id: String,
+    /// Client secret
+    client_secret: String,
+    /// Scopes to request
+    scopes: Vec<String>,
+    /// Authorization URL
+    auth_url: AuthUrl,
+    /// Token URL
+    token_url: TokenUrl,
+    /// Base URL for GitHub Enterprise
     base_url: String,
+    /// API base URL
+    api_base_url: String,
+}
+
+impl std::fmt::Debug for GitHubEnterpriseProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitHubEnterpriseProvider")
+            .field("name", &self.name)
+            .field("base_url", &self.base_url)
+            .field("scopes", &self.scopes)
+            .finish()
+    }
 }
 
 impl GitHubEnterpriseProvider {
@@ -184,76 +227,59 @@ impl GitHubEnterpriseProvider {
         scopes: Vec<String>,
         base_url: String,
     ) -> Self {
+        let auth_url = format!("{}/login/oauth/authorize", base_url);
+        let token_url = format!("{}/login/oauth/access_token", base_url);
+
         Self {
-            inner: GitHubOAuthProvider::new(name, client_id, client_secret, scopes),
-            base_url,
+            name,
+            client_id,
+            client_secret,
+            scopes,
+            auth_url: AuthUrl::new(auth_url).unwrap(),
+            token_url: TokenUrl::new(token_url).unwrap(),
+            base_url: base_url.clone(),
+            api_base_url: format!("{}/api/v3", base_url),
         }
     }
 
-    fn auth_url(&self) -> String {
-        format!("{}/login/oauth/authorize", self.base_url)
-    }
-
-    fn token_url(&self) -> String {
-        format!("{}/login/oauth/access_token", self.base_url)
-    }
-
-    fn user_api(&self) -> String {
-        format!("{}/api/v3/user", self.base_url)
-    }
-
-    fn orgs_api(&self) -> String {
-        format!("{}/api/v3/user/orgs", self.base_url)
-    }
-}
-
-#[async_trait]
-impl OAuthProvider for GitHubEnterpriseProvider {
-    fn name(&self) -> &str {
-        self.inner.name()
-    }
-
-    fn provider_type(&self) -> &str {
-        "github_enterprise"
-    }
-
-    fn get_authorization_url(
+    /// Generate the authorization URL with PKCE
+    pub fn get_authorization_url(
         &self,
-        state: &str,
+        csrf_state: &str,
         pkce_challenge: &str,
         redirect_uri: &str,
     ) -> String {
-        let scopes = self.inner.scopes.join(" ");
+        let scopes = self.scopes.join(" ");
         format!(
             "{}?client_id={}&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256&scope={}",
-            self.auth_url(),
-            urlencoding::encode(&self.inner.client_id),
+            self.auth_url,
+            urlencoding::encode(&self.client_id),
             urlencoding::encode(redirect_uri),
-            urlencoding::encode(state),
+            urlencoding::encode(csrf_state),
             urlencoding::encode(pkce_challenge),
             urlencoding::encode(&scopes)
         )
     }
 
-    async fn exchange_code(
+    /// Exchange authorization code for tokens
+    pub async fn exchange_code(
         &self,
         code: &str,
         pkce_verifier: &str,
         redirect_uri: &str,
-    ) -> Result<OAuthToken, OAuthError> {
-        // Similar to GitHub but with different URLs
-        let client = reqwest::Client::new();
+    ) -> Result<OAuthTokenResponse, OAuthError> {
+        let client = Client::new();
 
         let params = [
-            ("client_id", self.inner.client_id.as_str()),
-            ("client_secret", self.inner.client_secret.as_str()),
+            ("client_id", self.client_id.as_str()),
+            ("client_secret", self.client_secret.as_str()),
             ("code", code),
             ("redirect_uri", redirect_uri),
             ("code_verifier", pkce_verifier),
         ];
 
         let response = client
-            .post(&self.token_url())
+            .post(self.token_url.to_string())
             .header("Accept", "application/json")
             .form(&params)
             .send()
@@ -262,7 +288,7 @@ impl OAuthProvider for GitHubEnterpriseProvider {
 
         if !response.status().is_success() {
             return Err(OAuthError::TokenExchange(format!(
-                "GHE returned status: {}",
+                "GitHub Enterprise returned status: {}",
                 response.status()
             )));
         }
@@ -272,21 +298,24 @@ impl OAuthProvider for GitHubEnterpriseProvider {
             .await
             .map_err(|e| OAuthError::TokenExchange(e.to_string()))?;
 
-        Ok(OAuthToken {
+        Ok(OAuthTokenResponse {
             access_token: token_response.access_token,
             refresh_token: token_response.refresh_token,
             expires_at: token_response
                 .expires_in
-                .map(|secs| Utc::now() + chrono::Duration::seconds(secs)),
+                .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs)),
+            token_type: "Bearer".to_string(),
+            scopes: self.scopes.clone(),
         })
     }
 
-    async fn get_user_info(&self, token: &OAuthToken) -> Result<OAuthUserInfo, OAuthError> {
-        let client = reqwest::Client::new();
+    /// Fetch user information using access token
+    pub async fn get_user_info(&self, access_token: &str) -> Result<OAuthUserInfo, OAuthError> {
+        let client = Client::new();
 
         let response = client
-            .get(&self.user_api())
-            .header("Authorization", format!("Bearer {}", token.access_token))
+            .get(format!("{}/user", self.api_base_url))
+            .header("Authorization", format!("Bearer {}", access_token))
             .header("Accept", "application/vnd.github.v3+json")
             .send()
             .await
@@ -294,7 +323,7 @@ impl OAuthProvider for GitHubEnterpriseProvider {
 
         if !response.status().is_success() {
             return Err(OAuthError::UserInfoFetch(format!(
-                "GHE returned status: {}",
+                "GitHub Enterprise returned status: {}",
                 response.status()
             )));
         }
@@ -313,12 +342,16 @@ impl OAuthProvider for GitHubEnterpriseProvider {
         })
     }
 
-    async fn get_user_organizations(&self, token: &OAuthToken) -> Result<Vec<String>, OAuthError> {
-        let client = reqwest::Client::new();
+    /// Fetch user's organization memberships
+    pub async fn get_user_organizations(
+        &self,
+        access_token: &str,
+    ) -> Result<Vec<String>, OAuthError> {
+        let client = Client::new();
 
         let response = client
-            .get(&self.orgs_api())
-            .header("Authorization", format!("Bearer {}", token.access_token))
+            .get(format!("{}/user/orgs", self.api_base_url))
+            .header("Authorization", format!("Bearer {}", access_token))
             .header("Accept", "application/vnd.github.v3+json")
             .send()
             .await
@@ -326,7 +359,7 @@ impl OAuthProvider for GitHubEnterpriseProvider {
 
         if !response.status().is_success() {
             return Err(OAuthError::UserInfoFetch(format!(
-                "GHE returned status: {}",
+                "GitHub Enterprise returned status: {}",
                 response.status()
             )));
         }

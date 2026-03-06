@@ -198,7 +198,7 @@ async fn test_api_key_authentication_flow() {
     );
 
     // Test 4: Revoke the new key
-    let key_id = create_response["id"].as_str().unwrap();
+    let key_id = create_response["key_id"].as_str().unwrap();
     let (status, _) = make_authenticated_request(
         &app,
         "POST",

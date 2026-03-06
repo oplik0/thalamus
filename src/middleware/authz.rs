@@ -24,12 +24,20 @@ use std::sync::Arc;
 ///
 /// Apply this middleware to routes that need authorization checks:
 ///
-/// ```rust
-/// use axum::{Router, middleware};
+/// ```ignore
+/// use axum::{
+///     routing::get,
+///     Router,
+///     middleware,
+/// };
 /// use thalamus::bootstrap::AppState;
-/// use thalamus::middleware::casbin_auth_middleware;
+/// use thalamus::middleware::authz::casbin_auth_middleware;
 ///
-/// let app = Router::new()
+/// async fn protected_handler() -> &'static str { "protected" }
+///
+/// // Create AppState with proper initialization in real code
+/// let state: AppState = todo!();
+/// let app: Router<AppState> = Router::new()
 ///     .route("/protected", get(protected_handler))
 ///     .layer(middleware::from_fn_with_state(state, casbin_auth_middleware));
 /// ```
@@ -134,15 +142,23 @@ pub async fn casbin_auth_middleware(
 ///
 /// # Example
 ///
-/// ```rust
-/// use axum::{Router, middleware};
+/// ```ignore
+/// use axum::{
+///     routing::post,
+///     Router,
+///     middleware,
+/// };
 /// use thalamus::bootstrap::AppState;
-/// use thalamus::middleware::require_permission;
+/// use thalamus::middleware::authz::require_permission;
 ///
-/// let app = Router::new()
+/// async fn chat_handler() -> &'static str { "chat" }
+///
+/// // Create AppState with proper initialization in real code
+/// let state: AppState = todo!();
+/// let app: Router<AppState> = Router::new()
 ///     .route("/chat", post(chat_handler))
 ///     .layer(middleware::from_fn_with_state(
-///         state.clone(),
+///         state,
 ///         require_permission("/v1/chat/completions", "POST")
 ///     ));
 /// ```

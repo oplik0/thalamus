@@ -36,7 +36,8 @@ pub struct CreateApiKeyRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateApiKeyResponse {
     pub id: Uuid,
-    pub key: String, // Full key (only returned once)
+    pub key_id: String, // The key identifier (e.g., "abc123") - used for revocation
+    pub key: String,    // Full key (only returned once)
     pub key_prefix: String,
     pub name: String,
     pub scopes: Option<Vec<String>>,
@@ -120,6 +121,7 @@ mod tests {
 
         let response = CreateApiKeyResponse {
             id,
+            key_id: "test_key".to_string(),
             key: "thl_test_key_secret".to_string(),
             key_prefix: "thl_test".to_string(),
             name: "Test Key".to_string(),

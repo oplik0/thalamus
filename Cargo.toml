@@ -78,7 +78,7 @@ reqwest = { version = "0.12.24", default-features = false, features = ["json", "
 governor = "0.10.4"
 
 # OAuth
-oauth2 = "5.0"
+oauth2 = { version = "5.0", features = ["reqwest"] }
 
 # Caching (optional)
 redis = { version = "0.32.7", features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"], optional = true }

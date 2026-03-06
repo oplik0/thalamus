@@ -1,7 +1,12 @@
 //! Common test utilities and fixtures
 
 use sqlx::PgPool;
+use std::sync::Arc;
 use std::sync::Once;
+
+use thalamus::features::backends::infra::{AdaptingBackendClient, InMemoryBackendRegistry};
+use thalamus::features::llm_proxy::domain::ProxyService;
+use thalamus::features::routing::infra::RouterService;
 
 static INIT: Once = Once::new();
 
@@ -117,6 +122,7 @@ pub async fn init_test_state() -> thalamus::bootstrap::AppState {
             host: "127.0.0.1".to_string(),
             port: 0, // Ephemeral port
             workers: None,
+            base_url: None,
         },
         database: thalamus::shared::config::types::DatabaseConfig {
             url: std::env::var("DATABASE_URL")
@@ -183,6 +189,31 @@ pub async fn init_test_state() -> thalamus::bootstrap::AppState {
             .expect("Failed to create OAuth service for tests"),
     );
 
+    // Initialize backend registry and proxy pipeline for tests
+    let backend_registry = Arc::new(InMemoryBackendRegistry::from_config(&config.backends));
+    let adapters = AdaptingBackendClient::adapters_from_config(&config);
+
+    let http_client = reqwest::Client::builder()
+        .pool_idle_timeout(Some(std::time::Duration::from_secs(90)))
+        .pool_max_idle_per_host(32)
+        .build()
+        .expect("Failed to create HTTP client for tests");
+
+    let backend_client = Arc::new(AdaptingBackendClient::new(
+        http_client,
+        backend_registry.clone(),
+        adapters,
+    ));
+    let router_service = Arc::new(RouterService::from_config(
+        backend_registry.clone(),
+        &config.routing,
+    ));
+    let proxy = Arc::new(ProxyService::new(
+        router_service,
+        backend_client,
+        backend_registry.clone(),
+    ));
+
     thalamus::bootstrap::AppState {
         db_pool: pool,
         config,
@@ -191,5 +222,7 @@ pub async fn init_test_state() -> thalamus::bootstrap::AppState {
         authorizer: None,
         breach_detector: None,
         oauth_service,
+        backend_registry,
+        proxy,
     }
 }

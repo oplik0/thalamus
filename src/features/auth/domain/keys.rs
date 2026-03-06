@@ -78,10 +78,10 @@ mod tests {
         let prefix = Prefix::Standard;
         let public_str = "public";
         let secret_str = "secret";
-        let full_key = format!("{}{}_{}", prefix, public_str, secret_str);
+        let full_key = format!("{}_{}_{}", prefix, public_str, secret_str);
 
         assert_eq!(full_key, "thl_public_secret");
-        assert!(full_key.starts_with("thl_"));
+        assert!(full_key.starts_with("thl"));
     }
 
     #[test]
