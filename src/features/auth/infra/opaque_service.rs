@@ -11,8 +11,8 @@ use opaque_ke::{
     RegistrationRequest as OpaqueRegistrationRequest, RegistrationUpload, ServerLogin,
     ServerLoginParameters, ServerRegistration, ServerSetup,
 };
-use rand::SeedableRng;
-use rand::rngs::OsRng;
+use rand_08::SeedableRng;
+use rand_08::rngs::OsRng;
 use sha2::Sha512;
 
 // Define the OPAQUE cipher suite
@@ -226,7 +226,7 @@ fn get_server_setup(state: &AppState) -> Result<ServerSetup<ThalmusCipherSuite>>
             seed_bytes[i] = *b;
         }
 
-        let mut rng = rand::rngs::StdRng::from_seed(seed_bytes);
+        let mut rng = rand_08::rngs::StdRng::from_seed(seed_bytes);
         return Ok(ServerSetup::new(&mut rng));
     }
 
@@ -246,6 +246,6 @@ fn get_server_setup(state: &AppState) -> Result<ServerSetup<ThalmusCipherSuite>>
     let len = setup_bytes.len().min(32);
     seed_bytes[..len].copy_from_slice(&setup_bytes[..len]);
 
-    let mut rng = rand::rngs::StdRng::from_seed(seed_bytes);
+    let mut rng = rand_08::rngs::StdRng::from_seed(seed_bytes);
     Ok(ServerSetup::new(&mut rng))
 }

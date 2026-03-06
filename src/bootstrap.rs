@@ -5,6 +5,9 @@
 
 use crate::features::auth::infra::OAuthService;
 use crate::features::authorization::CasbinAuthorizer;
+use crate::features::backends::infra::{AdaptingBackendClient, InMemoryBackendRegistry};
+use crate::features::llm_proxy::ProxyService;
+use crate::features::routing::infra::RouterService;
 use crate::middleware::breach_detection::BreachDetector;
 use crate::middleware::rate_limit::RateLimiter;
 use crate::shared::config::types::Config;
@@ -12,6 +15,7 @@ use axum::Router;
 use axum_tasks::{AppTasks, HasTasks};
 use sqlx::PgPool;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 /// Application state shared across all handlers
 #[derive(Clone, HasTasks)]
@@ -30,6 +34,10 @@ pub struct AppState {
     pub breach_detector: Option<Arc<BreachDetector>>,
     /// OAuth service for authentication
     pub oauth_service: Arc<OAuthService>,
+    /// In-memory backend endpoint registry
+    pub backend_registry: Arc<InMemoryBackendRegistry>,
+    /// Unified LLM proxy orchestrator
+    pub proxy: Arc<ProxyService>,
 }
 
 // Manual Debug implementation since AppTasks doesn't implement Debug
@@ -42,6 +50,8 @@ impl std::fmt::Debug for AppState {
             .field("rate_limiter", &"<RateLimiter>")
             .field("authorizer", &"<CasbinAuthorizer>")
             .field("breach_detector", &"<BreachDetector>")
+            .field("backend_registry", &"<InMemoryBackendRegistry>")
+            .field("proxy", &"<ProxyService>")
             .finish()
     }
 }
@@ -61,6 +71,8 @@ pub fn build_router(state: AppState) -> Router {
         // Note: admin_routes returns Router<()> so we need to use a different approach
         // We'll protect individual routes within admin_routes using middleware
         .nest("/admin/tasks", admin_routes::<AppState>())
+        // Unified LLM proxy routes
+        .merge(crate::features::llm_proxy::router())
         // Future stateful routes will go here
         .with_state(state)
 }
@@ -81,7 +93,10 @@ pub fn build_router(state: AppState) -> Router {
 /// - Configuration file cannot be loaded or is invalid
 /// - Database connection cannot be established
 /// - Database migrations fail
-pub async fn init_app_state(config_path: &str) -> crate::Result<AppState> {
+pub async fn init_app_state(
+    config_path: &str,
+    shutdown: CancellationToken,
+) -> crate::Result<AppState> {
     tracing::info!("Initializing application state");
 
     // Load configuration
@@ -176,6 +191,42 @@ pub async fn init_app_state(config_path: &str) -> crate::Result<AppState> {
     let oauth_service = Arc::new(OAuthService::new(&config.oauth_providers)?);
     tracing::info!("OAuth service initialized");
 
+    // Initialize backend registry and proxy pipeline
+    let backend_registry = Arc::new(InMemoryBackendRegistry::from_config(&config.backends));
+    let adapters = AdaptingBackendClient::adapters_from_config(&config);
+
+    let http_client = reqwest::Client::builder()
+        .pool_idle_timeout(Some(std::time::Duration::from_secs(90)))
+        .pool_max_idle_per_host(32)
+        .build()
+        .map_err(crate::Error::from)?;
+
+    let backend_client = Arc::new(AdaptingBackendClient::new(
+        http_client.clone(),
+        backend_registry.clone(),
+        adapters,
+    ));
+    let router_service = Arc::new(RouterService::from_config(
+        backend_registry.clone(),
+        &config.routing,
+    ));
+    let proxy = Arc::new(ProxyService::new(
+        router_service,
+        backend_client,
+        backend_registry.clone(),
+    ));
+
+    let health_tasks = crate::features::backends::health::spawn_health_checks(
+        http_client,
+        backend_registry.clone(),
+        &config.backends,
+        shutdown,
+    );
+    tracing::info!(
+        count = health_tasks.len(),
+        "Spawned backend health check tasks"
+    );
+
     tracing::info!("Application state initialized successfully");
 
     Ok(AppState {
@@ -186,6 +237,8 @@ pub async fn init_app_state(config_path: &str) -> crate::Result<AppState> {
         authorizer,
         breach_detector,
         oauth_service,
+        backend_registry,
+        proxy,
     })
 }
 

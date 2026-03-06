@@ -7,4 +7,6 @@
 
 pub mod config;
 pub mod database;
+pub mod models;
 pub mod observability;
+pub mod utils;

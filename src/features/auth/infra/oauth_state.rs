@@ -47,9 +47,11 @@ impl InMemoryOAuthStateStore {
 
     /// Generate a new PKCE code verifier
     pub fn generate_pkce_verifier() -> String {
-        use rand::RngCore;
+        use rand_08::RngCore;
+        use rand_08::rngs::OsRng;
         let mut bytes = vec![0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        let mut rng = OsRng;
+        rng.fill_bytes(&mut bytes);
         URL_SAFE_NO_PAD.encode(bytes)
     }
 

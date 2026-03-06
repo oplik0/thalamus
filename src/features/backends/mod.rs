@@ -2,7 +2,7 @@
 //!
 //! Manages LLM backend instances, health checking, and capacity tracking.
 
-// Module structure for future implementation
-// pub mod api;
-// pub mod domain;
-// pub mod infra;
+pub mod adapter;
+pub mod domain;
+pub mod health;
+pub mod infra;
