@@ -61,10 +61,7 @@ pub enum TeamMappingStrategy {
 /// This wraps oauth2's CsrfToken and PkceCodeVerifier
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthFlowState {
-    /// CSRF state token (secret)
-    #[serde(skip_serializing)]
-    pub csrf_token_secret: String,
-    /// Public CSRF state token (sent to provider)
+    /// CSRF state token (sent to provider and used as state store key)
     pub csrf_token: String,
     /// PKCE verifier (secret)
     #[serde(skip_serializing)]
@@ -123,7 +120,6 @@ mod tests {
     #[test]
     fn test_oauth_flow_state_expiration() {
         let state = OAuthFlowState {
-            csrf_token_secret: "secret".to_string(),
             csrf_token: "test_state".to_string(),
             pkce_verifier: "test_verifier".to_string(),
             pkce_challenge: "challenge".to_string(),
@@ -138,7 +134,6 @@ mod tests {
     #[test]
     fn test_oauth_flow_state_already_expired() {
         let state = OAuthFlowState {
-            csrf_token_secret: "secret".to_string(),
             csrf_token: "test_state".to_string(),
             pkce_verifier: "test_verifier".to_string(),
             pkce_challenge: "challenge".to_string(),

@@ -7,10 +7,10 @@ use uuid::Uuid;
 
 use crate::bootstrap::AppState;
 use crate::error::{Error, Result};
-use crate::features::auth::domain::oauth::OAuthUserInfo;
+use crate::features::auth::domain::oauth::{OAuthError, OAuthTokenResponse, OAuthUserInfo};
 use crate::features::auth::domain::token::TokenClaims;
 use crate::features::auth::infra::oauth_providers::{
-    GitHubEnterpriseProvider, GitHubOAuthProvider,
+    GitHubEnterpriseProvider, GitHubOAuthProvider, OAuthProviderOps,
 };
 use crate::features::auth::infra::token_service::create_token;
 use crate::features::auth::infra::{
@@ -68,6 +68,58 @@ pub struct ProviderInfo {
 enum ProviderRef<'a> {
     GitHub(&'a GitHubOAuthProvider),
     GitHubEnterprise(&'a GitHubEnterpriseProvider),
+}
+
+impl OAuthProviderOps for ProviderRef<'_> {
+    fn get_authorization_url(
+        &self,
+        csrf_state: &str,
+        pkce_challenge: &str,
+        redirect_uri: &str,
+    ) -> String {
+        match self {
+            ProviderRef::GitHub(p) => {
+                p.get_authorization_url(csrf_state, pkce_challenge, redirect_uri)
+            }
+            ProviderRef::GitHubEnterprise(p) => {
+                p.get_authorization_url(csrf_state, pkce_challenge, redirect_uri)
+            }
+        }
+    }
+
+    async fn exchange_code(
+        &self,
+        code: &str,
+        pkce_verifier: &str,
+        redirect_uri: &str,
+    ) -> std::result::Result<OAuthTokenResponse, OAuthError> {
+        match self {
+            ProviderRef::GitHub(p) => p.exchange_code(code, pkce_verifier, redirect_uri).await,
+            ProviderRef::GitHubEnterprise(p) => {
+                p.exchange_code(code, pkce_verifier, redirect_uri).await
+            }
+        }
+    }
+
+    async fn get_user_info(
+        &self,
+        access_token: &str,
+    ) -> std::result::Result<OAuthUserInfo, OAuthError> {
+        match self {
+            ProviderRef::GitHub(p) => p.get_user_info(access_token).await,
+            ProviderRef::GitHubEnterprise(p) => p.get_user_info(access_token).await,
+        }
+    }
+
+    async fn get_user_organizations(
+        &self,
+        access_token: &str,
+    ) -> std::result::Result<Vec<String>, OAuthError> {
+        match self {
+            ProviderRef::GitHub(p) => p.get_user_organizations(access_token).await,
+            ProviderRef::GitHubEnterprise(p) => p.get_user_organizations(access_token).await,
+        }
+    }
 }
 
 impl OAuthService {
@@ -138,7 +190,7 @@ impl OAuthService {
         callback_base_url: &str,
     ) -> Result<OAuthInitiateResponse> {
         // Check provider exists
-        let _ = self.get_provider(provider_name).ok_or_else(|| {
+        let provider = self.get_provider(provider_name).ok_or_else(|| {
             Error::NotFound(format!("OAuth provider '{}' not found", provider_name))
         })?;
 
@@ -159,24 +211,12 @@ impl OAuthService {
             callback_base_url, provider_name
         );
 
-        // Get provider for generating URL
-        let provider = self.get_provider(provider_name).ok_or_else(|| {
-            Error::NotFound(format!("OAuth provider '{}' not found", provider_name))
-        })?;
-
         // Generate authorization URL using the provider
-        let auth_url = match provider {
-            ProviderRef::GitHub(p) => p.get_authorization_url(
-                &state_clone.csrf_token,
-                &state_clone.pkce_challenge,
-                &redirect_uri,
-            ),
-            ProviderRef::GitHubEnterprise(p) => p.get_authorization_url(
-                &state_clone.csrf_token,
-                &state_clone.pkce_challenge,
-                &redirect_uri,
-            ),
-        };
+        let auth_url = provider.get_authorization_url(
+            &state_clone.csrf_token,
+            &state_clone.pkce_challenge,
+            &redirect_uri,
+        );
 
         Ok(OAuthInitiateResponse {
             authorization_url: auth_url,
@@ -222,44 +262,22 @@ impl OAuthService {
         );
 
         // Exchange code for token
-        let token = match provider {
-            ProviderRef::GitHub(p) => p
-                .exchange_code(code, &oauth_state.pkce_verifier, &redirect_uri)
-                .await
-                .map_err(|e| {
-                    Error::Authentication(format!("OAuth token exchange failed: {}", e))
-                })?,
-            ProviderRef::GitHubEnterprise(p) => p
-                .exchange_code(code, &oauth_state.pkce_verifier, &redirect_uri)
-                .await
-                .map_err(|e| {
-                    Error::Authentication(format!("OAuth token exchange failed: {}", e))
-                })?,
-        };
+        let token = provider
+            .exchange_code(code, &oauth_state.pkce_verifier, &redirect_uri)
+            .await
+            .map_err(|e| Error::Authentication(format!("OAuth token exchange failed: {}", e)))?;
 
         // Get user info
-        let user_info = match provider {
-            ProviderRef::GitHub(p) => p
-                .get_user_info(&token.access_token)
-                .await
-                .map_err(|e| Error::Authentication(format!("Failed to get user info: {}", e)))?,
-            ProviderRef::GitHubEnterprise(p) => p
-                .get_user_info(&token.access_token)
-                .await
-                .map_err(|e| Error::Authentication(format!("Failed to get user info: {}", e)))?,
-        };
+        let user_info = provider
+            .get_user_info(&token.access_token)
+            .await
+            .map_err(|e| Error::Authentication(format!("Failed to get user info: {}", e)))?;
 
         // Get organizations for team mapping
-        let orgs = match provider {
-            ProviderRef::GitHub(p) => p
-                .get_user_organizations(&token.access_token)
-                .await
-                .unwrap_or_default(),
-            ProviderRef::GitHubEnterprise(p) => p
-                .get_user_organizations(&token.access_token)
-                .await
-                .unwrap_or_default(),
-        };
+        let orgs = provider
+            .get_user_organizations(&token.access_token)
+            .await
+            .unwrap_or_default();
 
         // Provision user
         let (user_id, team_id, is_new_user) = self

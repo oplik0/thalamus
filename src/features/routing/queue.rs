@@ -32,7 +32,7 @@ impl Priority {
 
     #[must_use]
     pub fn from_name(name: &str) -> Self {
-        match name {
+        match name.to_ascii_lowercase().as_str() {
             "critical" => Self::Critical,
             "realtime" => Self::Realtime,
             "interactive" => Self::Interactive,
@@ -76,6 +76,7 @@ impl std::fmt::Debug for PriorityQueueManager {
         f.debug_struct("PriorityQueueManager")
             .field("max_queue_size", &self.max_queue_size)
             .field("queue_timeout", &self.queue_timeout)
+            .field("aging_interval", &self.aging_interval)
             .finish()
     }
 }

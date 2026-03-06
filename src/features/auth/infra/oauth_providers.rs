@@ -10,6 +10,31 @@ use serde::Deserialize;
 use crate::error::Error;
 use crate::features::auth::domain::oauth::{OAuthError, OAuthTokenResponse, OAuthUserInfo};
 
+/// Common interface for all OAuth provider implementations.
+///
+/// Implemented for each concrete provider type and for [`ProviderRef`] so that
+/// callers can dispatch through the enum without repeating match arms.
+#[allow(async_fn_in_trait)]
+pub trait OAuthProviderOps {
+    fn get_authorization_url(
+        &self,
+        csrf_state: &str,
+        pkce_challenge: &str,
+        redirect_uri: &str,
+    ) -> String;
+
+    async fn exchange_code(
+        &self,
+        code: &str,
+        pkce_verifier: &str,
+        redirect_uri: &str,
+    ) -> Result<OAuthTokenResponse, OAuthError>;
+
+    async fn get_user_info(&self, access_token: &str) -> Result<OAuthUserInfo, OAuthError>;
+
+    async fn get_user_organizations(&self, access_token: &str) -> Result<Vec<String>, OAuthError>;
+}
+
 /// GitHub.com OAuth provider using oauth2 crate
 #[derive(Clone)]
 pub struct GitHubOAuthProvider {

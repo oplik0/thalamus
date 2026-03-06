@@ -120,7 +120,6 @@ pub fn create_oauth_flow_state(
     let pkce_challenge = InMemoryOAuthStateStore::generate_pkce_challenge(&pkce_verifier);
 
     let state = OAuthFlowState {
-        csrf_token_secret: csrf_token.clone(),
         csrf_token: csrf_token.clone(),
         pkce_verifier,
         pkce_challenge,
