@@ -7,6 +7,7 @@ use oauth2::{AuthUrl, TokenUrl};
 use reqwest::Client;
 use serde::Deserialize;
 
+use crate::error::Error;
 use crate::features::auth::domain::oauth::{OAuthError, OAuthTokenResponse, OAuthUserInfo};
 
 /// GitHub.com OAuth provider using oauth2 crate
@@ -44,17 +45,18 @@ impl GitHubOAuthProvider {
         client_id: String,
         client_secret: String,
         scopes: Vec<String>,
-    ) -> Self {
-        Self {
+    ) -> crate::error::Result<Self> {
+        Ok(Self {
             name,
             client_id,
             client_secret,
             scopes,
-            auth_url: AuthUrl::new("https://github.com/login/oauth/authorize".to_string()).unwrap(),
+            auth_url: AuthUrl::new("https://github.com/login/oauth/authorize".to_string())
+                .map_err(|e| Error::Config(format!("Invalid GitHub auth URL: {}", e)))?,
             token_url: TokenUrl::new("https://github.com/login/oauth/access_token".to_string())
-                .unwrap(),
+                .map_err(|e| Error::Config(format!("Invalid GitHub token URL: {}", e)))?,
             api_base_url: "https://api.github.com".to_string(),
-        }
+        })
     }
 
     /// Generate the authorization URL with PKCE
@@ -226,20 +228,23 @@ impl GitHubEnterpriseProvider {
         client_secret: String,
         scopes: Vec<String>,
         base_url: String,
-    ) -> Self {
+    ) -> crate::error::Result<Self> {
         let auth_url = format!("{}/login/oauth/authorize", base_url);
         let token_url = format!("{}/login/oauth/access_token", base_url);
 
-        Self {
+        Ok(Self {
             name,
             client_id,
             client_secret,
             scopes,
-            auth_url: AuthUrl::new(auth_url).unwrap(),
-            token_url: TokenUrl::new(token_url).unwrap(),
+            auth_url: AuthUrl::new(auth_url)
+                .map_err(|e| Error::Config(format!("Invalid GitHub Enterprise auth URL: {}", e)))?,
+            token_url: TokenUrl::new(token_url).map_err(|e| {
+                Error::Config(format!("Invalid GitHub Enterprise token URL: {}", e))
+            })?,
             base_url: base_url.clone(),
             api_base_url: format!("{}/api/v3", base_url),
-        }
+        })
     }
 
     /// Generate the authorization URL with PKCE

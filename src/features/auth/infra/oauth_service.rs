@@ -84,7 +84,7 @@ impl OAuthService {
                         provider_config.client_id.clone(),
                         provider_config.client_secret.clone(),
                         provider_config.scopes.clone(),
-                    )));
+                    )?));
                 }
                 OAuthProviderType::GitHubEnterprise => {
                     let base_url = provider_config.enterprise_url.clone().ok_or_else(|| {
@@ -96,7 +96,7 @@ impl OAuthService {
                         provider_config.client_secret.clone(),
                         provider_config.scopes.clone(),
                         base_url,
-                    )));
+                    )?));
                 }
                 OAuthProviderType::Oidc => {
                     return Err(Error::Config(
