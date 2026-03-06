@@ -59,12 +59,11 @@ pub async fn rotate_key_with_grace_period(
 
     let new_key = generate_key(Prefix::Standard, request, state).await?;
 
-    // Mark old key as rotated
+    // Mark old key as rotated (no self-reference; rotated_from lives on the new key)
     sqlx::query!(
         r#"
         UPDATE api_keys
-        SET rotated_from = id,
-            rotated_at = NOW(),
+        SET rotated_at = NOW(),
             grace_period_ends_at = $2,
             rotation_reason = $3,
             name = name || ' (rotated - expires soon)'
@@ -73,6 +72,20 @@ pub async fn rotate_key_with_grace_period(
         old_key_id,
         grace_period_ends,
         reason.unwrap_or("user_initiated")
+    )
+    .execute(&state.db_pool)
+    .await?;
+
+    // Point the new key back to the old key so the recursive CTE in
+    // get_rotation_history can walk the chain (k.rotated_from = rc.id).
+    sqlx::query!(
+        r#"
+        UPDATE api_keys
+        SET rotated_from = $1
+        WHERE id = $2
+        "#,
+        old_key.id,
+        new_key.id
     )
     .execute(&state.db_pool)
     .await?;

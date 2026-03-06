@@ -40,6 +40,8 @@ pub struct BreachDetectionConfig {
     pub auto_block_enabled: bool,
     /// Duration to block IPs (seconds)
     pub block_duration_secs: u64,
+    /// Evict profiles that have had no activity for this many seconds (0 = never)
+    pub max_profile_age_secs: u64,
 }
 
 impl Default for BreachDetectionConfig {
@@ -52,6 +54,7 @@ impl Default for BreachDetectionConfig {
             endpoint_scan_window_secs: 60, // 1 minute
             auto_block_enabled: false,     // Disabled by default (requires manual review)
             block_duration_secs: 3600,     // 1 hour
+            max_profile_age_secs: 3600,    // evict profiles inactive for > 1 hour
         }
     }
 }
@@ -138,6 +141,11 @@ impl BreachDetector {
             config,
             profiles: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Return a reference to this detector's configuration
+    pub fn config(&self) -> &BreachDetectionConfig {
+        &self.config
     }
 
     /// Record a failed authentication attempt
@@ -262,6 +270,42 @@ impl BreachDetector {
             }
         }
         false
+    }
+
+    /// Evict profiles that have had no activity within `max_age`.
+    ///
+    /// A profile is kept when:
+    /// - It is currently under an active block (we must honour the block), or
+    /// - Its most recent request or failed-auth attempt falls within `max_age`.
+    pub async fn cleanup_stale_profiles(&self, max_age: Duration) {
+        let mut profiles = self.profiles.write().await;
+        let now = Instant::now();
+        let before = profiles.len();
+        profiles.retain(|_, profile| {
+            // Never remove a profile that is still under an active block.
+            if profile.blocked_until.map_or(false, |t| now < t) {
+                return true;
+            }
+            // Keep if there was a recent ordinary request.
+            let recent_request = profile
+                .requests
+                .last()
+                .map_or(false, |t| now.duration_since(*t) < max_age);
+            // Keep if there was a recent failed-auth attempt.
+            let recent_auth_fail = profile
+                .failed_auth_attempts
+                .last()
+                .map_or(false, |t| now.duration_since(*t) < max_age);
+            recent_request || recent_auth_fail
+        });
+        let removed = before.saturating_sub(profiles.len());
+        if removed > 0 {
+            tracing::debug!(
+                removed = removed,
+                remaining = profiles.len(),
+                "Evicted stale breach-detection profiles"
+            );
+        }
     }
 
     /// Log a security event

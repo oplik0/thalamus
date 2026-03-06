@@ -209,6 +209,9 @@ pub struct StreamChunkConverter {
     id: String,
     model: String,
     created: i64,
+    /// Whether any tool-call deltas have been emitted in the current item,
+    /// used to select `finish_reason` on `OutputItemDone`.
+    has_tool_calls: bool,
 }
 
 impl StreamChunkConverter {
@@ -230,6 +233,7 @@ impl StreamChunkConverter {
                 self.id = id.unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4()));
                 self.model = model.unwrap_or_else(|| "unknown".to_string());
                 self.created = chrono::Utc::now().timestamp();
+                self.has_tool_calls = false;
                 Some(self.chunk(vec![ChunkChoice {
                     index: 0,
                     delta: ChunkDelta {
@@ -249,37 +253,43 @@ impl StreamChunkConverter {
                         refusal: None,
                         tool_calls: None,
                     },
-                    crate::shared::models::ContentDeltaPayload::ToolCall(tc) => ChunkDelta {
-                        role: None,
-                        content: None,
-                        refusal: None,
-                        tool_calls: Some(vec![ChunkToolCall {
-                            index: tc.tool_call_index,
-                            id: tc.id,
-                            call_type: Some("function".to_string()),
-                            function: ChunkFunction {
-                                name: tc.name,
-                                arguments: tc.arguments,
-                            },
-                        }]),
-                    },
+                    crate::shared::models::ContentDeltaPayload::ToolCall(tc) => {
+                        self.has_tool_calls = true;
+                        ChunkDelta {
+                            role: None,
+                            content: None,
+                            refusal: None,
+                            tool_calls: Some(vec![ChunkToolCall {
+                                index: tc.tool_call_index,
+                                id: tc.id,
+                                call_type: Some("function".to_string()),
+                                function: ChunkFunction {
+                                    name: tc.name,
+                                    arguments: tc.arguments,
+                                },
+                            }]),
+                        }
+                    }
                     crate::shared::models::ContentDeltaPayload::FunctionCallArguments {
                         name,
                         arguments,
-                    } => ChunkDelta {
-                        role: None,
-                        content: None,
-                        refusal: None,
-                        tool_calls: Some(vec![ChunkToolCall {
-                            index: 0,
-                            id: None,
-                            call_type: Some("function".to_string()),
-                            function: ChunkFunction {
-                                name,
-                                arguments: Some(arguments),
-                            },
-                        }]),
-                    },
+                    } => {
+                        self.has_tool_calls = true;
+                        ChunkDelta {
+                            role: None,
+                            content: None,
+                            refusal: None,
+                            tool_calls: Some(vec![ChunkToolCall {
+                                index: 0,
+                                id: None,
+                                call_type: Some("function".to_string()),
+                                function: ChunkFunction {
+                                    name,
+                                    arguments: Some(arguments),
+                                },
+                            }]),
+                        }
+                    }
                     crate::shared::models::ContentDeltaPayload::Thinking { thinking } => {
                         thinking.map(|text| ChunkDelta {
                             role: None,
@@ -310,16 +320,24 @@ impl StreamChunkConverter {
                     finish_reason: None,
                 }]))
             }
-            StreamEvent::OutputItemDone { .. } => Some(self.chunk(vec![ChunkChoice {
-                index: 0,
-                delta: ChunkDelta {
-                    role: None,
-                    content: None,
-                    refusal: None,
-                    tool_calls: None,
-                },
-                finish_reason: Some("stop".to_string()),
-            }])),
+            StreamEvent::OutputItemDone { .. } => {
+                let finish_reason = if self.has_tool_calls {
+                    self.has_tool_calls = false;
+                    "tool_calls".to_string()
+                } else {
+                    "stop".to_string()
+                };
+                Some(self.chunk(vec![ChunkChoice {
+                    index: 0,
+                    delta: ChunkDelta {
+                        role: None,
+                        content: None,
+                        refusal: None,
+                        tool_calls: None,
+                    },
+                    finish_reason: Some(finish_reason),
+                }]))
+            }
             _ => None,
         }
     }

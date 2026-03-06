@@ -14,7 +14,7 @@ pub enum Prefix {
     Full,
 }
 
-pub const PREFIXES: [&str; 3] = ["thl_", "thl_sk_", "thalamus_"];
+pub const PREFIXES: [&str; 3] = ["thl", "thl_sk", "thalamus"];
 
 impl Prefix {
     pub fn as_str(&self) -> &str {
@@ -58,16 +58,16 @@ mod tests {
 
     #[test]
     fn test_prefix_as_str() {
-        assert_eq!(Prefix::Standard.as_str(), "thl_");
-        assert_eq!(Prefix::Secret.as_str(), "thl_sk_");
-        assert_eq!(Prefix::Full.as_str(), "thalamus_");
+        assert_eq!(Prefix::Standard.as_str(), "thl");
+        assert_eq!(Prefix::Secret.as_str(), "thl_sk");
+        assert_eq!(Prefix::Full.as_str(), "thalamus");
     }
 
     #[test]
     fn test_prefix_display() {
-        assert_eq!(format!("{}", Prefix::Standard), "thl_");
-        assert_eq!(format!("{}", Prefix::Secret), "thl_sk_");
-        assert_eq!(format!("{}", Prefix::Full), "thalamus_");
+        assert_eq!(format!("{}", Prefix::Standard), "thl");
+        assert_eq!(format!("{}", Prefix::Secret), "thl_sk");
+        assert_eq!(format!("{}", Prefix::Full), "thalamus");
     }
 
     #[test]
@@ -87,9 +87,9 @@ mod tests {
     #[test]
     fn test_prefixes_array() {
         assert_eq!(PREFIXES.len(), 3);
-        assert_eq!(PREFIXES[0], "thl_");
-        assert_eq!(PREFIXES[1], "thl_sk_");
-        assert_eq!(PREFIXES[2], "thalamus_");
+        assert_eq!(PREFIXES[0], "thl");
+        assert_eq!(PREFIXES[1], "thl_sk");
+        assert_eq!(PREFIXES[2], "thalamus");
     }
 
     #[test]

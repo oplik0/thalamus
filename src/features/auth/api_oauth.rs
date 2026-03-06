@@ -3,7 +3,7 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::get,
+    routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
 
@@ -77,10 +77,12 @@ pub async fn oauth_login(
     Path(provider): Path<String>,
     Query(query): Query<OAuthLoginQuery>,
 ) -> Result<Json<OAuthLoginResponse>> {
-    let base_url = format!(
-        "http://{}:{}",
-        state.config.server.host, state.config.server.port
-    );
+    let base_url = state.config.server.base_url.clone().unwrap_or_else(|| {
+        format!(
+            "http://{}:{}",
+            state.config.server.host, state.config.server.port
+        )
+    });
 
     let response = state
         .oauth_service
@@ -99,10 +101,12 @@ pub async fn oauth_callback(
     Path(_provider): Path<String>,
     Query(query): Query<OAuthCallbackQuery>,
 ) -> Result<Json<OAuthCallbackResponse>> {
-    let base_url = format!(
-        "http://{}:{}",
-        state.config.server.host, state.config.server.port
-    );
+    let base_url = state.config.server.base_url.clone().unwrap_or_else(|| {
+        format!(
+            "http://{}:{}",
+            state.config.server.host, state.config.server.port
+        )
+    });
 
     let result = state
         .oauth_service
@@ -153,9 +157,9 @@ pub fn oauth_routes() -> Router<AppState> {
         .route("/v1/auth/oauth/providers", get(list_providers))
         .route("/v1/auth/oauth/{provider}/login", get(oauth_login))
         .route("/v1/auth/oauth/{provider}/callback", get(oauth_callback))
-        .route("/v1/auth/oauth/{provider}/link", get(link_oauth_account))
+        .route("/v1/auth/oauth/{provider}/link", post(link_oauth_account))
         .route(
             "/v1/auth/oauth/{provider}/unlink",
-            get(unlink_oauth_account),
+            delete(unlink_oauth_account),
         )
 }

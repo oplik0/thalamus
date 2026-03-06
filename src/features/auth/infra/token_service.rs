@@ -37,6 +37,11 @@ pub fn create_token(claims: &TokenClaims, state: &AppState) -> Result<String> {
 
     // Get the symmetric key from config
     let key_bytes = state.config.security.paseto_secret_key.as_bytes();
+    if key_bytes.len() != 32 {
+        return Err(Error::Internal(
+            "paseto_secret_key must be exactly 32 bytes".to_string(),
+        ));
+    }
     let symmetric_key = SymmetricKey::<V4>::from(key_bytes)
         .map_err(|e| Error::Internal(format!("Failed to create symmetric key: {}", e)))?;
 
@@ -51,6 +56,11 @@ pub fn create_token(claims: &TokenClaims, state: &AppState) -> Result<String> {
 pub async fn validate_token(token: &str, state: &AppState) -> Result<TokenClaims> {
     // Get the symmetric key from config
     let key_bytes = state.config.security.paseto_secret_key.as_bytes();
+    if key_bytes.len() != 32 {
+        return Err(Error::Internal(
+            "paseto_secret_key must be exactly 32 bytes".to_string(),
+        ));
+    }
     let symmetric_key = SymmetricKey::<V4>::from(key_bytes)
         .map_err(|e| Error::Internal(format!("Failed to create symmetric key: {}", e)))?;
 

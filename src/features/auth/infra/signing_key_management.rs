@@ -134,20 +134,20 @@ pub fn generate_rsa_key_pair() -> Result<(String, String)> {
 /// Generate a new ECDSA P-256 key pair
 pub fn generate_ecdsa_key_pair() -> Result<(String, String)> {
     use p256::ecdsa::SigningKey;
-    use p256::pkcs8::{EncodePrivateKey, EncodePublicKey};
+    use p256::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
     use rand_08::rngs::OsRng;
 
     let mut rng = OsRng;
     let signing_key = SigningKey::random(&mut rng);
 
     let private_pem = signing_key
-        .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+        .to_pkcs8_pem(LineEnding::LF)
         .map_err(|e| Error::Internal(format!("Failed to encode private key: {}", e)))?
         .to_string();
 
     let verifying_key = signing_key.verifying_key();
     let public_pem = verifying_key
-        .to_public_key_pem(rsa::pkcs8::LineEnding::LF)
+        .to_public_key_pem(LineEnding::LF)
         .map_err(|e| Error::Internal(format!("Failed to encode public key: {}", e)))?;
 
     Ok((private_pem, public_pem))
@@ -161,18 +161,20 @@ fn generate_key_id() -> String {
 }
 
 /// Compute key fingerprint (SHA-256 of public key bytes)
-fn compute_fingerprint(public_key_pem: &str) -> String {
+fn compute_fingerprint(public_key_pem: &str) -> Result<String> {
     // Extract just the base64 content from PEM
     let base64_content: String = public_key_pem
         .lines()
         .filter(|line| !line.starts_with("-----") && !line.trim().is_empty())
         .collect();
 
-    let key_bytes = BASE64.decode(&base64_content).unwrap_or_default();
+    let key_bytes = BASE64
+        .decode(&base64_content)
+        .map_err(|e| Error::Internal(format!("Invalid PEM encoding: {}", e)))?;
 
     let mut hasher = Sha256::new();
     hasher.update(&key_bytes);
-    hex::encode(hasher.finalize())
+    Ok(hex::encode(hasher.finalize()))
 }
 
 /// Format base64 content in 64-character lines (PEM style)
@@ -204,7 +206,7 @@ pub async fn create_signing_key(
     };
 
     let key_id = generate_key_id();
-    let fingerprint = compute_fingerprint(&public_pem);
+    let fingerprint = compute_fingerprint(&public_pem)?;
     let expires_at = expires_in_days.map(|days| Utc::now() + Duration::days(days));
 
     // Store in database
@@ -420,6 +422,8 @@ mod hex {
 
 #[cfg(test)]
 mod tests {
+    use tokio_test::assert_ok;
+
     use super::*;
 
     #[test]
@@ -436,8 +440,7 @@ mod tests {
     fn test_compute_fingerprint() {
         let public_key =
             "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAtest\n-----END PUBLIC KEY-----";
-        let fingerprint = compute_fingerprint(public_key);
-
+        let fingerprint = assert_ok!(compute_fingerprint(public_key));
         // Should be 64 hex characters (SHA-256)
         assert_eq!(fingerprint.len(), 64);
         // Should be valid hex

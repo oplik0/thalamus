@@ -29,7 +29,11 @@ async function handleResponse<T>(response: Response): Promise<T> {
 		}
 		throw new ApiError(response.status, response.statusText, parsed);
 	}
-	return response.json() as Promise<T>;
+	const text = await response.text();
+	if (!text) {
+		return undefined as T;
+	}
+	return JSON.parse(text) as T;
 }
 
 export const apiClient = {

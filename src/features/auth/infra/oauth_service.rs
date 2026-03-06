@@ -106,18 +106,21 @@ impl OAuthService {
         })?;
 
         // Create OAuth state
-        let (state, state_token) = create_oauth_flow_state(
+        let (mut state, state_token) = create_oauth_flow_state(
             provider_name.to_string(),
             redirect_url,
             10, // 10 minutes expiration
         );
 
-        // Store state
-        self.state_store.store_state(state)?;
-
         // Generate PKCE challenge
         let pkce_verifier = InMemoryOAuthStateStore::generate_pkce_verifier();
         let pkce_challenge = InMemoryOAuthStateStore::generate_pkce_challenge(&pkce_verifier);
+
+        // Store PKCE verifier in state for later retrieval
+        state.pkce_verifier = pkce_verifier;
+
+        // Store state
+        self.state_store.store_state(state)?;
 
         // Build redirect URI
         let redirect_uri = format!(
@@ -229,13 +232,35 @@ impl OAuthService {
 
         if let Some(user) = existing_user {
             // Get user's team from team_memberships
-            let team_id = sqlx::query_scalar!(
+            let team_id = match sqlx::query_scalar!(
                 "SELECT team_id FROM team_memberships WHERE user_id = $1 LIMIT 1",
                 user.id
             )
             .fetch_optional(&state.db_pool)
             .await?
-            .unwrap_or_else(Uuid::new_v4);
+            {
+                Some(id) => id,
+                None => {
+                    // User exists but has no team - create one
+                    let new_team_id = Uuid::new_v4();
+                    sqlx::query!(
+                        "INSERT INTO teams (id, name, description) VALUES ($1, $2, $3)",
+                        new_team_id,
+                        format!("team-{}", user.id),
+                        "Auto-created team for existing user"
+                    )
+                    .execute(&state.db_pool)
+                    .await?;
+                    sqlx::query!(
+                        "INSERT INTO team_memberships (user_id, team_id, role) VALUES ($1, $2, 'admin')",
+                        user.id,
+                        new_team_id
+                    )
+                    .execute(&state.db_pool)
+                    .await?;
+                    new_team_id
+                }
+            };
 
             // Update last login
             sqlx::query!(
