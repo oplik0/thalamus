@@ -58,11 +58,12 @@ export function GluestackUIProvider({
 	useSafeLayoutEffect(() => {
 		if (mode !== "system") return;
 		const media = window.matchMedia("(prefers-color-scheme: dark)");
+		// Apply initial system preference
+		script(media.matches ? "dark" : "light");
+		media.addEventListener("change", handleMediaQuery);
 
-		media.addListener(handleMediaQuery);
-
-		return () => media.removeListener(handleMediaQuery);
-	}, [handleMediaQuery]);
+		return () => media.removeEventListener("change", handleMediaQuery);
+	}, [handleMediaQuery, mode]);
 
 	useSafeLayoutEffect(() => {
 		if (typeof window !== "undefined") {

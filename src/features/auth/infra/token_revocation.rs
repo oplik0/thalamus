@@ -366,51 +366,183 @@ pub async fn detect_refresh_token_reuse(
     Ok(is_reuse)
 }
 
-/// Rotate a refresh token (create new, mark old as used but not revoked)
+/// Rotate a refresh token (create new, mark old as inactive) inside a single
+/// serialisable transaction.
+///
+/// The old token row is locked with `SELECT … FOR UPDATE` as the very first
+/// statement so that concurrent rotation attempts for the same token queue up
+/// behind the lock rather than racing past each other.
 pub async fn rotate_refresh_token(
     old_token: &str,
     expires_in_days: i64,
     state: &AppState,
 ) -> Result<(String, RefreshTokenInfo)> {
-    // Validate the old token
-    let old_info = validate_refresh_token(old_token, state).await?;
+    // Hash the incoming token before opening the transaction so we don't
+    // hold the lock while doing CPU work.
+    let token_bytes = base64::decode(old_token)
+        .map_err(|_| Error::Authentication("Invalid refresh token format".to_string()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&token_bytes);
+    let token_hash = hex::encode(hasher.finalize());
 
-    // Check for reuse
-    if detect_refresh_token_reuse(&old_info, state).await? {
+    // Open a transaction and immediately acquire a row-level lock on the
+    // old token.  Any concurrent rotation for the same token will block
+    // here until we commit or roll back.
+    let mut tx = state.db_pool.begin().await?;
+
+    let row = sqlx::query!(
+        r#"
+        SELECT
+            id, user_id, team_id, family, parent_token_jti,
+            scopes as "scopes: Vec<String>",
+            roles as "roles: Vec<String>",
+            expires_at, is_active, revoked_at
+        FROM refresh_tokens
+        WHERE token_hash = $1
+        FOR UPDATE
+        "#,
+        token_hash
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let row = match row {
+        Some(r) => r,
+        None => return Err(Error::Authentication("Invalid refresh token".to_string())),
+    };
+
+    // --- inline validation (was validate_refresh_token) ---
+    if row.is_active == Some(false) {
+        return Err(Error::Authentication(
+            "Refresh token has been revoked".to_string(),
+        ));
+    }
+    if row.revoked_at.is_some() {
+        return Err(Error::Authentication(
+            "Refresh token has been revoked".to_string(),
+        ));
+    }
+    if row.expires_at < Utc::now() {
+        return Err(Error::Authentication(
+            "Refresh token has expired".to_string(),
+        ));
+    }
+
+    let old_id = row.id;
+    let family = row.family;
+    let user_id = row.user_id;
+    let team_id = row.team_id;
+    let scopes = row.scopes;
+    let roles = row.roles;
+
+    // --- inline reuse detection (was detect_refresh_token_reuse) ---
+    // If children already exist this token was already consumed; revoke the
+    // whole family inside the same transaction so the revocation is atomic
+    // with the lock release.
+    let has_descendants = sqlx::query_scalar!(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM refresh_tokens
+            WHERE parent_token_jti = $1
+        )
+        "#,
+        old_id
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    if has_descendants.unwrap_or(false) {
+        sqlx::query!(
+            r#"
+            UPDATE refresh_tokens
+            SET is_active = false,
+                revoked_at = NOW(),
+                revoked_reason = $2
+            WHERE family = $1
+              AND is_active = true
+              AND revoked_at IS NULL
+            "#,
+            family,
+            "refresh_token_reuse_detected"
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        tracing::warn!(
+            family = %family,
+            token_id = %old_id,
+            "Refresh token reuse detected - family revoked"
+        );
+
         return Err(Error::Authentication(
             "Refresh token reuse detected".to_string(),
         ));
     }
 
-    // Create new token in the same family
-    let (new_token, new_info) = create_refresh_token(
-        old_info.user_id,
-        old_info.team_id,
-        old_info.family,
-        Some(old_info.id), // Link to parent
-        old_info.scopes,
-        old_info.roles,
-        expires_in_days,
-        state,
+    // --- inline new-token creation (was create_refresh_token) ---
+    let new_token_bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
+    let new_token = base64::encode(&new_token_bytes);
+    let mut new_hasher = Sha256::new();
+    new_hasher.update(&new_token_bytes);
+    let new_token_hash = hex::encode(new_hasher.finalize());
+
+    let expires_at = Utc::now() + Duration::days(expires_in_days);
+    let new_id = Uuid::new_v4();
+
+    sqlx::query!(
+        r#"
+        INSERT INTO refresh_tokens (
+            id, user_id, team_id, token_hash, family, parent_token_jti,
+            scopes, roles, expires_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        "#,
+        new_id,
+        user_id,
+        team_id,
+        new_token_hash,
+        family,
+        old_id,
+        scopes.as_deref(),
+        roles.as_deref(),
+        expires_at
     )
+    .execute(&mut *tx)
     .await?;
 
-    // Mark old token as inactive (consumed)
+    // Deactivate the old token within the same transaction.
     sqlx::query!(
         r#"
         UPDATE refresh_tokens
         SET is_active = false
         WHERE id = $1
         "#,
-        old_info.id
+        old_id
     )
-    .execute(&state.db_pool)
+    .execute(&mut *tx)
     .await?;
 
+    tx.commit().await?;
+
+    let new_info = RefreshTokenInfo {
+        id: new_id,
+        user_id,
+        team_id,
+        family,
+        parent_token_jti: Some(old_id),
+        scopes,
+        roles,
+        expires_at,
+        is_active: true,
+        revoked_at: None,
+    };
+
     tracing::debug!(
-        old_token_id = %old_info.id,
-        new_token_id = %new_info.id,
-        family = %old_info.family,
+        old_token_id = %old_id,
+        new_token_id = %new_id,
+        family = %family,
         "Refresh token rotated"
     );
 

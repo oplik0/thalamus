@@ -35,6 +35,8 @@ pub struct RateLimiter {
     user_limiters: Arc<RwLock<std::collections::HashMap<Uuid, Arc<InMemoryLimiter>>>>,
     /// Per-team limiters
     team_limiters: Arc<RwLock<std::collections::HashMap<Uuid, Arc<InMemoryLimiter>>>>,
+    /// Persistent strict limiter for auth endpoints (keyed by IP)
+    pub strict_limiter: Arc<InMemoryLimiter>,
     /// Default limits
     config: RateLimitConfig,
 }
@@ -52,6 +54,10 @@ pub struct RateLimitConfig {
     pub global_rpm: u32,
     /// Burst size multiplier
     pub burst_multiplier: u32,
+    /// Strict rate limit for auth endpoints (requests per minute per IP)
+    pub strict_rpm: u32,
+    /// Burst allowance for strict auth-endpoint rate limiting
+    pub strict_burst: u32,
 }
 
 impl Default for RateLimitConfig {
@@ -62,6 +68,8 @@ impl Default for RateLimitConfig {
             team_rpm: 1000,
             global_rpm: 30,
             burst_multiplier: 2,
+            strict_rpm: 5,
+            strict_burst: 3,
         }
     }
 }
@@ -79,11 +87,18 @@ impl RateLimiter {
 
         let global_limiter = Arc::new(GovernorLimiter::keyed(global_quota));
 
+        let strict_quota = Quota::per_minute(
+            NonZeroU32::new(config.strict_rpm).expect("strict_rpm must be non-zero"),
+        )
+        .allow_burst(NonZeroU32::new(config.strict_burst).expect("strict_burst must be non-zero"));
+        let strict_limiter = Arc::new(GovernorLimiter::keyed(strict_quota));
+
         Self {
             global_limiter,
             key_limiters: Arc::new(RwLock::new(std::collections::HashMap::new())),
             user_limiters: Arc::new(RwLock::new(std::collections::HashMap::new())),
             team_limiters: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            strict_limiter,
             config,
         }
     }
@@ -187,12 +202,7 @@ impl RateLimiter {
             match limiter.check_key(&key) {
                 Ok(()) => {
                     headers.key_limit = Some(self.config.key_rpm);
-                    headers.key_remaining = Some(
-                        limiter
-                            .check_key(&key)
-                            .map(|_| self.config.key_rpm.saturating_sub(1))
-                            .unwrap_or(0),
-                    );
+                    headers.key_remaining = Some(self.config.key_rpm.saturating_sub(1));
                 }
                 Err(_) => {
                     return (
@@ -255,10 +265,8 @@ impl RateLimiter {
 
     /// Check global rate limit for unauthenticated requests
     pub fn check_global(&self, client_ip: std::net::IpAddr) -> (bool, RateLimitHeaders) {
-        // For global rate limiting, we use a random UUID per check
-        // In production, you'd want to use a proper hash of the IP
-        let _ip_str = client_ip.to_string();
-        let key = Uuid::new_v4();
+        // Use a deterministic UUID derived from the IP address
+        let key = Uuid::new_v5(&Uuid::NAMESPACE_OID, client_ip.to_string().as_bytes());
 
         match self.global_limiter.check_key(&key) {
             Ok(()) => {
@@ -420,31 +428,23 @@ pub async fn strict_rate_limit_middleware(
     request: Request,
     next: Next,
 ) -> Result<Response> {
-    // Strict limit: 5 requests per minute per IP for auth endpoints
-    const STRICT_LIMIT: u32 = 5;
-
-    let _limiter = state
+    let limiter = state
         .rate_limiter
         .as_ref()
         .ok_or_else(|| Error::Internal("Rate limiter not initialized".to_string()))?;
 
-    // Use a separate strict limiter or the global with stricter settings
-    let quota = Quota::per_minute(NonZeroU32::new(STRICT_LIMIT).unwrap())
-        .allow_burst(NonZeroU32::new(3).unwrap());
+    // Derive a deterministic, per-IP UUID so the shared limiter enforces
+    // limits per connecting IP address across all requests.
+    let key = Uuid::new_v5(&Uuid::NAMESPACE_OID, addr.ip().to_string().as_bytes());
 
-    let strict_limiter = GovernorLimiter::keyed(quota);
-    // Create a simple hash of the IP for use as a UUID key
-    let _ip_str = addr.ip().to_string();
-    let key = Uuid::new_v4();
-
-    match strict_limiter.check_key(&key) {
+    match limiter.strict_limiter.check_key(&key) {
         Ok(()) => {
             let mut response = next.run(request).await;
 
             // Add strict rate limit headers
             response.headers_mut().insert(
                 "X-RateLimit-Limit",
-                STRICT_LIMIT.to_string().parse().unwrap(),
+                limiter.config.strict_rpm.to_string().parse().unwrap(),
             );
 
             Ok(response)

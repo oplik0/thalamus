@@ -6,6 +6,7 @@ schema ServerConfig:
     host: str = "0.0.0.0"
     port: int = 3000
     workers?: int  # Optional, auto-detected if not specified
+    base_url?: str  # Public base URL (e.g. https://api.example.com); used for OAuth callbacks
 
     check:
         1 <= port <= 65535, "Port must be between 1 and 65535"
@@ -203,11 +204,11 @@ schema SecurityConfig:
     """Security secrets configuration"""
     api_key_secret: str  # Secret for HMAC signing of API keys (min 32 bytes recommended)
     paseto_secret_key: str  # Secret key for PASETO token signing (must be exactly 32 bytes)
-    opaque_server_setup: str = "dev"  # OPAQUE server setup string; use 'dev' for development
+    opaque_server_setup: str  # OPAQUE server setup string; set to 'dev' for development only
 
     check:
         len(api_key_secret) > 0, "api_key_secret cannot be empty"
-        len(paseto_secret_key) > 0, "paseto_secret_key cannot be empty"
+        len(paseto_secret_key) == 32, "paseto_secret_key must be exactly 32 bytes"
 
 # Root configuration schema
 schema ThalamusConfig:

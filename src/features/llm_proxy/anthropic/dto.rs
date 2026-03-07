@@ -212,8 +212,15 @@ impl From<AnthropicMessagesRequest> for LlmRequest {
         let tool_choice = value.tool_choice.map(|tc| match tc.choice_type.as_str() {
             "auto" => ToolChoice::Auto,
             "any" => ToolChoice::Required,
-            "tool" => ToolChoice::Function {
-                name: tc.name.unwrap_or_default(),
+            "tool" => match tc.name {
+                Some(name) => ToolChoice::Function { name },
+                None => {
+                    tracing::warn!(
+                        "Anthropic tool_choice type='tool' received with no tool name; \
+                         falling back to ToolChoice::Auto"
+                    );
+                    ToolChoice::Auto
+                }
             },
             _ => ToolChoice::Auto,
         });
@@ -373,11 +380,16 @@ pub fn stream_event_to_anthropic(value: StreamEvent) -> Vec<AnthropicStreamEvent
                 index: content_index,
             }]
         }
-        StreamEvent::ResponseDone { usage, .. } => {
+        StreamEvent::ResponseDone { status, usage } => {
+            let stop_reason = match status {
+                Some(crate::shared::models::ResponseStatus::Incomplete) => "max_tokens",
+                _ => "end_turn",
+            }
+            .to_string();
             vec![
                 AnthropicStreamEvent::MessageDelta {
                     delta: MessageDeltaBody {
-                        stop_reason: "end_turn".to_string(),
+                        stop_reason,
                         stop_sequence: None,
                     },
                     usage: MessageDeltaUsage {

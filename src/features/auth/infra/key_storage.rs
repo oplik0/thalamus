@@ -91,6 +91,7 @@ pub async fn store_key(
 
     Ok(CreateApiKeyResponse {
         id,
+        key_id: key_id.to_string(),
         key: full_key.to_string(),
         key_prefix,
         name: request.name,

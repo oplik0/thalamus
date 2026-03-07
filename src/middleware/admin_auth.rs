@@ -105,5 +105,5 @@ pub async fn admin_auth_middleware(
     request: Request,
     next: Next,
 ) -> Response {
-    require_task_monitor(State(state), request, next).await
+    require_admin(State(state), request, next).await
 }

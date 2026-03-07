@@ -138,7 +138,7 @@ impl Usage {
     pub fn computed_total(&self) -> Option<u32> {
         self.total_tokens
             .or_else(|| match (self.prompt_tokens, self.completion_tokens) {
-                (Some(p), Some(c)) => Some(p + c),
+                (Some(p), Some(c)) => p.checked_add(c),
                 _ => None,
             })
     }

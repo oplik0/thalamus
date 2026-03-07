@@ -20,9 +20,13 @@ export function ExternalLink({ href, ...rest }: Props) {
 					// Prevent the default behavior of linking to the default browser on native.
 					event.preventDefault();
 					// Open the link in an in-app browser.
-					await openBrowserAsync(href, {
-						presentationStyle: WebBrowserPresentationStyle.AUTOMATIC,
-					});
+					try {
+						await openBrowserAsync(href, {
+							presentationStyle: WebBrowserPresentationStyle.AUTOMATIC,
+						});
+					} catch (error) {
+						console.warn("Failed to open browser:", error);
+					}
 				}
 			}}
 		/>

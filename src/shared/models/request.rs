@@ -375,7 +375,7 @@ mod tests {
     use super::*;
     use crate::shared::models::media::MediaSource;
     use crate::shared::models::message::{
-        AnnotatedContentPart, BlockMetadata, CacheControl, Content, ContentPart, Role,
+        AnnotatedContentPart, CacheControl, Content, ContentPart, Role,
     };
     use crate::shared::models::tools::{FunctionDefinition, ToolChoice};
 

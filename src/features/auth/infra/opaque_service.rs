@@ -5,6 +5,7 @@ use crate::features::auth::domain::opaque::{
 };
 use crate::features::auth::domain::token::TokenClaims;
 use crate::features::auth::infra::token_service::create_token;
+use argon2::Argon2;
 use base64::Engine;
 use opaque_ke::{
     CipherSuite, CredentialFinalization, CredentialRequest,
@@ -23,7 +24,7 @@ pub struct ThalmusCipherSuite;
 impl CipherSuite for ThalmusCipherSuite {
     type OprfCs = opaque_ke::Ristretto255;
     type KeyExchange = opaque_ke::key_exchange::tripledh::TripleDh<opaque_ke::Ristretto255, Sha512>;
-    type Ksf = opaque_ke::ksf::Identity; // Fallback to Identity if Argon2 is problematic, or try to find correct path
+    type Ksf = Argon2<'static>;
 }
 
 /// Handle OPAQUE registration start
@@ -130,7 +131,7 @@ pub async fn login_start(request: LoginRequest, state: &AppState) -> Result<Logi
     .map_err(|e| Error::Authentication(format!("OPAQUE login start failed: {}", e)))?;
 
     // Serialize the server state to send back to the client
-    // In a production environment, this should be encrypted/authenticated to prevent tampering
+    // TODO: add encryption/authentication to prevent tampering
     // For now, we rely on the fact that tampering will likely cause the protocol to fail
     let server_state_bytes = bincode::serialize(&login_start.state)
         .map_err(|e| Error::Internal(format!("Failed to serialize server state: {}", e)))?;

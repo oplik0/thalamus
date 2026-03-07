@@ -47,10 +47,22 @@ pub async fn messages(
                             message: error.to_string(),
                         },
                     };
-                    if let Ok(json_data) = serde_json::to_string(&err_event) {
-                        vec![Ok(Event::default().event("error").data(json_data))]
-                    } else {
-                        vec![]
+                    match serde_json::to_string(&err_event) {
+                        Ok(json_data) => {
+                            vec![Ok(Event::default().event("error").data(json_data))]
+                        }
+                        Err(ser_err) => {
+                            tracing::warn!(
+                                error = %ser_err,
+                                original_error = %error,
+                                "Failed to serialize Anthropic error event; sending plain-text fallback"
+                            );
+                            let fallback = format!(
+                                r#"{{"type":"error","error":{{"type":"server_error","message":{}}}}}"#,
+                                serde_json::Value::String(format!("{error} (serialization failed: {ser_err})")),
+                            );
+                            vec![Ok(Event::default().event("error").data(fallback))]
+                        }
                     }
                 }
             };

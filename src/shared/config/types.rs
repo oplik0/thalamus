@@ -10,6 +10,9 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub workers: Option<usize>,
+    /// Public base URL used for OAuth callbacks and similar redirects.
+    /// Falls back to `http://{host}:{port}` when not set.
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,12 +277,7 @@ pub struct OAuthProvider {
 pub struct SecurityConfig {
     pub api_key_secret: String,
     pub paseto_secret_key: String,
-    #[serde(default = "default_opaque_server_setup")]
     pub opaque_server_setup: String,
-}
-
-fn default_opaque_server_setup() -> String {
-    "dev".to_string()
 }
 
 /// Root configuration
@@ -330,6 +328,20 @@ impl Config {
                 "Default queue '{}' does not exist in priority_queues",
                 self.routing.default_queue
             )));
+        }
+
+        // Reject the insecure "dev" placeholder in production.
+        // Check APP_ENV for "production" or "prod" (case-insensitive).
+        let app_env = std::env::var("APP_ENV").unwrap_or_default();
+        let app_env = app_env.trim().to_ascii_lowercase();
+        if (app_env == "production" || app_env == "prod")
+            && self.security.opaque_server_setup == "dev"
+        {
+            return Err(crate::Error::Config(
+                "opaque_server_setup must not be \"dev\" in production; \
+                 generate a real server setup and store it in config"
+                    .to_string(),
+            ));
         }
 
         Ok(())

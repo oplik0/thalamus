@@ -367,8 +367,12 @@ impl Default for RoundRobinCursor {
 }
 
 impl RoundRobinCursor {
+    /// Returns `None` if `len` is zero.
     #[must_use]
-    pub fn next_index(&self, len: usize) -> usize {
-        self.cursor.fetch_add(1, Ordering::Relaxed) % len
+    pub fn next_index(&self, len: usize) -> Option<usize> {
+        if len == 0 {
+            return None;
+        }
+        Some(self.cursor.fetch_add(1, Ordering::Relaxed) % len)
     }
 }

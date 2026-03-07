@@ -153,6 +153,7 @@ pub async fn init_app_state(
                 team_rpm: rl.default_requests_per_minute * 10,
                 global_rpm: rl.default_requests_per_minute / 2,
                 burst_multiplier: rl.burst_size,
+                ..crate::middleware::rate_limit::RateLimitConfig::default()
             };
             tracing::info!(
                 key_rpm = rate_limit_config.key_rpm,
@@ -186,6 +187,29 @@ pub async fn init_app_state(
         tracing::info!("Breach detector initialized");
         Some(Arc::new(BreachDetector::new(config)))
     };
+
+    // Spawn background task to periodically evict stale breach-detection profiles.
+    if let Some(detector) = breach_detector.as_ref() {
+        let detector = Arc::clone(detector);
+        let max_age_secs = detector.config().max_profile_age_secs;
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            // Run cleanup at the same cadence as the profile max-age, capped at 5 min.
+            let interval_secs = max_age_secs.min(300).max(60);
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        detector
+                            .cleanup_stale_profiles(std::time::Duration::from_secs(max_age_secs))
+                            .await;
+                    }
+                    _ = shutdown.cancelled() => break,
+                }
+            }
+        });
+    }
 
     // Initialize OAuth service
     let oauth_service = Arc::new(OAuthService::new(&config.oauth_providers)?);
