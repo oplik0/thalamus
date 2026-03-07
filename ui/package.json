@@ -55,7 +55,7 @@
 		"babel-plugin-module-resolver": "^5.0.2",
 		"prettier-plugin-tailwindcss": "^0.5.14",
 		"tailwindcss": "^3.4.19",
-		"typescript": "~5.9.2"
+		"typescript": "~5.9.3"
 	},
 	"private": true
 }
