@@ -34,6 +34,14 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> crate::Result<Config> {
         .exec_program(args)
         .map_err(|e| crate::Error::Config(format!("Failed to execute KCL program: {e}")))?;
 
+    // Check for KCL errors
+    if !result.err_message.is_empty() {
+        return Err(crate::Error::Config(format!(
+            "KCL program error: {}",
+            result.err_message
+        )));
+    }
+
     // Parse JSON output
     let json_str = result.json_result;
     let config: Config = serde_json::from_str(&json_str)

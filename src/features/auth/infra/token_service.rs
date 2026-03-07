@@ -37,6 +37,7 @@ pub fn create_token(claims: &TokenClaims, state: &AppState) -> Result<String> {
 
     // Get the symmetric key from config
     let key_bytes = state.config.security.paseto_secret_key.as_bytes();
+    // TODO: check if this is correct??
     if key_bytes.len() != 32 {
         return Err(Error::Internal(
             "paseto_secret_key must be exactly 32 bytes".to_string(),

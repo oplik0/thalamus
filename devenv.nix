@@ -26,7 +26,10 @@
 
     kcl-language-server
 
-    pnpm_9
+    glib
+    glibc
+
+    pnpm
     nodejs_24
   ];
 
