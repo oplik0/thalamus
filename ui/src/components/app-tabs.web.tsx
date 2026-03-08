@@ -1,118 +1,65 @@
 import {
-	TabList,
-	type TabListProps,
-	TabSlot,
-	Tabs,
-	TabTrigger,
-	type TabTriggerSlotProps,
+  TabList,
+  type TabListProps,
+  TabSlot,
+  Tabs,
+  TabTrigger,
+  type TabTriggerSlotProps,
 } from "expo-router/ui";
-import { SymbolView } from "expo-symbols";
-import { Pressable, StyleSheet, useColorScheme, View } from "react-native";
-import { Colors, MaxContentWidth, Spacing } from "@/constants/theme";
-import { ExternalLink } from "./external-link";
-import { ThemedText } from "./themed-text";
-import { ThemedView } from "./themed-view";
+import { Pressable, View } from "react-native";
+import { Text } from "@/components/ui/text";
 
 export default function AppTabs() {
-	return (
-		<Tabs>
-			<TabSlot style={{ height: "100%" }} />
-			<TabList asChild>
-				<CustomTabList>
-					<TabTrigger name="home" href="/" asChild>
-						<TabButton>Home</TabButton>
-					</TabTrigger>
-				</CustomTabList>
-			</TabList>
-		</Tabs>
-	);
+  return (
+    <Tabs>
+      <TabSlot style={{ height: "100%" }} />
+      <TabList asChild>
+        <CustomTabList>
+          <TabTrigger name="home" href="/" asChild>
+            <TabButton>Home</TabButton>
+          </TabTrigger>
+        </CustomTabList>
+      </TabList>
+    </Tabs>
+  );
 }
 
 export function TabButton({
-	children,
-	isFocused,
-	...props
+  children,
+  isFocused,
+  ...props
 }: TabTriggerSlotProps) {
-	return (
-		<Pressable {...props} style={({ pressed }) => pressed && styles.pressed}>
-			<ThemedView
-				type={isFocused ? "backgroundSelected" : "backgroundElement"}
-				style={styles.tabButtonView}
-			>
-				<ThemedText
-					type="small"
-					themeColor={isFocused ? "text" : "textSecondary"}
-				>
-					{children}
-				</ThemedText>
-			</ThemedView>
-		</Pressable>
-	);
+  return (
+    <Pressable
+      {...props}
+      className="active:opacity-70"
+    >
+      <View
+        className={`py-1 px-4 rounded-xl ${
+          isFocused ? "bg-background-200" : "bg-background-50"
+        }`}
+      >
+        <Text
+          size="sm"
+          className={isFocused ? "text-typography-900" : "text-typography-500"}
+        >
+          {children}
+        </Text>
+      </View>
+    </Pressable>
+  );
 }
 
 export function CustomTabList(props: TabListProps) {
-	const scheme = useColorScheme();
-	const colors = Colors[scheme === "unspecified" ? "light" : scheme];
-
-	return (
-		<View {...props} style={styles.tabListContainer}>
-			<ThemedView type="backgroundElement" style={styles.innerContainer}>
-				<ThemedText type="smallBold" style={styles.brandText}>
-					Expo Starter
-				</ThemedText>
-
-				{props.children}
-
-				<ExternalLink href="https://docs.expo.dev" asChild>
-					<Pressable style={styles.externalPressable}>
-						<ThemedText type="link">Docs</ThemedText>
-						<SymbolView
-							tintColor={colors.text}
-							name={{ ios: "arrow.up.right.square", web: "link" }}
-							size={12}
-						/>
-					</Pressable>
-				</ExternalLink>
-			</ThemedView>
-		</View>
-	);
+  return (
+    <View
+      {...props}
+      className="absolute w-full p-4 justify-center items-center flex-row"
+    >
+      <View className="py-2 px-8 rounded-3xl flex-row items-center flex-grow gap-2 max-w-3xl bg-background-50">
+        <Text className="mr-auto font-semibold text-sm">Thalamus</Text>
+        {props.children}
+      </View>
+    </View>
+  );
 }
-
-const styles = StyleSheet.create({
-	tabListContainer: {
-		position: "absolute",
-		width: "100%",
-		padding: Spacing.three,
-		justifyContent: "center",
-		alignItems: "center",
-		flexDirection: "row",
-	},
-	innerContainer: {
-		paddingVertical: Spacing.two,
-		paddingHorizontal: Spacing.five,
-		borderRadius: Spacing.five,
-		flexDirection: "row",
-		alignItems: "center",
-		flexGrow: 1,
-		gap: Spacing.two,
-		maxWidth: MaxContentWidth,
-	},
-	brandText: {
-		marginRight: "auto",
-	},
-	pressed: {
-		opacity: 0.7,
-	},
-	tabButtonView: {
-		paddingVertical: Spacing.one,
-		paddingHorizontal: Spacing.three,
-		borderRadius: Spacing.three,
-	},
-	externalPressable: {
-		flexDirection: "row",
-		justifyContent: "center",
-		alignItems: "center",
-		gap: Spacing.one,
-		marginLeft: Spacing.three,
-	},
-});

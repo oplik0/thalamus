@@ -1,9 +1,11 @@
 /**
- * API client for communicating with the Thalmus Rust backend.
+ * API client for communicating with the Thalamus Rust backend.
  *
  * Uses the native fetch API — no need for Axios in modern runtimes.
  * All requests are typed and errors are handled consistently.
  */
+
+import { getToken } from "@/lib/auth";
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
 
@@ -36,13 +38,23 @@ async function handleResponse<T>(response: Response): Promise<T> {
 	return JSON.parse(text) as T;
 }
 
+async function getAuthHeader(): Promise<HeadersInit> {
+	const token = await getToken();
+	if (token) {
+		return { Authorization: `Bearer ${token}` };
+	}
+	return {};
+}
+
 export const apiClient = {
 	async get<T>(path: string, init?: RequestInit): Promise<T> {
+		const authHeader = await getAuthHeader();
 		const response = await fetch(`${API_BASE_URL}${path}`, {
 			...init,
 			method: "GET",
 			headers: {
 				"Content-Type": "application/json",
+				...authHeader,
 				...init?.headers,
 			},
 		});
@@ -50,11 +62,13 @@ export const apiClient = {
 	},
 
 	async post<T>(path: string, body?: unknown, init?: RequestInit): Promise<T> {
+		const authHeader = await getAuthHeader();
 		const response = await fetch(`${API_BASE_URL}${path}`, {
 			...init,
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
+				...authHeader,
 				...init?.headers,
 			},
 			body: body ? JSON.stringify(body) : undefined,
@@ -63,11 +77,13 @@ export const apiClient = {
 	},
 
 	async put<T>(path: string, body?: unknown, init?: RequestInit): Promise<T> {
+		const authHeader = await getAuthHeader();
 		const response = await fetch(`${API_BASE_URL}${path}`, {
 			...init,
 			method: "PUT",
 			headers: {
 				"Content-Type": "application/json",
+				...authHeader,
 				...init?.headers,
 			},
 			body: body ? JSON.stringify(body) : undefined,
@@ -76,11 +92,13 @@ export const apiClient = {
 	},
 
 	async delete<T>(path: string, init?: RequestInit): Promise<T> {
+		const authHeader = await getAuthHeader();
 		const response = await fetch(`${API_BASE_URL}${path}`, {
 			...init,
 			method: "DELETE",
 			headers: {
 				"Content-Type": "application/json",
+				...authHeader,
 				...init?.headers,
 			},
 		});
