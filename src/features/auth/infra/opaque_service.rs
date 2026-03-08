@@ -19,9 +19,9 @@ use sha2::Sha512;
 // Define the OPAQUE cipher suite
 // We use Ristretto255 as the group and SHA-512 as the hash function
 #[derive(Debug)]
-pub struct ThalmusCipherSuite;
+pub struct ThalamusCipherSuite;
 
-impl CipherSuite for ThalmusCipherSuite {
+impl CipherSuite for ThalamusCipherSuite {
     type OprfCs = opaque_ke::Ristretto255;
     type KeyExchange = opaque_ke::key_exchange::tripledh::TripleDh<opaque_ke::Ristretto255, Sha512>;
     type Ksf = Argon2<'static>;
@@ -36,10 +36,10 @@ pub async fn registration_start(
 
     // Deserialize the registration request message
     let opaque_request =
-        OpaqueRegistrationRequest::<ThalmusCipherSuite>::deserialize(&request.message)
+        OpaqueRegistrationRequest::<ThalamusCipherSuite>::deserialize(&request.message)
             .map_err(|e| Error::Authentication(format!("Invalid registration request: {}", e)))?;
 
-    let registration_start = ServerRegistration::<ThalmusCipherSuite>::start(
+    let registration_start = ServerRegistration::<ThalamusCipherSuite>::start(
         &server_setup,
         opaque_request,
         request.username.as_bytes(),
@@ -56,10 +56,10 @@ pub async fn registration_finish(request: RegistrationRequest, state: &AppState)
     let _server_setup = get_server_setup(state)?;
 
     // Deserialize the registration upload message
-    let opaque_upload = RegistrationUpload::<ThalmusCipherSuite>::deserialize(&request.message)
+    let opaque_upload = RegistrationUpload::<ThalamusCipherSuite>::deserialize(&request.message)
         .map_err(|e| Error::Authentication(format!("Invalid registration upload: {}", e)))?;
 
-    let password_file = ServerRegistration::<ThalmusCipherSuite>::finish(opaque_upload);
+    let password_file = ServerRegistration::<ThalamusCipherSuite>::finish(opaque_upload);
 
     // Serialize the password file (registration record)
     let registration_bytes = password_file.serialize().to_vec();
@@ -111,14 +111,15 @@ pub async fn login_start(request: LoginRequest, state: &AppState) -> Result<Logi
         }
     };
 
-    let password_file = ServerRegistration::<ThalmusCipherSuite>::deserialize(&registration_bytes)
+    let password_file = ServerRegistration::<ThalamusCipherSuite>::deserialize(&registration_bytes)
         .map_err(|e| Error::Internal(format!("Failed to deserialize registration: {}", e)))?;
 
     let mut rng = OsRng;
 
     // Deserialize credential request
-    let credential_request = CredentialRequest::<ThalmusCipherSuite>::deserialize(&request.message)
-        .map_err(|e| Error::Authentication(format!("Invalid credential request: {}", e)))?;
+    let credential_request =
+        CredentialRequest::<ThalamusCipherSuite>::deserialize(&request.message)
+            .map_err(|e| Error::Authentication(format!("Invalid credential request: {}", e)))?;
 
     let login_start = ServerLogin::start(
         &mut rng,
@@ -145,13 +146,16 @@ pub async fn login_start(request: LoginRequest, state: &AppState) -> Result<Logi
 /// Handle OPAQUE login finish
 pub async fn login_finish(request: LoginFinishRequest, state: &AppState) -> Result<String> {
     // Deserialize server state
-    let server_state: ServerLogin<ThalmusCipherSuite> = bincode::deserialize(&request.server_state)
-        .map_err(|e| Error::Authentication(format!("Invalid server state: {}", e)))?;
+    let server_state: ServerLogin<ThalamusCipherSuite> =
+        bincode::deserialize(&request.server_state)
+            .map_err(|e| Error::Authentication(format!("Invalid server state: {}", e)))?;
 
     // Deserialize credential finalization
     let credential_finalization =
-        CredentialFinalization::<ThalmusCipherSuite>::deserialize(&request.login_request_message)
-            .map_err(|e| Error::Authentication(format!("Invalid credential finalization: {}", e)))?;
+        CredentialFinalization::<ThalamusCipherSuite>::deserialize(&request.login_request_message)
+            .map_err(|e| {
+                Error::Authentication(format!("Invalid credential finalization: {}", e))
+            })?;
 
     let _session_key = ServerLogin::finish(
         server_state,
@@ -210,17 +214,20 @@ pub async fn login_finish(request: LoginFinishRequest, state: &AppState) -> Resu
 }
 
 // Helper to get server setup from config
-fn get_server_setup(state: &AppState) -> Result<ServerSetup<ThalmusCipherSuite>> {
+fn get_server_setup(state: &AppState) -> Result<ServerSetup<ThalamusCipherSuite>> {
+    // Get config from state
+    let config = state.config.as_ref();
+
     // In a real app, this should be loaded from a secure location or config
     // The config has `opaque_server_setup` string (base64 encoded)
     // If it's empty or "dev", we generate a deterministic one based on the secret
 
-    if state.config.security.opaque_server_setup == "dev"
-        || state.config.security.opaque_server_setup.is_empty()
+    if config.security.opaque_server_setup == "dev"
+        || config.security.opaque_server_setup.is_empty()
     {
         // Deterministic setup for dev based on api_key_secret
         // This is NOT secure for production but good for dev/testing stability
-        let seed = state.config.security.api_key_secret.as_bytes();
+        let seed = config.security.api_key_secret.as_bytes();
         // Pad or truncate to 32 bytes
         let mut seed_bytes = [0u8; 32];
         for (i, b) in seed.iter().enumerate().take(32) {
@@ -233,7 +240,7 @@ fn get_server_setup(state: &AppState) -> Result<ServerSetup<ThalmusCipherSuite>>
 
     // Try to decode from base64
     let setup_bytes = base64::engine::general_purpose::STANDARD
-        .decode(&state.config.security.opaque_server_setup)
+        .decode(&config.security.opaque_server_setup)
         .map_err(|e| Error::Config(format!("Invalid OPAQUE server setup base64: {}", e)))?;
 
     // Deserialize

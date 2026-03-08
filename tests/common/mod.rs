@@ -219,11 +219,10 @@ pub async fn init_test_state() -> thalamus::bootstrap::AppState {
 
     thalamus::bootstrap::AppState {
         db_pool: pool,
-        config,
+        config: Arc::new(config),
         tasks,
         rate_limiter: None,
         authorizer: None,
-        breach_detector: None,
         oauth_service,
         backend_registry,
         proxy,

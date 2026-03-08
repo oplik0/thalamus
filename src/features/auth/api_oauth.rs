@@ -3,6 +3,8 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -77,12 +79,12 @@ pub async fn oauth_login(
     Path(provider): Path<String>,
     Query(query): Query<OAuthLoginQuery>,
 ) -> Result<Json<OAuthLoginResponse>> {
-    let base_url = state.config.server.base_url.clone().unwrap_or_else(|| {
-        format!(
-            "http://{}:{}",
-            state.config.server.host, state.config.server.port
-        )
-    });
+    let config = state.config.as_ref();
+    let base_url = config
+        .server
+        .base_url
+        .clone()
+        .unwrap_or_else(|| format!("http://{}:{}", config.server.host, config.server.port));
 
     let response = state
         .oauth_service
@@ -95,30 +97,49 @@ pub async fn oauth_login(
     }))
 }
 
-/// Handle OAuth callback
+/// Handle OAuth callback - redirects to frontend with token
 pub async fn oauth_callback(
     State(state): State<AppState>,
     Path(_provider): Path<String>,
     Query(query): Query<OAuthCallbackQuery>,
-) -> Result<Json<OAuthCallbackResponse>> {
-    let base_url = state.config.server.base_url.clone().unwrap_or_else(|| {
-        format!(
-            "http://{}:{}",
-            state.config.server.host, state.config.server.port
-        )
-    });
+) -> Result<Response> {
+    let config = state.config.as_ref();
+    let base_url = config
+        .server
+        .base_url
+        .clone()
+        .unwrap_or_else(|| format!("http://{}:{}", config.server.host, config.server.port));
 
     let result = state
         .oauth_service
         .handle_oauth_callback(&query.state, &query.code, &base_url, &state)
         .await?;
 
-    Ok(Json(OAuthCallbackResponse {
-        token: result.token,
-        user_id: result.user_id.to_string(),
-        team_id: result.team_id.to_string(),
-        is_new_user: result.is_new_user,
-    }))
+    // Redirect to the frontend callback URL with the token
+    // The frontend will extract the token and complete the login
+    // Build the full URL - the redirect_url from OAuth state is relative
+    let redirect_path = result.redirect_url.unwrap_or_else(|| "/".to_string());
+
+    // Build the full redirect URL (prepend base URL if relative)
+    let final_url = if redirect_path.starts_with("http") {
+        redirect_path
+    } else {
+        format!("{}{}", base_url, redirect_path)
+    };
+
+    // Add token as query params
+    let final_url = format!(
+        "{}?token={}&user_id={}&team_id={}&is_new_user={}",
+        final_url,
+        urlencoding::encode(&result.token),
+        result.user_id,
+        result.team_id,
+        result.is_new_user
+    );
+
+    tracing::debug!(redirect_url = %final_url, "Redirecting OAuth callback to frontend");
+
+    Ok((StatusCode::FOUND, [(header::LOCATION, final_url)]).into_response())
 }
 
 /// Link OAuth account to existing user (requires authentication)

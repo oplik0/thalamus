@@ -55,6 +55,8 @@ pub struct OAuthAuthResponse {
     pub user_id: Uuid,
     pub team_id: Uuid,
     pub is_new_user: bool,
+    /// Original redirect URL from the login request (for redirect after callback)
+    pub redirect_url: Option<String>,
 }
 
 /// Provider info for listing
@@ -284,13 +286,47 @@ impl OAuthService {
             .provision_user(&oauth_state.provider_name, &user_info, &orgs, state)
             .await?;
 
+        // Fetch user's roles from database and convert to scopes
+        let roles: Vec<String> = sqlx::query_scalar!(
+            "SELECT role FROM team_memberships WHERE user_id = $1",
+            user_id
+        )
+        .fetch_all(&state.db_pool)
+        .await
+        .unwrap_or_default();
+
+        // Convert roles to scopes - admin gets all scopes
+        let scopes = if roles.iter().any(|r| r == "admin") {
+            Some(vec![
+                "api_keys:read".to_string(),
+                "api_keys:create".to_string(),
+                "api_keys:revoke".to_string(),
+                "api_keys:rotate".to_string(),
+                "signing_keys:read".to_string(),
+                "signing_keys:create".to_string(),
+                "signing_keys:revoke".to_string(),
+                "tokens:read".to_string(),
+                "tokens:create".to_string(),
+                "tokens:revoke".to_string(),
+                "oauth:link".to_string(),
+                "oauth:unlink".to_string(),
+                "admin".to_string(),
+            ])
+        } else {
+            // Non-admin users get read-only access by default
+            Some(vec![
+                "api_keys:read".to_string(),
+                "signing_keys:read".to_string(),
+            ])
+        };
+
         // Create PASETO token
         let claims = TokenClaims::new(
             user_id,
             team_id,
-            None,      // Roles can be fetched from Casbin
-            None,      // Scopes
-            3600 * 24, // 24 hours
+            Some(roles), // Roles from database
+            scopes,      // Scopes derived from roles
+            3600 * 24,   // 24 hours
         );
 
         let paseto_token = create_token(&claims, state)?;
@@ -300,6 +336,7 @@ impl OAuthService {
             user_id,
             team_id,
             is_new_user,
+            redirect_url: oauth_state.redirect_url,
         })
     }
 

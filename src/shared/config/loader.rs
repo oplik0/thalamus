@@ -1,17 +1,20 @@
 //! KCL configuration loader
+//!
+//! Supports loading configuration with named profiles.
 
 use super::types::Config;
 use kcl_lang::{API, ExecProgramArgs};
+use std::collections::HashMap;
 use std::path::Path;
 
-/// Load KCL configuration from a file
+/// Load all configuration profiles from a KCL file
 ///
 /// # Errors
 /// Returns an error if the configuration file doesn't exist, has syntax errors, or fails validation
-pub fn load_config<P: AsRef<Path>>(path: P) -> crate::Result<Config> {
+pub fn load_config_profiles<P: AsRef<Path>>(path: P) -> crate::Result<HashMap<String, Config>> {
     let path = path.as_ref();
 
-    tracing::info!(path = %path.display(), "Loading KCL configuration");
+    tracing::info!(path = %path.display(), "Loading KCL configuration profiles");
 
     if !path.exists() {
         return Err(crate::Error::Config(format!(
@@ -42,40 +45,90 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> crate::Result<Config> {
         )));
     }
 
-    // Parse JSON output
+    // Parse JSON output as HashMap
     let json_str = result.json_result;
-    let config: Config = serde_json::from_str(&json_str)
+    let profiles: HashMap<String, Config> = serde_json::from_str(&json_str)
         .map_err(|e| crate::Error::Config(format!("Failed to parse KCL output as JSON: {e}")))?;
 
-    // Validate configuration
-    config.validate()?;
+    // Validate each profile
+    for (name, config) in &profiles {
+        if let Err(e) = config.validate() {
+            tracing::warn!(profile = %name, error = %e, "Profile validation failed");
+            return Err(crate::Error::Config(format!(
+                "Profile '{}' validation failed: {e}",
+                name
+            )));
+        }
+    }
 
-    tracing::info!("Configuration loaded and validated successfully");
+    tracing::info!(
+        profiles = profiles.len(),
+        "Loaded {} configuration profiles",
+        profiles.len()
+    );
 
-    Ok(config)
+    Ok(profiles)
+}
+
+/// Load a specific configuration profile from a KCL file
+///
+/// # Errors
+/// Returns an error if the configuration file doesn't exist, the profile doesn't exist,
+/// has syntax errors, or fails validation
+pub fn load_config<P: AsRef<Path>>(path: P, profile: &str) -> crate::Result<Config> {
+    let profiles = load_config_profiles(path)?;
+
+    profiles
+        .into_iter()
+        .find(|(name, _)| name == profile)
+        .map(|(_, config)| config)
+        .ok_or_else(|| {
+            crate::Error::Config(format!(
+                "Profile '{}' not found in configuration file",
+                profile
+            ))
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn test_load_config_profiles() {
+        let result = load_config_profiles("config.k");
+
+        match result {
+            Ok(profiles) => {
+                assert!(!profiles.is_empty());
+                println!(
+                    "Loaded {} profiles: {:?}",
+                    profiles.len(),
+                    profiles.keys().collect::<Vec<_>>()
+                );
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                assert!(
+                    !error_msg.contains("syntax error"),
+                    "Config has syntax errors: {error_msg}"
+                );
+            }
+        }
+    }
 
     #[test]
-    fn test_load_example_config() {
-        // This test will fail if config.example.k has syntax errors
-        let result = load_config("config.example.k");
+    fn test_load_config_profile() {
+        let result = load_config("config.k", "default");
 
-        // We expect this to fail in tests because environment variables aren't set
-        // but it should at least parse without syntax errors
         match result {
             Ok(config) => {
                 assert!(!config.backends.is_empty());
                 println!(
-                    "Config loaded successfully with {} backends",
+                    "Loaded 'default' profile with {} backends",
                     config.backends.len()
                 );
             }
             Err(e) => {
-                // Expected to fail due to missing env vars, but should not be a parse error
                 let error_msg = e.to_string();
                 assert!(
                     !error_msg.contains("syntax error"),

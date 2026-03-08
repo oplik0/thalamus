@@ -38,9 +38,12 @@ pub async fn store_key(
     // Hash only the secret part for storage
     let salt = SaltString::generate(&mut OsRng);
 
-    let secret_bytes = state.config.security.api_key_secret.as_bytes();
+    let secret_bytes = {
+        let config = state.config.as_ref();
+        config.security.api_key_secret.as_bytes().to_vec()
+    };
     let argon2 = Argon2::new_with_secret(
-        secret_bytes,
+        &secret_bytes,
         argon2::Algorithm::Argon2id,
         argon2::Version::V0x13,
         // we have a random input so this is overkill anyway
@@ -170,9 +173,12 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
     let parsed_hash = PasswordHash::new(&api_key.key_hash)
         .map_err(|e| Error::Internal(format!("Failed to parse stored hash: {}", e)))?;
 
-    let secret_bytes = state.config.security.api_key_secret.as_bytes();
+    let secret_bytes = {
+        let config = state.config.as_ref();
+        config.security.api_key_secret.as_bytes().to_vec()
+    };
     let argon2 = Argon2::new_with_secret(
-        secret_bytes,
+        &secret_bytes,
         argon2::Algorithm::Argon2id,
         argon2::Version::V0x13,
         // note: these params are overriden by the parsed ones in verify

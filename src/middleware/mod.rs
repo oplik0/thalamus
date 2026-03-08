@@ -12,7 +12,6 @@
 pub mod admin_auth;
 pub mod auth;
 pub mod authz;
-pub mod breach_detection;
 pub mod rate_limit;
 pub mod security_headers;
 
@@ -25,11 +24,6 @@ pub use auth::{
     ApiKeyAuth, OptionalApiKeyAuth, require_all_scopes, require_any_scope, require_scope,
 };
 pub use authz::{AuthzExt, casbin_auth_middleware, require_permission};
-pub use breach_detection::{
-    BreachDetectionConfig, BreachDetectionStats, BreachDetector, SecurityEvent, SecurityEventType,
-    SecuritySeverity, breach_detection_middleware, record_auth_failure,
-    record_privilege_escalation,
-};
 pub use rate_limit::{
     RateLimitConfig, RateLimitHeaders, RateLimitLayer, RateLimiter, rate_limit_middleware,
     strict_rate_limit_middleware,

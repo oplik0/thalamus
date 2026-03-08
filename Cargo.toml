@@ -32,6 +32,7 @@ sqlx = { version = "0.8.6", features = [
 kclvm-runtime = { git = "https://github.com/oplik0/kcl", branch = "serde_json_bump" }
 kcl-lang = { git = "https://github.com/oplik0/kcl-lib", branch = "serde_json_bump"}
 notify = { version = "8.2.0", default-features = false, features = ["macos_kqueue"] }
+clap = { version = "4", features = ["derive"] }
 
 # Authorization
 casbin = { version = "2.17.0", default-features = false, features = ["runtime-tokio", "logging", "incremental"] }
@@ -82,6 +83,7 @@ oauth2 = { version = "5.0", features = ["reqwest"] }
 
 # Caching (optional)
 redis = { version = "0.32.7", features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"], optional = true }
+parking_lot = "0.12"
 dashmap = "6.1"
 base64 = "0.22.1"
 rand_hc = "0.4.0"

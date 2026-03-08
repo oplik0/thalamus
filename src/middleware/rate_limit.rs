@@ -361,8 +361,8 @@ pub async fn rate_limit_middleware(
     next: Next,
 ) -> Result<Response> {
     // Check if rate limiting is enabled
-    let rate_limit_enabled = state
-        .config
+    let config = state.config.as_ref();
+    let rate_limit_enabled = config
         .rate_limiting
         .as_ref()
         .map(|rl| rl.enabled)

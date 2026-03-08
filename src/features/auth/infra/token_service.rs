@@ -11,6 +11,9 @@ use std::convert::TryFrom;
 
 /// Create a PASETO v4.local token from claims
 pub fn create_token(claims: &TokenClaims, state: &AppState) -> Result<String> {
+    // Get config from state
+    let config = state.config.as_ref();
+
     // Convert TokenClaims to pasetors Claims
     let mut paseto_claims = Claims::new()?;
 
@@ -36,7 +39,7 @@ pub fn create_token(claims: &TokenClaims, state: &AppState) -> Result<String> {
     }
 
     // Get the symmetric key from config
-    let key_bytes = state.config.security.paseto_secret_key.as_bytes();
+    let key_bytes = config.security.paseto_secret_key.as_bytes();
     // TODO: check if this is correct??
     if key_bytes.len() != 32 {
         return Err(Error::Internal(
@@ -56,7 +59,8 @@ pub fn create_token(claims: &TokenClaims, state: &AppState) -> Result<String> {
 /// Validate and parse a PASETO v4.local token
 pub async fn validate_token(token: &str, state: &AppState) -> Result<TokenClaims> {
     // Get the symmetric key from config
-    let key_bytes = state.config.security.paseto_secret_key.as_bytes();
+    let config = state.config.as_ref();
+    let key_bytes = config.security.paseto_secret_key.as_bytes();
     if key_bytes.len() != 32 {
         return Err(Error::Internal(
             "paseto_secret_key must be exactly 32 bytes".to_string(),

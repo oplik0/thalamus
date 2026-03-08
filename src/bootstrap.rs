@@ -8,7 +8,6 @@ use crate::features::authorization::CasbinAuthorizer;
 use crate::features::backends::infra::{AdaptingBackendClient, InMemoryBackendRegistry};
 use crate::features::llm_proxy::ProxyService;
 use crate::features::routing::infra::RouterService;
-use crate::middleware::breach_detection::BreachDetector;
 use crate::middleware::rate_limit::RateLimiter;
 use crate::shared::config::types::Config;
 use axum::Router;
@@ -22,16 +21,14 @@ use tokio_util::sync::CancellationToken;
 pub struct AppState {
     /// Database connection pool
     pub db_pool: PgPool,
-    /// Application configuration
-    pub config: Config,
+    /// Application configuration (Arc for efficient cloning, can be swapped on hot-reload)
+    pub config: Arc<Config>,
     /// Background task queue
     pub tasks: AppTasks,
     /// Rate limiter for API requests
     pub rate_limiter: Option<Arc<RateLimiter>>,
     /// Casbin authorizer for RBAC
     pub authorizer: Option<Arc<CasbinAuthorizer>>,
-    /// Breach detector for security monitoring
-    pub breach_detector: Option<Arc<BreachDetector>>,
     /// OAuth service for authentication
     pub oauth_service: Arc<OAuthService>,
     /// In-memory backend endpoint registry
@@ -45,11 +42,10 @@ impl std::fmt::Debug for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AppState")
             .field("db_pool", &"<PgPool>")
-            .field("config", &self.config)
+            .field("config", &"<Config>")
             .field("tasks", &"<AppTasks>")
             .field("rate_limiter", &"<RateLimiter>")
             .field("authorizer", &"<CasbinAuthorizer>")
-            .field("breach_detector", &"<BreachDetector>")
             .field("backend_registry", &"<InMemoryBackendRegistry>")
             .field("proxy", &"<ProxyService>")
             .finish()
@@ -80,27 +76,26 @@ pub fn build_router(state: AppState) -> Router {
 /// Initialize the application state
 ///
 /// This function:
-/// - Loads configuration from the specified KCL file
+/// - Uses the provided configuration (already loaded from KCL)
 /// - Connects to the database
 /// - Runs database migrations
 /// - Initializes shared services
 ///
 /// # Arguments
-/// * `config_path` - Path to the KCL configuration file
+/// * `config` - Arc<Config> for hot-reload support
 ///
 /// # Errors
 /// Returns an error if:
-/// - Configuration file cannot be loaded or is invalid
+/// - Configuration is invalid
 /// - Database connection cannot be established
 /// - Database migrations fail
 pub async fn init_app_state(
-    config_path: &str,
+    config: Arc<Config>,
     shutdown: CancellationToken,
 ) -> crate::Result<AppState> {
     tracing::info!("Initializing application state");
 
-    // Load configuration
-    let config = crate::shared::config::load_config(config_path)?;
+    // Get config for initialization
     tracing::info!(
         database_url = %config.database.url,
         max_connections = config.database.max_connections,
@@ -169,50 +164,9 @@ pub async fn init_app_state(
         }
     });
 
-    // Initialize Casbin authorizer
-    let authorizer = match CasbinAuthorizer::new(db_pool.clone()).await {
-        Ok(authz) => {
-            tracing::info!("Casbin authorizer initialized successfully");
-            Some(Arc::new(authz))
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to initialize Casbin authorizer");
-            None
-        }
-    };
-
-    // Initialize breach detector
-    let breach_detector = {
-        let config = crate::middleware::breach_detection::BreachDetectionConfig::default();
-        tracing::info!("Breach detector initialized");
-        Some(Arc::new(BreachDetector::new(config)))
-    };
-
-    // Spawn background task to periodically evict stale breach-detection profiles.
-    if let Some(detector) = breach_detector.as_ref() {
-        let detector = Arc::clone(detector);
-        let max_age_secs = detector.config().max_profile_age_secs;
-        let shutdown = shutdown.clone();
-        tokio::spawn(async move {
-            // Run cleanup at the same cadence as the profile max-age, capped at 5 min.
-            let interval_secs = max_age_secs.min(300).max(60);
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        detector
-                            .cleanup_stale_profiles(std::time::Duration::from_secs(max_age_secs))
-                            .await;
-                    }
-                    _ = shutdown.cancelled() => break,
-                }
-            }
-        });
-    }
-
     // Initialize OAuth service
-    let oauth_service = Arc::new(OAuthService::new(&config.oauth_providers)?);
+    let oauth_providers = config.oauth_providers.clone();
+    let oauth_service = Arc::new(OAuthService::new(&oauth_providers)?);
     tracing::info!("OAuth service initialized");
 
     // Initialize backend registry and proxy pipeline
@@ -244,7 +198,7 @@ pub async fn init_app_state(
         http_client,
         backend_registry.clone(),
         &config.backends,
-        shutdown,
+        shutdown.clone(),
     );
     tracing::info!(
         count = health_tasks.len(),
@@ -253,13 +207,24 @@ pub async fn init_app_state(
 
     tracing::info!("Application state initialized successfully");
 
+    // Initialize Casbin authorizer (needs db_pool)
+    let authorizer = match CasbinAuthorizer::new(db_pool.clone()).await {
+        Ok(authz) => {
+            tracing::info!("Casbin authorizer initialized successfully");
+            Some(Arc::new(authz))
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to initialize Casbin authorizer");
+            None
+        }
+    };
+
     Ok(AppState {
         db_pool,
         config,
         tasks,
         rate_limiter,
         authorizer,
-        breach_detector,
         oauth_service,
         backend_registry,
         proxy,

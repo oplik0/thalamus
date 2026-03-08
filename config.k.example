@@ -1,0 +1,187 @@
+# Thalamus Configuration Example
+# Copy this to config.k and customize for your environment
+# KCL provides type-safe configuration with validation and hot-reload
+# Use named profiles (e.g., default, dev, prod) to configure different environments
+
+# Import shared schemas
+import pkg
+
+# Default profile - used when no profile is specified
+default = pkg.ThalamusConfig {
+    server = pkg.ServerConfig {
+        host = "0.0.0.0"
+        port = 3000
+        workers = 4
+    }
+
+    # Database configuration
+    database = pkg.DatabaseConfig {
+        url = "postgresql://user@localhost:5432/thalamus"
+        max_connections = 20
+        min_connections = 2
+        pool_timeout = "30s"
+        idle_timeout = "600s"
+        max_lifetime = "1800s"
+    }
+
+    # Security configuration - REPLACE WITH YOUR OWN SECRETS
+    security = pkg.SecurityConfig {
+        api_key_secret = "YOUR_API_KEY_SECRET_HERE"  # Min 32 bytes recommended
+        paseto_secret_key = "YOUR_PASETO_SECRET_KEY"  # Must be exactly 32 bytes
+        opaque_server_setup = "dev"  # Use 'dev' for development only
+    }
+
+    # Backend definitions
+    backends = {
+        # Example: OpenAI backend
+        # openai = pkg.BackendConfig {
+        #     endpoints = [
+        #         pkg.EndpointConfig {
+        #             url = "https://api.openai.com/v1"
+        #             capacity = 100
+        #             models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
+        #             tags = ["openai", "production", "high-capacity"]
+        #             weight = 10
+        #         }
+        #     ]
+        #     auth = pkg.AuthConfig {
+        #         type = "bearer_token"
+        #         token = "${OPENAI_API_KEY}"
+        #     }
+        #     health_check = pkg.HealthCheckConfig {
+        #         enabled = True
+        #         interval = "30s"
+        #         timeout = "5s"
+        #         unhealthy_threshold = 3
+        #         healthy_threshold = 2
+        #     }
+        #     retry_config = pkg.RetryConfig {
+        #         max_retries = 3
+        #         initial_delay = "1s"
+        #         max_delay = "10s"
+        #         exponential_backoff = True
+        #     }
+        #     timeout = "60s"
+        # }
+
+        # Example: Local Ollama backend
+        ollama = pkg.BackendConfig {
+            endpoints = [
+                pkg.EndpointConfig {
+                    url = "http://localhost:11434/v1"
+                    capacity = 10
+                    models = ["llama3.2:latest", "qwen2.5:7b", "mistral:7b"]
+                    currently_loaded_models = []
+                    model_loading_aware = True
+                    tags = ["local", "self-hosted", "high-privacy", "cost-free"]
+                    weight = 5
+                }
+            ]
+            auth = pkg.AuthConfig {
+                type = "none"
+            }
+            health_check = pkg.HealthCheckConfig {
+                enabled = True
+                interval = "60s"
+                timeout = "10s"
+            }
+            timeout = "120s"
+        }
+    }
+
+    # Routing configuration
+    routing = pkg.RoutingConfig {
+        strategy = pkg.StrategyConfig {
+            name = "model_aware_least_busy"
+            prefer_loaded_models = True
+            consider_queue_depth = True
+            fallback_strategy = "round_robin"
+        }
+
+        priority_queues = {
+            realtime = pkg.QueueConfig {
+                priority = 100
+                max_queue_size = 1000
+                timeout = "30s"
+            }
+            batch = pkg.QueueConfig {
+                priority = 50
+                max_queue_size = 10000
+                timeout = "300s"
+            }
+            low_priority = pkg.QueueConfig {
+                priority = 10
+                max_queue_size = 5000
+                timeout = "600s"
+            }
+        }
+
+        default_queue = "realtime"
+    }
+
+    # Observability configuration
+    observability = pkg.ObservabilityConfig {
+        tracing = pkg.TracingConfig {
+            enabled = True
+            level = "info"
+            format = "json"
+            otlp_endpoint = "http://localhost:4317"
+            sample_rate = 1.0
+        }
+
+        metrics = pkg.MetricsConfig {
+            enabled = True
+            prometheus_endpoint = "/metrics"
+            collection_interval = "10s"
+            include_per_backend = True
+            include_per_model = True
+        }
+    }
+
+    # Optional: Cache configuration (requires Redis)
+    cache = pkg.CacheConfig {
+        enabled = True
+        redis_url = "redis://localhost:6379"
+        default_ttl = "300s"
+        max_memory = "1GB"
+        key_prefix = "thalamus:"
+    }
+
+    # Optional: Rate limiting configuration
+    rate_limiting = pkg.RateLimitConfig {
+        enabled = True
+        algorithm = "token_bucket"
+        default_requests_per_minute = 60
+        burst_size = 10
+    }
+
+    # OAuth providers (optional)
+    oauth_providers = []
+}
+
+# Production profile - override settings for production
+# prod = pkg.ThalamusConfig {
+#     server = pkg.ServerConfig {
+#         host = "0.0.0.0"
+#         port = 3000
+#         workers = 8
+#         base_url = "https://api.yourdomain.com"
+#     }
+#
+#     database = pkg.DatabaseConfig {
+#         url = "postgresql://user@prod-db:5432/thalamus"
+#         max_connections = 50
+#         min_connections = 5
+#         pool_timeout = "30s"
+#         idle_timeout = "600s"
+#         max_lifetime = "1800s"
+#     }
+#
+#     security = pkg.SecurityConfig {
+#         api_key_secret = "YOUR_REAL_API_KEY_SECRET"
+#         paseto_secret_key = "YOUR_REAL_PASETO_SECRET"
+#         opaque_server_setup = "YOUR_GENERATED_OPAQUE_SETUP"
+#     }
+#
+#     # ... other config
+# }

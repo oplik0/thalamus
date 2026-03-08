@@ -245,10 +245,12 @@ pub struct TeamMappingConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum OAuthProviderType {
+    #[serde(rename = "github")]
     GitHub,
+    #[serde(rename = "github_enterprise")]
     GitHubEnterprise,
+    #[serde(rename = "oidc")]
     Oidc,
 }
 
@@ -259,7 +261,7 @@ fn default_oauth_scopes() -> Vec<String> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthProvider {
     pub name: String,
-    #[serde(rename = "type")]
+    #[serde(rename = "provider_type")]
     pub provider_type: OAuthProviderType,
     pub client_id: String,
     pub client_secret: String,

@@ -159,6 +159,7 @@ impl GitHubOAuthProvider {
             .get(format!("{}/user", self.api_base_url))
             .header("Authorization", format!("Bearer {}", access_token))
             .header("Accept", "application/vnd.github.v3+json")
+            .header("User-Agent", "Thalamus-OAuth-App")
             .send()
             .await
             .map_err(|e| OAuthError::UserInfoFetch(e.to_string()))?;
@@ -195,6 +196,7 @@ impl GitHubOAuthProvider {
             .get(format!("{}/user/orgs", self.api_base_url))
             .header("Authorization", format!("Bearer {}", access_token))
             .header("Accept", "application/vnd.github.v3+json")
+            .header("User-Agent", "Thalamus-OAuth-App")
             .send()
             .await
             .map_err(|e| OAuthError::UserInfoFetch(e.to_string()))?;
@@ -347,6 +349,7 @@ impl GitHubEnterpriseProvider {
             .get(format!("{}/user", self.api_base_url))
             .header("Authorization", format!("Bearer {}", access_token))
             .header("Accept", "application/vnd.github.v3+json")
+            .header("User-Agent", "Thalamus-OAuth-App")
             .send()
             .await
             .map_err(|e| OAuthError::UserInfoFetch(e.to_string()))?;
@@ -383,6 +386,7 @@ impl GitHubEnterpriseProvider {
             .get(format!("{}/user/orgs", self.api_base_url))
             .header("Authorization", format!("Bearer {}", access_token))
             .header("Accept", "application/vnd.github.v3+json")
+            .header("User-Agent", "Thalamus-OAuth-App")
             .send()
             .await
             .map_err(|e| OAuthError::UserInfoFetch(e.to_string()))?;
