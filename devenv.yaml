@@ -1,6 +1,8 @@
 inputs:
   crane:
     url: github:ipetkov/crane
+  git-hooks:
+    url: github:cachix/git-hooks.nix
   mk-shell-bin:
     url: github:rrbutani/nix-mk-shell-bin
   nix2container:
