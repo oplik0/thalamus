@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH RECURSIVE rotation_chain AS (\n            -- Base case: the starting key\n            SELECT\n                id, key_id, name, rotated_from, rotated_at,\n                grace_period_ends_at, rotation_reason,\n                created_at, 0 as depth\n            FROM api_keys\n            WHERE key_id = $1\n\n            UNION ALL\n\n            -- Recursive case: keys rotated from this one\n            SELECT\n                k.id, k.key_id, k.name, k.rotated_from, k.rotated_at,\n                k.grace_period_ends_at, k.rotation_reason,\n                k.created_at, rc.depth + 1\n            FROM api_keys k\n            INNER JOIN rotation_chain rc ON k.rotated_from = rc.id\n            WHERE rc.depth < 10 -- Prevent infinite loops\n        )\n        SELECT\n            key_id,\n            name,\n            rotated_at,\n            grace_period_ends_at,\n            rotation_reason,\n            created_at\n        FROM rotation_chain\n        WHERE depth > 0 -- Exclude the starting key\n        ORDER BY created_at DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "key_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "rotated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "grace_period_ends_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "rotation_reason",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "3a366b5de61d1c44e45d9d6c4b8179576267c3b23ed59dc3717d6ddec4dd30df"
+}

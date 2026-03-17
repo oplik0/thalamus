@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE api_keys\n        SET is_active = false,\n            revoked_at = NOW()\n        WHERE grace_period_ends_at IS NOT NULL\n          AND grace_period_ends_at < NOW()\n          AND is_active = true\n          AND revoked_at IS NULL\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "1fff1b1b68aa96426c04a2b08ca6b88d1a221d68ff99d2048b604607fc1f876a"
+}

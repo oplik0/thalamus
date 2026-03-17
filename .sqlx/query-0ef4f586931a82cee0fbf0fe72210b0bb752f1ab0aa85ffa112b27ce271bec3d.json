@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE api_keys\n        SET is_active = false,\n            revoked_at = NOW(),\n            rotation_reason = $2\n        WHERE key_id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0ef4f586931a82cee0fbf0fe72210b0bb752f1ab0aa85ffa112b27ce271bec3d"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE signing_keys SET last_used_at = NOW(), use_count = use_count + 1 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f1307fd6d5ac4771ecdd7549063f8afb9841bdb5266069d6184b46439cbf39c5"
+}

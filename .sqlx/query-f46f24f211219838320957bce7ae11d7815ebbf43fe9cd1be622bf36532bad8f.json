@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE signing_keys\n        SET is_active = false,\n            revoked_at = NOW()\n        WHERE key_id = $1 AND user_id = $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f46f24f211219838320957bce7ae11d7815ebbf43fe9cd1be622bf36532bad8f"
+}

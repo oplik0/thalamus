@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO users (id, username, email, is_active, last_login_at)\n            VALUES ($1, $2, $3, true, NOW())\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2e4e9f3e86f5b385a3a3dc976e9681da0cfa6587f9269803224a4b645b99571f"
+}

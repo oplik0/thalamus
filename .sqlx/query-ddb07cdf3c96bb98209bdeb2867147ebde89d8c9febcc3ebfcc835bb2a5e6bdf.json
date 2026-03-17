@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE api_keys\n        SET rotated_at = NOW(),\n            grace_period_ends_at = $2,\n            rotation_reason = $3,\n            name = name || ' (rotated - expires soon)'\n        WHERE key_id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ddb07cdf3c96bb98209bdeb2867147ebde89d8c9febcc3ebfcc835bb2a5e6bdf"
+}
