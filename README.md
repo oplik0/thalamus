@@ -1,107 +1,115 @@
-# Thalamus - Backend-Centric LLM Router
+# Thalamus
 
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 [![Rust](https://img.shields.io/badge/rust-1.89%2B-orange)](https://www.rust-lang.org/)
 
-A configuration-based, backend-centric LLM router and load balancer built with Rust and Axum. Thalamus provides advanced routing capabilities, team-based access control, and comprehensive observability for LLM deployments.
+A backend-centric LLM router and load balancer. Routes requests across multiple LLM backends with team-based access control, configurable routing strategies, and OpenTelemetry observability. Built with Rust, Axum, and PostgreSQL.
 
-## Development Setup
-
-This project uses [devenv](https://devenv.sh/) for a reproducible development environment.
-
-### Prerequisites
+## Prerequisites
 
 - [Nix](https://nixos.org/download.html) with flakes enabled
-- [devenv](https://devenv.sh/getting-started/) installed
+- [devenv](https://devenv.sh/getting-started/)
 
-### Quick Start
+The development environment is fully managed by devenv. All toolchains, services, and shell scripts are declared in `devenv.nix` - no manual installation of Rust, PostgreSQL, or Redis is required.
+
+## Getting Started
 
 ```bash
-# Clone the repository
 git clone https://github.com/yourusername/thalamus.git
 cd thalamus
 
-# Enter the development environment
+# Enter the development shell (installs all dependencies automatically)
 devenv shell
 
-# Start PostgreSQL and Redis services
+# Start PostgreSQL and Redis
 services-up
 
-# Run database migrations (when available)
+# Run database migrations
 db-migrate
 
-# Run the server
+# Start the server (listens on port 3000)
 run
+```
 
-# Or run with auto-reload
+For development with automatic rebuild on file changes:
+
+```bash
 dev
 ```
 
-## Available Commands
+This uses [bacon](https://github.com/Canop/bacon) to watch for changes and restart the server.
 
-When in the devenv shell, you have access to these commands:
+## Commands
 
-### Build & Run
-- `build` - Build the project in debug mode
-- `build-release` - Build in release mode (optimized)
-- `run` - Run the server
-- `dev` - Run with auto-reload on file changes
+All commands are available inside `devenv shell`.
 
-### Testing
-- `test` - Run tests with nextest
-- `test-verbose` - Run tests with immediate output
-- `test-ci` - Run tests in CI mode (fail-fast, no retries)
-- `test-cargo` - Run tests with standard cargo test
+| Command | Description |
+|---|---|
+| `build` | Build in debug mode |
+| `build-release` | Build in release mode (LTO, stripped) |
+| `run` | Run the server |
+| `dev` | Run with auto-reload via bacon |
+| `test` | Run tests with cargo-nextest |
+| `test-verbose` | Run tests with immediate output |
+| `test-ci` | Run tests in CI mode (fail-fast) |
+| `test-cargo` | Run tests with standard `cargo test` |
+| `check` | Type-check without building |
+| `lint` | Run clippy with all warnings denied |
+| `fmt` | Format code with rustfmt |
+| `fmt-check` | Check formatting without modifying files |
+| `ci` | Run format check, lint, and tests sequentially |
+| `db-migrate` | Run SQLx migrations |
+| `db-create-migration <name>` | Create a new migration file |
+| `db-reset` | Drop and recreate the database schema |
+| `services-up` | Start PostgreSQL and Redis in background |
+| `services-down` | Stop all services |
+| `clean` | Remove build artifacts |
+| `update` | Update Cargo dependencies |
 
-### Code Quality
-- `check` - Check code without building
-- `lint` - Run clippy linter
-- `fmt` - Format code with rustfmt
-- `fmt-check` - Check formatting without modifying
-- `ci` - Run all CI checks (fmt + lint + test)
+## Services
 
-### Database
-- `db-migrate` - Run database migrations
-- `db-create-migration <name>` - Create a new migration
-- `db-reset` - Reset the test database
+devenv manages two services:
 
-### Services
-- `services-up` - Start PostgreSQL and Redis in background
-- `services-down` - Stop services
-- `services-logs` - View service logs
+- **PostgreSQL** -- `127.0.0.1:5432`, databases `thalamus` and `thalamus_test`
+- **Redis** -- `127.0.0.1:6379`
 
-### Utilities
-- `clean` - Clean build artifacts
-- `update` - Update dependencies
+Connection strings are set automatically on shell entry via `DATABASE_URL`, `TEST_DATABASE_URL`, and `REDIS_URL` environment variables.
 
 ## Project Structure
 
 ```
-thalamus/
-├── src/
-│   ├── features/          # Feature modules (clean architecture)
-│   │   ├── health/        # Health check
-│   │   ├── auth/          # Authentication
-│   │   ├── authorization/ # Casbin authz
-│   │   ├── teams/         # Team management
-│   │   ├── backends/      # Backend management
-│   │   ├── routing/       # LLM routing
-│   │   └── llm_proxy/     # OpenAI-compatible API
-│   ├── shared/            # Shared infrastructure
-│   │   ├── config/        # KCL configuration
-│   │   ├── database/      # SQLx pool
-│   │   └── observability/ # Tracing & metrics
-│   ├── middleware/        # Global middleware
-│   ├── bootstrap.rs       # Dependency injection
-│   ├── error.rs           # Error types
-│   └── main.rs            # Entry point
-├── tests/                 # Integration tests
-├── migrations/            # SQL migrations
-├── devenv.nix             # Development environment
-└── Cargo.toml             # Dependencies
+src/
+  features/           Feature modules (clean architecture)
+    health/           Health check endpoint
+    auth/             Authentication (API keys, PASETO, OPAQUE, OAuth)
+    authorization/    Casbin RBAC
+    teams/            Team management
+    backends/         Backend registration and health monitoring
+    routing/          LLM routing strategies
+    llm_proxy/        OpenAI-compatible proxy API
+  shared/
+    config/           KCL configuration loading and hot-reload
+    database/         SQLx connection pool
+    observability/    Tracing and metrics
+  middleware/         Global middleware
+  bootstrap.rs       Dependency injection and app wiring
+  error.rs           Central error types
+  main.rs            Entry point
+migrations/           SQL migrations
+pkg/                  KCL configuration schemas
+tests/                Integration tests
 ```
 
-## Acknowledgments
+Each feature module follows the same internal layout: `api.rs` (HTTP handlers), `domain.rs` (traits and business logic), `infra.rs` (database and external service implementations), and `dto.rs` (request/response types).
 
-- Inspired by [LiteLLM](https://github.com/BerriAI/litellm)
-- Architecture pattern from [clean_axum_demo](https://github.com/sukjaelee/clean_axum_demo/)
+## Configuration
+
+Thalamus uses [KCL](https://kcl-lang.io/) for type-safe configuration. Schemas are defined in `pkg/` and validated at load time. The configuration system supports environment variable interpolation and file-watch-based hot-reload.
+
+## Container Build
+
+A production container image is defined in `devenv.nix` using [Crane](https://crane.dev/). It produces a minimal image with only the compiled binary, CA certificates, and migration files:
+
+```bash
+devenv container build prod
+```
