@@ -70,3 +70,77 @@ jobs:
       - name: Run tests
         shell: devenv shell bash -- -e {0}
         run: test-ci
+
+  coverage:
+    runs-on: ubuntu-latest
+    # Run coverage on main branch and PRs to main
+    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Cache Rust store
+        uses: Swatinem/rust-cache@v2
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 2G
+
+      - uses: cachix/cachix-action@v16
+        with:
+          name: devenv
+
+      - name: Install devenv.sh
+        run: nix profile add nixpkgs#devenv
+
+      - name: Build devenv shell
+        run: devenv shell -- echo "Shell built successfully"
+
+      - name: Start services
+        shell: devenv shell bash -- -e {0}
+        run: |
+          devenv up -d postgres redis
+          for i in {1..30}; do
+            if pg_isready -h localhost -U $USER -d thalamus > /dev/null 2>&1; then
+              echo "PostgreSQL is ready"
+              break
+            fi
+            echo "Waiting for PostgreSQL... ($i/30)"
+            sleep 1
+          done
+
+      - name: Run database migrations
+        shell: devenv shell bash -- -e {0}
+        run: db-migrate
+
+      - name: Run tests with coverage
+        shell: devenv shell bash -- -e {0}
+        run: test-coverage-xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 30
+
+      - name: Upload coverage to Codecov (optional)
+        uses: codecov/codecov-action@v5
+        if: env.CODECOV_TOKEN != ''
+        with:
+          files: coverage/cobertura.xml
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

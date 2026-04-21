@@ -1,4 +1,30 @@
-//! Common test utilities and fixtures
+//! Common test utilities and fixtures for E2E testing
+//!
+//! This module provides comprehensive infrastructure for end-to-end testing:
+//! - WireMock-based mock LLM backends
+//! - Builder-pattern fixtures for test data
+//! - Transaction-based test isolation
+//! - Configuration builders
+//! - HTTP testing helpers
+
+// Re-export submodules
+pub mod config_builder;
+pub mod fixtures;
+pub mod transactional;
+pub mod wiremock_backends;
+
+// Re-export commonly used types
+pub use config_builder::{BackendConfigBuilder, RoutingConfigBuilder};
+pub use fixtures::{
+    EmbeddingsRequestBuilder, LlmRequestBuilder, RequestFormat, ResponseAsserter, TestApiKey,
+    TestApiKeyBuilder, TestUser, TestUserBuilder, response_parsers,
+};
+pub use transactional::{
+    TestContext, init_test_state, init_test_state_with_backends, init_test_state_with_config,
+};
+pub use wiremock_backends::{
+    ChatCompletionResponseBuilder, MockBackendCluster, MockLlmBackend, StreamingResponseBuilder,
+};
 
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -14,7 +40,7 @@ static INIT: Once = Once::new();
 pub fn init_test_logging() {
     INIT.call_once(|| {
         let _ = tracing_subscriber::fmt()
-            .with_env_filter("thalamus=debug,sqlx=warn")
+            .with_env_filter("thalamus=debug,sqlx=warn,wiremock=info")
             .with_test_writer()
             .try_init();
     });
@@ -44,7 +70,8 @@ pub async fn run_migrations(pool: &PgPool) {
 
 /// Clean up test data from tables
 ///
-/// This truncates all tables to ensure test isolation
+/// This truncates all tables to ensure test isolation.
+/// **Note:** When using `#[sqlx::test]`, this is not needed as transactions auto-rollback.
 #[allow(dead_code)]
 pub async fn cleanup_database(pool: &PgPool) {
     // Clean up test data (keep default data from migration)
@@ -68,7 +95,9 @@ pub async fn cleanup_database(pool: &PgPool) {
         .await;
 }
 
-/// Test fixtures builder
+/// Legacy Test fixtures builder (deprecated, use builder patterns instead)
+///
+/// For new tests, prefer using the individual builders from `fixtures` module.
 pub struct TestFixtures {
     pool: PgPool,
 }
@@ -81,20 +110,20 @@ impl TestFixtures {
         cleanup_database(&pool).await;
         Self { pool }
     }
-    // TODO: use the pool in tests
+
     #[expect(dead_code)]
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
 
-    /// Create a test user (placeholder for when we implement user management)
+    /// Create a test user (deprecated, use `TestUserBuilder`)
     #[expect(dead_code)]
     pub async fn create_user(&self, _username: &str, _email: &str) -> uuid::Uuid {
         // Will be implemented when we add user tables
         uuid::Uuid::new_v4()
     }
 
-    /// Create a test team (placeholder)
+    /// Create a test team (deprecated, use fixtures module)
     #[expect(dead_code)]
     pub async fn create_team(&self, _name: &str) -> uuid::Uuid {
         // Will be implemented when we add team tables
@@ -108,9 +137,12 @@ impl Drop for TestFixtures {
     }
 }
 
-/// Initialize a test AppState
+/// Initialize a test AppState (legacy, non-transactional)
+///
+/// **Deprecated:** Use `#[sqlx::test]` with `init_test_state(pool)` instead
+/// for proper transaction-based test isolation.
 #[allow(dead_code)]
-pub async fn init_test_state() -> thalamus::bootstrap::AppState {
+pub async fn init_test_state_legacy() -> thalamus::bootstrap::AppState {
     let pool = create_test_pool().await;
     run_migrations(&pool).await;
 
@@ -226,5 +258,77 @@ pub async fn init_test_state() -> thalamus::bootstrap::AppState {
         oauth_service,
         backend_registry,
         proxy,
+    }
+}
+
+/// HTTP testing helpers
+pub mod http {
+    use axum::body::{Body, to_bytes};
+    use axum::http::StatusCode;
+    use axum::response::Response;
+    use serde_json::Value;
+    use std::collections::HashMap;
+
+    /// Extract JSON body from response
+    pub async fn extract_json(response: Response) -> Value {
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("Failed to read body");
+        serde_json::from_slice(&bytes).expect("Failed to parse JSON")
+    }
+
+    /// Extract text body from response
+    pub async fn extract_text(response: Response) -> String {
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("Failed to read body");
+        String::from_utf8(bytes.to_vec()).expect("Invalid UTF-8")
+    }
+
+    /// Extract SSE stream as vector of events
+    pub async fn extract_sse(response: Response) -> Vec<String> {
+        let text = extract_text(response).await;
+        text.lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| line.to_string())
+            .collect()
+    }
+
+    /// Build headers for API key authentication
+    pub fn api_key_headers(api_key: &str) -> HashMap<String, String> {
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), format!("Bearer {}", api_key));
+        headers.insert("Content-Type".to_string(), "application/json".to_string());
+        headers
+    }
+
+    /// Build headers for bearer token authentication
+    pub fn bearer_headers(token: &str) -> HashMap<String, String> {
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), format!("Bearer {}", token));
+        headers.insert("Content-Type".to_string(), "application/json".to_string());
+        headers
+    }
+
+    /// Assert response has expected status
+    pub fn assert_status(response: &Response, expected: StatusCode) {
+        assert_eq!(
+            response.status(),
+            expected,
+            "Expected status {}, got {}. Body: {:?}",
+            expected,
+            response.status(),
+            response.body()
+        );
+    }
+
+    /// Assert response is successful (2xx)
+    pub fn assert_success(response: &Response) {
+        assert!(
+            response.status().is_success(),
+            "Expected success status, got {}. Body: {:?}",
+            response.status(),
+            response.body()
+        );
     }
 }

@@ -1,0 +1,50 @@
+# Tarpaulin Code Coverage Configuration
+# https://github.com/xd009642/tarpaulin
+
+[engine]
+# Enable LLVM coverage instrumentation for better accuracy
+llvm = true
+
+[output]
+# Output formats
+html = true
+xml = true
+lcov = true
+
+# Output directory
+output-dir = "coverage"
+
+[test]
+# Exclude test files from coverage reporting
+ignore-tests = true
+
+# Timeout for test execution (coverage can be slow)
+timeout = "120s"
+
+# Run all tests
+run-types = ["Tests"]
+
+# Exclude certain files/directories from coverage
+exclude-files = [
+    "ui/*",
+    "tests/*",
+    "target/*",
+    ".devenv/*",
+    ".git/*",
+    "*.gen.rs",
+]
+
+# Features to enable during coverage testing
+features = "all"
+
+[report]
+# Coverage types
+line = true
+branch = true
+
+# Don't generate coverage for dependencies
+ignore-panics = false
+
+[debug]
+# Log level for tarpaulin itself
+logging = false

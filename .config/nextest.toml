@@ -8,3 +8,15 @@ fail-fast = false
 retries = 0
 fail-fast = true
 slow-timeout = { period = "30s" }
+
+[profile.debug]
+# Profile for debugging flaky tests
+# Usage: cargo nextest run --profile debug
+retries = 0              # No retries - we want to see the failure immediately
+fail-fast = true         # Stop on first failure to focus on the problem
+test-threads = 1         # Run sequentially for deterministic debugging
+slow-timeout = { period = "300s" }  # Longer timeout for debugging sessions
+
+# Additional debugging options
+status-level = "all"     # Show all test statuses
+final-status-level = "all"
