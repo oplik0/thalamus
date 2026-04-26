@@ -130,13 +130,13 @@ For E2E tests, we mock LLM backends using WireMock:
 use common::wiremock_backends::MockLlmBackend;
 
 // Start a mock backend
-let backend = MockLlmBackend::start("gpt4-backend", vec!["gpt-4"]).await;
+let backend = MockLlmBackend::start("gpt4-backend", vec!["gpt-oss:120b"]).await;
 
 // Configure response
 backend
     .with_response_builder()
     .content("Hello from mock!")
-    .model("gpt-4")
+    .model("gpt-oss:120b")
     .mount()
     .await;
 ```
@@ -230,7 +230,7 @@ Builds OpenAI and Anthropic format requests:
 ```rust
 // OpenAI format
 let request = LlmRequestBuilder::openai()
-    .model("gpt-4")
+    .model("gpt-oss:120b")
     .system_message("You are a helpful assistant")
     .user_message("Hello!")
     .temperature(0.7)
@@ -251,13 +251,13 @@ Simulates LLM backends for E2E testing:
 
 ```rust
 // Start mock backend
-let backend = MockLlmBackend::start("test-backend", vec!["gpt-4"]).await;
+let backend = MockLlmBackend::start("test-backend", vec!["gpt-oss:120b"]).await;
 
 // Mount a successful response
 backend
     .with_response_builder()
     .content("Mocked response")
-    .model("gpt-4")
+    .model("gpt-oss:120b")
     .tokens(10, 5)
     .mount()
     .await;
@@ -357,7 +357,7 @@ async fn my_new_test(pool: PgPool) {
         .await;
 
     // Set up mock backend
-    let backend = MockLlmBackend::start("test-backend", vec!["gpt-4"]).await;
+    let backend = MockLlmBackend::start("test-backend", vec!["gpt-oss:120b"]).await;
     backend
         .with_response_builder()
         .content("Test response")
@@ -370,7 +370,7 @@ async fn my_new_test(pool: PgPool) {
 
     // Build request
     let request_body = LlmRequestBuilder::openai()
-        .model("gpt-4")
+        .model("gpt-oss:120b")
         .user_message("Hello")
         .build();
 
@@ -491,7 +491,7 @@ cargo check  # Regenerates .sqlx/ cache
 **Fix:**
 ```rust
 // Don't reuse backends without resetting
-let backend = MockLlmBackend::start("test", vec!["gpt-4"]).await;
+let backend = MockLlmBackend::start("test", vec!["gpt-oss:120b"]).await;
 
 // In each test or after test:
 backend.reset().await;
@@ -585,8 +585,8 @@ use common::wiremock_backends::MockBackendCluster;
 
 let mut cluster = MockBackendCluster::new();
 
-let backend1 = MockLlmBackend::start_with_capacity("backend-1", vec!["gpt-4"], 5).await;
-let backend2 = MockLlmBackend::start_with_capacity("backend-2", vec!["gpt-4"], 5).await;
+let backend1 = MockLlmBackend::start_with_capacity("backend-1", vec!["gpt-oss:120b"], 5).await;
+let backend2 = MockLlmBackend::start_with_capacity("backend-2", vec!["gpt-oss:120b"], 5).await;
 
 cluster.add(backend1);
 cluster.add(backend2);

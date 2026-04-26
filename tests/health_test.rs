@@ -7,15 +7,18 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use sqlx::PgPool;
 use tower::ServiceExt; // for `oneshot`
 
-#[tokio::test]
-async fn test_health_check_returns_ok() {
+use common::transactional::init_test_state;
+
+#[sqlx::test]
+async fn test_health_check_returns_ok(pool: PgPool) {
     // Initialize logging for tests
     common::init_test_logging();
 
-    // Initialize test state
-    let state = common::init_test_state().await;
+    // Initialize test state with transactional pool
+    let state = init_test_state(pool).await;
 
     // Build the router
     let app = thalamus::bootstrap::build_router(state);
@@ -44,11 +47,11 @@ async fn test_health_check_returns_ok() {
     assert!(body_str.contains("\"version\":"));
 }
 
-#[tokio::test]
-async fn test_health_check_response_structure() {
+#[sqlx::test]
+async fn test_health_check_response_structure(pool: PgPool) {
     common::init_test_logging();
 
-    let state = common::init_test_state().await;
+    let state = init_test_state(pool).await;
     let app = thalamus::bootstrap::build_router(state);
 
     let response = app

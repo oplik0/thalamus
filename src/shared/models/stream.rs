@@ -119,7 +119,7 @@ mod tests {
     fn response_created_round_trip() {
         let event = StreamEvent::ResponseCreated {
             id: Some("resp-123".to_string()),
-            model: Some("gpt-4".to_string()),
+            model: Some("gpt-oss:120b".to_string()),
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""event":"response_created""#));
@@ -300,7 +300,7 @@ mod tests {
         let events = vec![
             StreamEvent::ResponseCreated {
                 id: Some("resp-1".to_string()),
-                model: Some("gpt-4".to_string()),
+                model: Some("gpt-oss:120b".to_string()),
             },
             StreamEvent::OutputItemStart {
                 item_index: 0,

@@ -381,8 +381,8 @@ mod tests {
 
     #[test]
     fn chat_request_simple() {
-        let req = ChatRequest::simple("gpt-4", "Hello");
-        assert_eq!(req.model, "gpt-4");
+        let req = ChatRequest::simple("gpt-oss:120b", "Hello");
+        assert_eq!(req.model, "gpt-oss:120b");
         assert_eq!(req.input_count(), 1);
         match &req.input[0] {
             InputItem::Message { role, content, .. } => {
@@ -398,7 +398,7 @@ mod tests {
     #[test]
     fn chat_request_from_messages() {
         let req = ChatRequest::from_messages(
-            "gpt-4",
+            "gpt-oss:120b",
             vec![Message::system("Be helpful"), Message::user("Hi")],
         );
         assert_eq!(req.input_count(), 2);
@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn chat_request_from_messages_tool_result() {
         let req = ChatRequest::from_messages(
-            "gpt-4",
+            "gpt-oss:120b",
             vec![Message::tool_result("call_1", r#"{"result": 42}"#)],
         );
         assert_eq!(req.input_count(), 1);
@@ -485,9 +485,10 @@ mod tests {
 
     #[test]
     fn chat_request_minimal_serde() {
-        let json = r#"{"model":"gpt-4","input":[{"type":"message","role":"user","content":"hi"}]}"#;
+        let json =
+            r#"{"model":"gpt-oss:120b","input":[{"type":"message","role":"user","content":"hi"}]}"#;
         let req: ChatRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.model, "gpt-4");
+        assert_eq!(req.model, "gpt-oss:120b");
         assert_eq!(req.input_count(), 1);
         assert!(req.params.temperature.is_none());
         assert!(req.tools.is_none());
@@ -503,8 +504,8 @@ mod tests {
 
     #[test]
     fn llm_request_model_across_variants() {
-        let chat = LlmRequest::Chat(ChatRequest::simple("gpt-4", "hi"));
-        assert_eq!(chat.model(), "gpt-4");
+        let chat = LlmRequest::Chat(ChatRequest::simple("gpt-oss:120b", "hi"));
+        assert_eq!(chat.model(), "gpt-oss:120b");
 
         let embed = LlmRequest::Embedding(EmbeddingRequest {
             model: "text-embedding-3".to_string(),

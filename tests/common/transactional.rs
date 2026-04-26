@@ -95,7 +95,7 @@ pub async fn init_test_state(pool: PgPool) -> thalamus::bootstrap::AppState {
 /// ```rust
 /// #[sqlx::test]
 /// async fn test_with_backends(pool: PgPool) {
-///     let backend = MockLlmBackend::start("gpt4", vec!["gpt-4"]).await;
+///     let backend = MockLlmBackend::start("gpt4", vec!["gpt-oss:120b"]).await;
 ///     let state = init_test_state_with_backends(pool, &[&backend]).await;
 ///     // Test code
 /// }

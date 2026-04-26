@@ -68,7 +68,7 @@ impl MockLlmBackend {
     ///
     /// # Example
     /// ```rust
-    /// let backend = MockLlmBackend::start("gpt4-backend", vec!["gpt-4", "gpt-4-turbo"]).await;
+    /// let backend = MockLlmBackend::start("gpt-oss-backend", vec!["gpt-oss:120b", "gpt-oss:20b"]).await;
     /// ```
     pub async fn start(name: impl Into<String>, models: Vec<impl Into<String>>) -> Self {
         let server = MockServer::start().await;
@@ -191,7 +191,7 @@ impl MockLlmBackend {
     /// backend
     ///     .with_response_builder()
     ///     .content("Hello from mock!")
-    ///     .model("gpt-4")
+    ///     .model("gpt-oss:120b")
     ///     .tokens(10, 5)
     ///     .mount()
     ///     .await;
@@ -407,7 +407,7 @@ impl<'a> ChatCompletionResponseBuilder<'a> {
             backend,
             id: format!("chatcmpl-test-{}", uuid::Uuid::new_v4()),
             object: "chat.completion".to_string(),
-            model: "gpt-4".to_string(),
+            model: "gpt-oss:120b".to_string(),
             content: "Hello from mock!".to_string(),
             role: "assistant".to_string(),
             prompt_tokens: 10,
@@ -507,7 +507,7 @@ impl<'a> StreamingResponseBuilder<'a> {
                 "world".to_string(),
                 "!".to_string(),
             ],
-            model: "gpt-4".to_string(),
+            model: "gpt-oss:120b".to_string(),
             id: format!("chatcmpl-test-{}", uuid::Uuid::new_v4()),
             role: "assistant".to_string(),
             chunk_delay: None,

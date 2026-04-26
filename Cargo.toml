@@ -100,6 +100,10 @@ bytes = "1.10.1"
 tokio-test = "0.4.5"
 wiremock = "0.6.5"
 tower = { version = "0.5.3", features = ["util"] }
+hex = "0.4.3"
+sha2 = "0.10"
+http = "1.0"
+futures = "0.3"
 
 [features]
 default = ["caching"]

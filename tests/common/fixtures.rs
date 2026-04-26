@@ -386,7 +386,7 @@ impl LlmRequestBuilder {
     pub fn openai() -> Self {
         Self {
             format: RequestFormat::OpenAi,
-            model: "gpt-4".to_string(),
+            model: "gpt-oss:120b".to_string(),
             messages: Vec::new(),
             stream: false,
             temperature: None,

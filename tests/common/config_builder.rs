@@ -14,7 +14,7 @@ use thalamus::shared::config::types::{
 /// # Example
 /// ```rust
 /// let config = BackendConfigBuilder::new("my-backend")
-///     .with_endpoint("http://localhost:8080", 10, vec!["gpt-4"])
+///     .with_endpoint("http://localhost:8080", 10, vec!["gpt-oss:120b"])
 ///     .with_bearer_auth("test-token")
 ///     .with_health_check(true, "1s", "3s")
 ///     .with_timeout("30s")

@@ -5950,6 +5950,8 @@ dependencies = [
  "form_urlencoded",
  "futures",
  "governor",
+ "hex",
+ "http",
  "http-body-util",
  "hyper",
  "hyper-util",

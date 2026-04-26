@@ -153,7 +153,7 @@ mod tests {
     fn chat_response_round_trip() {
         let response = ChatResponse {
             id: Some("chatcmpl-123".to_string()),
-            model: "gpt-4".to_string(),
+            model: "gpt-oss:120b".to_string(),
             output: vec![OutputItem::Message {
                 id: None,
                 role: Role::Assistant,
@@ -271,7 +271,7 @@ mod tests {
     fn chat_response_mixed_output_items() {
         let response = ChatResponse {
             id: Some("resp_1".to_string()),
-            model: "gpt-4".to_string(),
+            model: "gpt-oss:120b".to_string(),
             output: vec![
                 OutputItem::Reasoning {
                     id: Some("rs_1".to_string()),
