@@ -99,7 +99,9 @@ impl BackendAdapter for OllamaAdapter {
         _auth: &AuthConfig,
         _timeout: Duration,
     ) -> Result<reqwest::Request> {
-        Err(Error::Backend("Ollama does not support embeddings".to_string()))
+        Err(Error::Backend(
+            "Ollama does not support embeddings".to_string(),
+        ))
     }
 
     fn parse_embedding_response(
@@ -107,7 +109,9 @@ impl BackendAdapter for OllamaAdapter {
         _status: StatusCode,
         _body: &[u8],
     ) -> Result<serde_json::Value> {
-        Err(Error::Backend("Ollama does not support embeddings".to_string()))
+        Err(Error::Backend(
+            "Ollama does not support embeddings".to_string(),
+        ))
     }
 }
 
@@ -263,17 +267,11 @@ fn to_ollama_request(chat: &ChatRequest) -> OllamaChatRequest {
 
     for item in &chat.input {
         match item {
-            InputItem::Message {
-                role,
-                content,
-                name,
-                ..
-            } => {
+            InputItem::Message { role, content, .. } => {
                 messages.push(OllamaMessage {
                     role: to_ollama_role(role).to_string(),
                     content: content.text().to_string(),
                 });
-                let _ = name;
             }
             InputItem::FunctionCallOutput { output, .. } => {
                 messages.push(OllamaMessage {
