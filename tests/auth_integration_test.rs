@@ -15,6 +15,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use chrono::{Duration, Utc};
+use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -119,7 +120,7 @@ async fn make_authenticated_request(
         None => request_builder.body(Body::empty()).unwrap(),
     };
 
-    let response = app.clone().oneshot(request).await.unwrap();
+    let response = ServiceExt::oneshot(app, request).await.unwrap();
     let status = response.status();
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -129,11 +130,11 @@ async fn make_authenticated_request(
     (status, json)
 }
 
-#[tokio::test]
-async fn test_api_key_authentication_flow() {
+#[sqlx::test]
+async fn test_api_key_authentication_flow(pool: PgPool) {
     common::init_test_logging();
 
-    let state = common::init_test_state().await;
+    let state = common::transactional::init_test_state(pool).await;
     let app = thalamus::bootstrap::build_router(state.clone());
 
     // Create test user and team
@@ -221,11 +222,11 @@ async fn test_api_key_authentication_flow() {
     );
 }
 
-#[tokio::test]
-async fn test_scope_based_authorization() {
+#[sqlx::test]
+async fn test_scope_based_authorization(pool: PgPool) {
     common::init_test_logging();
 
-    let state = common::init_test_state().await;
+    let state = common::transactional::init_test_state(pool).await;
     let app = thalamus::bootstrap::build_router(state.clone());
 
     let (user_id, team_id) = create_test_user_and_team(&state).await;
@@ -267,11 +268,11 @@ async fn test_scope_based_authorization() {
     );
 }
 
-#[tokio::test]
-async fn test_token_exchange_flow() {
+#[sqlx::test]
+async fn test_token_exchange_flow(pool: PgPool) {
     common::init_test_logging();
 
-    let state = common::init_test_state().await;
+    let state = common::transactional::init_test_state(pool).await;
     let app = thalamus::bootstrap::build_router(state.clone());
 
     let (user_id, team_id) = create_test_user_and_team(&state).await;
@@ -322,11 +323,11 @@ async fn test_token_exchange_flow() {
     );
 }
 
-#[tokio::test]
-async fn test_invalid_authentication() {
+#[sqlx::test]
+async fn test_invalid_authentication(pool: PgPool) {
     common::init_test_logging();
 
-    let state = common::init_test_state().await;
+    let state = common::transactional::init_test_state(pool).await;
     let app = thalamus::bootstrap::build_router(state.clone());
 
     // Test 1: Missing Authorization header
@@ -383,11 +384,11 @@ async fn test_invalid_authentication() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
-#[tokio::test]
-async fn test_expired_api_key() {
+#[sqlx::test]
+async fn test_expired_api_key(pool: PgPool) {
     common::init_test_logging();
 
-    let state = common::init_test_state().await;
+    let state = common::transactional::init_test_state(pool).await;
     let app = thalamus::bootstrap::build_router(state.clone());
 
     let (user_id, team_id) = create_test_user_and_team(&state).await;

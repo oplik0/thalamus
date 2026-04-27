@@ -1,16 +1,21 @@
+//! API key lifecycle tests
+
 #[path = "common/mod.rs"]
 mod common;
 
 use chrono::{Duration, Utc};
+use sqlx::PgPool;
 use thalamus::features::auth::domain::api_key::CreateApiKeyRequest;
 use thalamus::features::auth::domain::keys::{Prefix, generate_key};
 use thalamus::features::auth::infra::key_storage::{list_user_keys, revoke_key, validate_key};
 use uuid::Uuid;
 
-#[tokio::test]
-async fn test_api_key_lifecycle() {
-    // Initialize app state (requires a test database)
-    let state = common::init_test_state().await;
+use common::transactional::init_test_state;
+
+#[sqlx::test]
+async fn test_api_key_lifecycle(pool: PgPool) {
+    // Initialize app state with transactional pool
+    let state = init_test_state(pool).await;
 
     // Create a test user and team
     let user_id = Uuid::new_v4();
@@ -95,9 +100,9 @@ async fn test_api_key_lifecycle() {
     assert!(result.is_err());
 }
 
-#[tokio::test]
-async fn test_expired_key() {
-    let state = common::init_test_state().await;
+#[sqlx::test]
+async fn test_expired_key(pool: PgPool) {
+    let state = init_test_state(pool).await;
 
     let user_id = Uuid::new_v4();
     let team_id = Uuid::new_v4();

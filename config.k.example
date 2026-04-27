@@ -39,7 +39,7 @@ default = pkg.ThalamusConfig {
         #         pkg.EndpointConfig {
         #             url = "https://api.openai.com/v1"
         #             capacity = 100
-        #             models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
+        #             models = ["gpt-oss:120b", "gpt-oss:20b"]
         #             tags = ["openai", "production", "high-capacity"]
         #             weight = 10
         #         }
@@ -68,7 +68,7 @@ default = pkg.ThalamusConfig {
         ollama = pkg.BackendConfig {
             endpoints = [
                 pkg.EndpointConfig {
-                    url = "http://localhost:11434/v1"
+                    url = "http://localhost:11434"  # Base URL, adapter adds /v1/chat/completions
                     capacity = 10
                     models = ["llama3.2:latest", "qwen2.5:7b", "mistral:7b"]
                     currently_loaded_models = []

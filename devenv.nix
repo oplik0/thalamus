@@ -18,6 +18,7 @@
     sqlx-cli
     bacon
     cargo-nextest # advanced test runner
+    cargo-tarpaulin # code coverage tool
     cargo-fuzz # fuzz testing
     cargo-rr # debugging tool
     # cargo-dist # TODO: consider adding for releases
@@ -102,6 +103,75 @@
     test-ci.exec = "cargo nextest run --profile ci";
     test-cargo.exec = "cargo test";
 
+    # Coverage commands
+    test-coverage.exec = ''
+      echo "Running tests with coverage instrumentation..."
+      cargo tarpaulin --out Html --output-dir coverage \
+        --ignore-tests --features all \
+        --exclude-files "ui/*" --timeout 120
+      echo ""
+      echo "Coverage report generated at: coverage/tarpaulin-report.html"
+      echo "Open with: xdg-open coverage/tarpaulin-report.html (Linux) or open coverage/tarpaulin-report.html (macOS)"
+    '';
+    test-coverage-xml.exec = ''
+      echo "Running tests with coverage (XML output for CI)..."
+      cargo tarpaulin --out Xml --output-dir coverage \
+        --ignore-tests --features all \
+        --exclude-files "ui/*" --timeout 120
+      echo ""
+      echo "Coverage XML report generated at: coverage/cobertura.xml"
+    '';
+    test-coverage-lcov.exec = ''
+      echo "Running tests with coverage (LCOV output)..."
+      cargo tarpaulin --out Lcov --output-dir coverage \
+        --ignore-tests --features all \
+        --exclude-files "ui/*" --timeout 120
+      echo ""
+      echo "Coverage LCOV report generated at: coverage/lcov.info"
+    '';
+
+    # Debugging and development helpers
+    test-watch.exec = ''
+      echo "Starting test watcher (ignores target/, ui/, .devenv/, .git/)..."
+      ${lib.getExe pkgs.bacon} --config-toml '
+            default_job = "test"
+            [jobs.test]
+            command = ["cargo", "nextest", "run"]
+            need_stdout = true
+            background = false
+            on_change_strategy = "kill_then_restart"
+            kill = ["kill", "-s", "INT"]
+            watch = ["src", "tests"]
+            '
+    '';
+    test-one.exec = ''
+      if [ -z "$1" ]; then
+        echo "Usage: test-one <test_pattern>"
+        echo "Example: test-one test_api_key_lifecycle"
+        exit 1
+      fi
+      echo "Running test matching pattern: $1"
+      cargo nextest run -- "$1"
+    '';
+    test-debug.exec = ''
+      if [ -z "$1" ]; then
+        echo "Usage: test-debug <test_name>"
+        echo "Example: test-debug test_api_key_lifecycle"
+        exit 1
+      fi
+      echo "Running test with full debugging output: $1"
+      echo "Set RUST_LOG=thalamus=debug,sqlx=trace for more verbose output"
+      RUST_BACKTRACE=full RUST_LOG=thalamus=debug,sqlx=warn cargo nextest run --profile debug -- "$1"
+    '';
+    test-seed.exec = ''
+      echo "Seeding test data into development database..."
+      echo "This will insert sample users, teams, API keys, and backends"
+      cargo test --test test_data -- --ignored --nocapture 2>/dev/null || true
+      echo ""
+      echo "Test data seeded successfully!"
+      echo "You can now use the seeded data for manual testing."
+    '';
+
     # Code quality
     check.exec = "cargo check --all-targets";
     lint.exec = "cargo clippy --all-targets --all-features -- -D warnings";
@@ -169,6 +239,19 @@
     echo "  lint           - Run clippy linter"
     echo "  fmt            - Format code"
     echo "  ci             - Run all CI checks"
+    echo ""
+    echo "Testing & Coverage:"
+    echo "  test-verbose         - Run tests with immediate output"
+    echo "  test-ci              - Run tests with CI profile"
+    echo "  test-watch           - Run tests continuously on file changes"
+    echo "  test-one <pattern>   - Run a single test by name/pattern"
+    echo "  test-debug <name>    - Run single test with backtrace and logging"
+    echo "  test-seed            - Insert sample test data into dev database"
+    echo ""
+    echo "Coverage (requires services-up + db-migrate):"
+    echo "  test-coverage        - Run coverage and generate HTML report"
+    echo "  test-coverage-xml    - Generate XML report for CI integration"
+    echo "  test-coverage-lcov   - Generate LCOV report"
     echo ""
     echo "Database:"
     echo "  db-migrate            - Run migrations"
