@@ -5,11 +5,16 @@ use crate::shared::config::types::BackendConfig;
 use crate::features::backends::domain::BackendAdapter;
 
 pub mod openai;
+pub mod ollama;
 
 #[must_use]
 pub fn adapter_for_backend(
-    _backend_name: &str,
+    backend_name: &str,
     _config: &BackendConfig,
 ) -> Arc<dyn BackendAdapter> {
-    Arc::new(openai::OpenAiAdapter)
+    if backend_name == "ollama" {
+        Arc::new(ollama::OllamaAdapter)
+    } else {
+        Arc::new(openai::OpenAiAdapter)
+    }
 }
