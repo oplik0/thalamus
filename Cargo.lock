@@ -5966,7 +5966,6 @@ dependencies = [
  "p256",
  "parking_lot 0.12.5",
  "pasetors",
- "rand 0.8.5",
  "rand 0.9.2",
  "rand_hc",
  "redis",

@@ -70,7 +70,7 @@ opentelemetry-otlp = { version = "0.31", features = ["reqwest-rustls"] }
 uuid = { version = "1.18.1", features = ["serde", "v4", "v5", "v7"] }
 chrono = { version = "0.4.44", features = ["serde"] }
 rand = "0.9.2"
-rand_08 = { package = "rand", version = "0.8.5" }
+rand_08 = { package = "rand", version = "0.9.0" }
 
 # HTTP client for backends
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "stream", "rustls-tls", "charset", "http2", "system-proxy", "zstd", "cookies"] }
