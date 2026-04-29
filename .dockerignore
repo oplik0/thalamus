@@ -26,5 +26,3 @@ vendor/
 .devenv/
 .direnv/
 .pre-commit*
-Cargo.lock
-devenv.lock

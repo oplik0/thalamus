@@ -12,7 +12,7 @@ COPY Cargo.toml Cargo.lock* ./
 COPY .sqlx/ .sqlx/
 
 RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release --features caching && rm -rf src
+RUN cargo build --release --features caching
 
 COPY migrations/ ./migrations/
 COPY pkg/ ./pkg/
