@@ -2,7 +2,6 @@
 .gitignore
 target/
 .tarpaulin.toml
-.sqlx/
 ui/
 docs/
 .old/
@@ -11,8 +10,6 @@ docs/
 .env.*
 !.env.example
 !.env.test
-migrations/
-pkg/
 tests/
 *.md
 !README.md
@@ -31,5 +28,3 @@ vendor/
 .pre-commit*
 Cargo.lock
 devenv.lock
-justfile.old
-opencode.json
