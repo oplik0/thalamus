@@ -139,6 +139,11 @@ pub async fn init_app_state(
         }
     }
 
+    // Initialize OAuth service
+    let oauth_providers = config.oauth_providers.clone();
+    let oauth_service = Arc::new(OAuthService::new(&oauth_providers)?);
+    tracing::info!("OAuth service initialized");
+
     // Initialize rate limiter if enabled
     let rate_limiter = config.rate_limiting.as_ref().and_then(|rl| {
         if rl.enabled {
@@ -163,11 +168,6 @@ pub async fn init_app_state(
             None
         }
     });
-
-    // Initialize OAuth service
-    let oauth_providers = config.oauth_providers.clone();
-    let oauth_service = Arc::new(OAuthService::new(&oauth_providers)?);
-    tracing::info!("OAuth service initialized");
 
     // Initialize backend registry and proxy pipeline
     let backend_registry = Arc::new(InMemoryBackendRegistry::from_config(&config.backends));

@@ -1,7 +1,8 @@
 use crate::bootstrap::AppState;
 use crate::error::{Error, Result};
 use crate::features::auth::domain::opaque::{
-    LoginFinishRequest, LoginRequest, LoginResponse, RegistrationRequest, RegistrationResponse,
+    LoginFinishRequest, LoginRequest, LoginResponse, RegistrationRecord, RegistrationRequest,
+    RegistrationResponse,
 };
 use crate::features::auth::domain::token::TokenClaims;
 use crate::features::auth::infra::token_service::create_token;
@@ -52,7 +53,7 @@ pub async fn registration_start(
 }
 
 /// Handle OPAQUE registration finish
-pub async fn registration_finish(request: RegistrationRequest, state: &AppState) -> Result<()> {
+pub async fn registration_finish(request: RegistrationRecord, state: &AppState) -> Result<()> {
     let _server_setup = get_server_setup(state)?;
 
     // Deserialize the registration upload message

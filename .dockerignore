@@ -2,7 +2,7 @@
 .gitignore
 target/
 .tarpaulin.toml
-ui/
+# ui/  # Uncomment if not using docker compose frontend
 docs/
 .old/
 *.log

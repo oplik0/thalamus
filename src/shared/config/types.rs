@@ -268,6 +268,7 @@ pub struct OAuthProvider {
     pub authorization_endpoint: Option<String>,
     pub token_endpoint: Option<String>,
     pub userinfo_endpoint: Option<String>,
+    pub redirect_uri: Option<String>,
     #[serde(default = "default_oauth_scopes")]
     pub scopes: Vec<String>,
     pub enterprise_url: Option<String>,

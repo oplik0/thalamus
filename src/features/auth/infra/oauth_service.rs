@@ -10,7 +10,7 @@ use crate::error::{Error, Result};
 use crate::features::auth::domain::oauth::{OAuthError, OAuthTokenResponse, OAuthUserInfo};
 use crate::features::auth::domain::token::TokenClaims;
 use crate::features::auth::infra::oauth_providers::{
-    GitHubEnterpriseProvider, GitHubOAuthProvider, OAuthProviderOps,
+    GitHubEnterpriseProvider, GitHubOAuthProvider, OAuthProviderOps, OidcProvider,
 };
 use crate::features::auth::infra::token_service::create_token;
 use crate::features::auth::infra::{
@@ -24,6 +24,8 @@ pub struct OAuthService {
     github_provider: Option<Arc<GitHubOAuthProvider>>,
     /// GitHub Enterprise provider (if configured)
     github_enterprise_provider: Option<Arc<GitHubEnterpriseProvider>>,
+    /// OIDC provider (if configured)
+    oidc_provider: Option<Arc<OidcProvider>>,
     /// State store for CSRF/PKCE
     state_store: Arc<dyn OAuthStateStore>,
 }
@@ -36,6 +38,7 @@ impl std::fmt::Debug for OAuthService {
                 "github_enterprise_provider",
                 &self.github_enterprise_provider.is_some(),
             )
+            .field("oidc_provider", &self.oidc_provider.is_some())
             .field("state_store", &"<OAuthStateStore>")
             .finish()
     }
@@ -70,10 +73,11 @@ pub struct ProviderInfo {
 enum ProviderRef<'a> {
     GitHub(&'a GitHubOAuthProvider),
     GitHubEnterprise(&'a GitHubEnterpriseProvider),
+    Oidc(&'a OidcProvider),
 }
 
 impl OAuthProviderOps for ProviderRef<'_> {
-    fn get_authorization_url(
+    async fn get_authorization_url(
         &self,
         csrf_state: &str,
         pkce_challenge: &str,
@@ -82,9 +86,15 @@ impl OAuthProviderOps for ProviderRef<'_> {
         match self {
             ProviderRef::GitHub(p) => {
                 p.get_authorization_url(csrf_state, pkce_challenge, redirect_uri)
+                    .await
             }
             ProviderRef::GitHubEnterprise(p) => {
                 p.get_authorization_url(csrf_state, pkce_challenge, redirect_uri)
+                    .await
+            }
+            ProviderRef::Oidc(p) => {
+                p.get_authorization_url(csrf_state, pkce_challenge, redirect_uri)
+                    .await
             }
         }
     }
@@ -100,6 +110,7 @@ impl OAuthProviderOps for ProviderRef<'_> {
             ProviderRef::GitHubEnterprise(p) => {
                 p.exchange_code(code, pkce_verifier, redirect_uri).await
             }
+            ProviderRef::Oidc(p) => p.exchange_code(code, pkce_verifier, redirect_uri).await,
         }
     }
 
@@ -110,6 +121,7 @@ impl OAuthProviderOps for ProviderRef<'_> {
         match self {
             ProviderRef::GitHub(p) => p.get_user_info(access_token).await,
             ProviderRef::GitHubEnterprise(p) => p.get_user_info(access_token).await,
+            ProviderRef::Oidc(p) => p.get_user_info(access_token).await,
         }
     }
 
@@ -120,6 +132,7 @@ impl OAuthProviderOps for ProviderRef<'_> {
         match self {
             ProviderRef::GitHub(p) => p.get_user_organizations(access_token).await,
             ProviderRef::GitHubEnterprise(p) => p.get_user_organizations(access_token).await,
+            ProviderRef::Oidc(p) => p.get_user_organizations(access_token).await,
         }
     }
 }
@@ -129,6 +142,7 @@ impl OAuthService {
     pub fn new(config_providers: &[ConfigProvider]) -> Result<Self> {
         let mut github_provider: Option<Arc<GitHubOAuthProvider>> = None;
         let mut github_enterprise_provider: Option<Arc<GitHubEnterpriseProvider>> = None;
+        let mut oidc_provider: Option<Arc<OidcProvider>> = None;
 
         for provider_config in config_providers {
             match provider_config.provider_type {
@@ -153,9 +167,20 @@ impl OAuthService {
                     )?));
                 }
                 OAuthProviderType::Oidc => {
-                    return Err(Error::Config(
-                        "OIDC provider not yet implemented".to_string(),
-                    ));
+                    let issuer_url = provider_config.enterprise_url.clone().ok_or_else(|| {
+                        Error::Config("issuer_url required for OIDC provider".to_string())
+                    })?;
+                    oidc_provider = Some(Arc::new(OidcProvider::new(
+                        provider_config.name.clone(),
+                        provider_config.client_id.clone(),
+                        provider_config.client_secret.clone(),
+                        provider_config.scopes.clone(),
+                        issuer_url,
+                        provider_config.redirect_uri.clone(),
+                        provider_config.authorization_endpoint.clone(),
+                        provider_config.token_endpoint.clone(),
+                        provider_config.userinfo_endpoint.clone(),
+                    )?));
                 }
             }
         }
@@ -163,22 +188,26 @@ impl OAuthService {
         Ok(Self {
             github_provider,
             github_enterprise_provider,
+            oidc_provider,
             state_store: Arc::new(InMemoryOAuthStateStore::new()),
         })
     }
 
     /// Get provider by name
     fn get_provider(&self, name: &str) -> Option<ProviderRef<'_>> {
-        // Check GitHub provider
         if let Some(ref provider) = self.github_provider {
             if provider.name == name {
                 return Some(ProviderRef::GitHub(provider.as_ref()));
             }
         }
-        // Check GitHub Enterprise provider
         if let Some(ref provider) = self.github_enterprise_provider {
             if provider.name == name {
                 return Some(ProviderRef::GitHubEnterprise(provider.as_ref()));
+            }
+        }
+        if let Some(ref provider) = self.oidc_provider {
+            if provider.name == name {
+                return Some(ProviderRef::Oidc(provider.as_ref()));
             }
         }
         None
@@ -214,11 +243,13 @@ impl OAuthService {
         );
 
         // Generate authorization URL using the provider
-        let auth_url = provider.get_authorization_url(
-            &state_clone.csrf_token,
-            &state_clone.pkce_challenge,
-            &redirect_uri,
-        );
+        let auth_url = provider
+            .get_authorization_url(
+                &state_clone.csrf_token,
+                &state_clone.pkce_challenge,
+                &redirect_uri,
+            )
+            .await;
 
         Ok(OAuthInitiateResponse {
             authorization_url: auth_url,
@@ -453,6 +484,13 @@ impl OAuthService {
             providers.push(ProviderInfo {
                 name: p.name.clone(),
                 provider_type: "github_enterprise".to_string(),
+            });
+        }
+
+        if let Some(ref p) = self.oidc_provider {
+            providers.push(ProviderInfo {
+                name: p.name.clone(),
+                provider_type: "oidc".to_string(),
             });
         }
 

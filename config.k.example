@@ -5,6 +5,7 @@
 
 # Import shared schemas
 import pkg
+import file
 
 # Default profile - used when no profile is specified
 default = pkg.ThalamusConfig {
@@ -16,7 +17,8 @@ default = pkg.ThalamusConfig {
 
     # Database configuration
     database = pkg.DatabaseConfig {
-        url = "postgresql://user@localhost:5432/thalamus"
+        # e.g. "postgresql://user@localhost:5432/thalamus"
+        url = file.read_env("DATABASE_URL")
         max_connections = 20
         min_connections = 2
         pool_timeout = "30s"
@@ -46,7 +48,7 @@ default = pkg.ThalamusConfig {
         #     ]
         #     auth = pkg.AuthConfig {
         #         type = "bearer_token"
-        #         token = "${OPENAI_API_KEY}"
+        #         token = file.read_env("OPENAI_API_KEY")
         #     }
         #     health_check = pkg.HealthCheckConfig {
         #         enabled = True
@@ -70,7 +72,7 @@ default = pkg.ThalamusConfig {
                 pkg.EndpointConfig {
                     url = "http://localhost:11434"  # Base URL, adapter adds /v1/chat/completions
                     capacity = 10
-                    models = ["llama3.2:latest", "qwen2.5:7b", "mistral:7b"]
+                    models = ["qwen3.5:2b"]
                     currently_loaded_models = []
                     model_loading_aware = True
                     tags = ["local", "self-hosted", "high-privacy", "cost-free"]
@@ -141,7 +143,8 @@ default = pkg.ThalamusConfig {
     # Optional: Cache configuration (requires Redis)
     cache = pkg.CacheConfig {
         enabled = True
-        redis_url = "redis://localhost:6379"
+        # e.g. "redis://localhost:6379"
+        redis_url = file.read_env("REDIS_URL")
         default_ttl = "300s"
         max_memory = "1GB"
         key_prefix = "thalamus:"
@@ -156,7 +159,19 @@ default = pkg.ThalamusConfig {
     }
 
     # OAuth providers (optional)
-    oauth_providers = []
+    oauth_providers = [
+        pkg.OAuthProviderConfig {
+            name = "mock-oidc"
+            provider_type = "oidc"
+            client_id = "test-client"
+            client_secret = "test-secret"
+            enterprise_url = "http://mock-oidc:8080"
+            authorization_endpoint = "http://localhost:9999/connect/authorize"
+            token_endpoint = "http://mock-oidc:8080/connect/token"
+            userinfo_endpoint = "http://mock-oidc:8080/connect/userinfo"
+            scopes = ["openid", "email", "profile"]
+        }
+    ]
 }
 
 # Production profile - override settings for production

@@ -11,14 +11,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY Cargo.toml Cargo.lock* ./
 COPY .sqlx/ .sqlx/
 
-RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN rm -rf src && mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo build --release --features caching
 
 COPY migrations/ ./migrations/
 COPY pkg/ ./pkg/
-COPY config.k ./
+COPY src/ ./src/
+COPY casbin_model.conf ./
 
-RUN touch src/main.rs && cargo build --release --features caching
+RUN rm -f target/release/.cargo-lock target/release/thalamus
+RUN cargo build --release --features caching --locked
 
 FROM debian:trixie-slim AS runtime
 
@@ -33,6 +35,7 @@ WORKDIR /app
 COPY --from=builder /app/target/release/thalamus /usr/local/bin/
 COPY --from=builder /app/migrations/ /app/migrations/
 COPY --from=builder /app/pkg/ /app/pkg/
+COPY --from=builder /app/casbin_model.conf /app/
 
 RUN mkdir -p /app/config && chown -R app:app /app
 
@@ -41,6 +44,6 @@ USER app
 EXPOSE 3000
 
 ENV SQLX_OFFLINE=true
-ENV RUST_LOG=info
+ENV RUST_LOG=debug
 
 ENTRYPOINT ["thalamus"]

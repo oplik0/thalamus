@@ -1,0 +1,11 @@
+[
+  {
+    "ClientId": "test-client",
+    "ClientSecrets": ["test-secret"],
+    "AllowedGrantTypes": ["authorization_code"],
+    "AllowedScopes": ["openid", "email", "profile"],
+    "RedirectUris": ["http://localhost:3000/v1/auth/oauth/mock-oidc/callback"],
+    "RequirePkce": true,
+    "AllowAccessTokensViaBrowser": true
+  }
+]

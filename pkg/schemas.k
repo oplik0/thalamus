@@ -189,6 +189,7 @@ schema OAuthProviderConfig:
     authorization_endpoint?: str  # Optional override
     token_endpoint?: str  # Optional override
     userinfo_endpoint?: str  # Optional override
+    redirect_uri?: str  # Optional override for callback URI
     scopes: [str] = ["read:user", "user:email"]
     enterprise_url?: str  # For GitHub Enterprise Server
     team_mapping: TeamMappingConfig = TeamMappingConfig {}

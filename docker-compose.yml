@@ -29,6 +29,25 @@ services:
       timeout: 5s
       retries: 5
 
+  mock-oidc:
+    image: ghcr.io/soluto/oidc-server-mock:latest
+    ports:
+      - "9999:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      SERVER_OPTIONS_INLINE: |
+        {
+          "Authentication": {
+            "CookieSameSiteMode": "Lax",
+            "CheckSessionCookieSameSiteMode": "Lax"
+          }
+        }
+      CLIENTS_CONFIGURATION_PATH: /app/config.json
+      USERS_CONFIGURATION_PATH: /app/users.json
+    volumes:
+      - ./tests/oidc-data/oidc-config.json:/app/config.json:ro
+      - ./tests/oidc-data/oidc-users.json:/app/users.json:ro
+
   thalamus:
     build:
       context: .
@@ -39,19 +58,37 @@ services:
       DATABASE_URL: postgresql://thalamus:thalamus@postgres:5432/thalamus
       REDIS_URL: redis://valkey:6379
       RUST_LOG: info,thalamus=debug
+      ADMIN_INITIAL_PASSWORD: zaq1@WSX
     volumes:
-      - ./config.k:/app/config/config.k:ro
+      - ./config.k:/app/config.k:ro
     depends_on:
       postgres:
         condition: service_healthy
       valkey:
         condition: service_healthy
+      mock-oidc:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 10s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    ports:
+      - "3020:3000"
+    environment:
+      EXPO_PUBLIC_API_URL: http://localhost:3000
+    depends_on:
+      - thalamus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   postgres_data:

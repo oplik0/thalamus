@@ -13,7 +13,8 @@ use crate::features::auth::api_oauth::oauth_routes;
 use crate::features::auth::domain::api_key::{CreateApiKeyRequest, CreateApiKeyResponse};
 use crate::features::auth::domain::keys::{Prefix, generate_key};
 use crate::features::auth::domain::opaque::{
-    LoginFinishRequest, LoginRequest, LoginResponse, RegistrationRequest, RegistrationResponse,
+    LoginFinishRequest, LoginRequest, LoginResponse, RegistrationRecord, RegistrationRequest,
+    RegistrationResponse,
 };
 use crate::features::auth::domain::token::TokenClaims;
 use crate::features::auth::infra::{
@@ -175,7 +176,7 @@ pub async fn register_start_handler(
 /// Finish OPAQUE registration
 pub async fn register_finish_handler(
     State(state): State<AppState>,
-    Json(req): Json<RegistrationRequest>,
+    Json(req): Json<RegistrationRecord>,
 ) -> Result<Json<serde_json::Value>> {
     registration_finish(req, &state).await?;
     Ok(Json(serde_json::json!({
