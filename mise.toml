@@ -1,0 +1,246 @@
+[tools]
+# Language runtimes
+rust = "1.94.1"
+node = "24"
+pnpm = "10"
+
+# Rust tooling (install via cargo-binstall for speed)
+"cargo:cargo-binstall" = "latest"
+"cargo:sqlx-cli" = "latest"
+"cargo:bacon" = "latest"
+"cargo:cargo-nextest" = "latest"
+"cargo:cargo-tarpaulin" = "latest"
+"cargo:cargo-fuzz" = "latest"
+"cargo:cargo-rr" = "latest"
+
+# KCL
+kcl = "latest"
+kcl-language-server = "latest"
+
+# Git hooks
+hk = "latest"
+
+# Utilities
+jq = "latest"
+gh = "latest"
+
+[env]
+DATABASE_URL = "postgresql://{{USER}}@localhost:5432/thalamus"
+TEST_DATABASE_URL = "postgresql://{{USER}}@localhost:5432/thalamus_test"
+REDIS_URL = "redis://localhost:6379"
+HK_PKL_BACKEND = "pklr"
+SQLX_OFFLINE = "true"
+
+[hooks]
+# Automatically install/update hooks when tools are installed
+postinstall = "hk install --mise"
+
+[settings]
+# Use experimental features if needed
+# experimental = true
+
+[tasks.setup]
+description = "Check environment readiness"
+run = '''
+  echo "Checking tools..."
+  mise --version
+  rustc --version
+  cargo --version
+  sqlx --version
+  pnpm --version
+  docker --version
+  echo ""
+  echo "Quick start:"
+  echo "  mise run services:up      - Start PostgreSQL and Valkey"
+  echo "  mise run db:migrate       - Run migrations"
+  echo "  mise run dev              - Start dev server with auto-reload"
+  echo "  mise run test             - Run tests"
+  echo "  mise run ci               - Run full CI checks"
+'''
+
+[tasks.build]
+description = "Build the project"
+run = "cargo build"
+
+[tasks."build:release"]
+description = "Build release binary"
+run = "cargo build --release"
+
+[tasks.run]
+description = "Run the server"
+run = "cargo run"
+
+[tasks.dev]
+description = "Auto-reload server on file changes (bacon)"
+run = "bacon"
+
+[tasks.test]
+description = "Run tests with cargo-nextest"
+run = "cargo nextest run"
+
+[tasks."test:verbose"]
+description = "Run tests with immediate output"
+run = "cargo nextest run --success-output immediate"
+
+[tasks."test:ci"]
+description = "CI-mode tests (fail-fast, no retries)"
+run = "cargo nextest run --profile ci"
+
+[tasks."test:cargo"]
+description = "Run tests with cargo test"
+run = "cargo test"
+
+[tasks."test:coverage"]
+description = "Run tests with coverage (HTML report)"
+run = '''
+  echo "Running tests with coverage instrumentation..."
+  cargo tarpaulin --out Html --output-dir coverage \
+    --ignore-tests --features all \
+    --exclude-files "ui/*" --timeout 120
+  echo ""
+  echo "Coverage report: coverage/tarpaulin-report.html"
+'''
+
+[tasks."test:coverage-xml"]
+description = "Run tests with coverage (XML for CI)"
+run = '''
+  echo "Running tests with coverage (XML)..."
+  cargo tarpaulin --out Xml --output-dir coverage \
+    --ignore-tests --features all \
+    --exclude-files "ui/*" --timeout 120
+  echo "Coverage XML: coverage/cobertura.xml"
+'''
+
+[tasks."test:coverage-lcov"]
+description = "Run tests with coverage (LCOV)"
+run = '''
+  echo "Running tests with coverage (LCOV)..."
+  cargo tarpaulin --out Lcov --output-dir coverage \
+    --ignore-tests --features all \
+    --exclude-files "ui/*" --timeout 120
+  echo "Coverage LCOV: coverage/lcov.info"
+'''
+
+[tasks."test:watch"]
+description = "Run tests continuously on file changes"
+run = '''
+  bacon --config-toml '
+  default_job = "test"
+  [jobs.test]
+  command = ["cargo", "nextest", "run"]
+  need_stdout = true
+  background = false
+  on_change_strategy = "kill_then_restart"
+  kill = ["kill", "-s", "INT"]
+  watch = ["src", "tests"]
+  '
+'''
+
+[tasks."test:one"]
+description = "Run a single test by pattern"
+run = '''
+  if [ -z "$1" ]; then
+    echo "Usage: mise run test:one <test_pattern>"
+    echo "Example: mise run test:one test_api_key_lifecycle"
+    exit 1
+  fi
+  echo "Running test: $1"
+  cargo nextest run -- "$1"
+'''
+
+[tasks."test:debug"]
+description = "Run single test with debug output"
+run = '''
+  if [ -z "$1" ]; then
+    echo "Usage: mise run test:debug <test_name>"
+    echo "Example: mise run test:debug test_api_key_lifecycle"
+    exit 1
+  fi
+  echo "Running debug test: $1"
+  RUST_BACKTRACE=full RUST_LOG=thalamus=debug,sqlx=warn cargo nextest run --profile debug -- "$1"
+'''
+
+[tasks."test:seed"]
+description = "Seed test data into development database"
+run = '''
+  echo "Seeding test data..."
+  cargo test --test test_data -- --ignored --nocapture 2>/dev/null || true
+  echo "Test data seeded successfully"
+'''
+
+[tasks.check]
+description = "Type-check only"
+run = "cargo check --all-targets"
+
+[tasks.lint]
+description = "Run clippy with warnings as errors"
+run = "cargo clippy --all-targets --all-features -- -D warnings"
+
+[tasks.fmt]
+description = "Format code"
+run = "cargo fmt --all"
+
+[tasks."fmt:check"]
+description = "Check formatting"
+run = "cargo fmt --all -- --check"
+
+[tasks.ci]
+description = "Full CI sequence: fmt:check -> lint -> test:ci"
+depends = ["fmt:check", "lint", "test:ci"]
+run = "echo 'All CI checks passed'"
+
+[tasks."db:migrate"]
+description = "Run database migrations"
+run = "sqlx migrate run"
+
+[tasks."db:create-migration"]
+description = "Create a new migration"
+run = '''
+  if [ -z "$1" ]; then
+    echo "Usage: mise run db:create-migration <migration_name>"
+    exit 1
+  fi
+  sqlx migrate add "$1"
+'''
+
+[tasks."db:reset"]
+description = "Reset database schema"
+run = '''
+  psql "$DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" || true
+  sqlx migrate run --database-url "$DATABASE_URL"
+'''
+
+[tasks."services:up"]
+description = "Start PostgreSQL and Valkey (dev services)"
+run = "docker compose -f docker-compose.dev.yml up -d"
+
+[tasks."services:down"]
+description = "Stop dev services"
+run = "docker compose -f docker-compose.dev.yml down"
+
+[tasks."container:build"]
+description = "Build production container"
+run = "docker build -t thalamus:latest ."
+
+[tasks."ui:dev"]
+description = "Start UI dev server"
+dir = "ui"
+run = "pnpm start --web"
+
+[tasks."ui:lint"]
+description = "Lint UI code"
+dir = "ui"
+run = "pnpm run lint"
+
+[tasks."ui:format"]
+description = "Format UI code"
+dir = "ui"
+run = "pnpm run format"
+
+[tasks.clean]
+description = "Clean build artifacts"
+run = "cargo clean"
+
+[tasks.update]
+description = "Update cargo dependencies"
+run = "cargo update"

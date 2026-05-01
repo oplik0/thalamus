@@ -1,4 +1,4 @@
-FROM rust:1-slim-trixie AS builder
+FROM rust:1.94.1-slim-bookworm AS builder
 
 WORKDIR /app
 
@@ -8,42 +8,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY Cargo.toml Cargo.lock* ./
+# Cache dependencies
+COPY Cargo.toml Cargo.lock ./
 COPY .sqlx/ .sqlx/
 
-RUN rm -rf src && mkdir src && echo "fn main() {}" > src/main.rs
+RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo build --release --features caching
+RUN rm -rf src
 
+# Build application
 COPY migrations/ ./migrations/
 COPY pkg/ ./pkg/
 COPY src/ ./src/
 COPY casbin_model.conf ./
 
-RUN rm -f target/release/.cargo-lock target/release/thalamus
+RUN rm -f target/release/deps/thalamus* target/release/thalamus*
 RUN cargo build --release --features caching --locked
 
-FROM debian:trixie-slim AS runtime
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    libssl3 \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --shell /bin/bash app
-
-WORKDIR /app
+# Runtime — minimal distroless image
+FROM gcr.io/distroless/cc-debian12:nonroot
 
 COPY --from=builder /app/target/release/thalamus /usr/local/bin/
-COPY --from=builder /app/migrations/ /app/migrations/
-COPY --from=builder /app/pkg/ /app/pkg/
-COPY --from=builder /app/casbin_model.conf /app/
-
-RUN mkdir -p /app/config && chown -R app:app /app
-
-USER app
-
-EXPOSE 3000
+COPY --from=builder /app/migrations/ /migrations/
+COPY --from=builder /app/pkg/ /pkg/
+COPY --from=builder /app/casbin_model.conf /
 
 ENV SQLX_OFFLINE=true
-ENV RUST_LOG=debug
+ENV RUST_LOG=info
+EXPOSE 3000
+
+USER nonroot
 
 ENTRYPOINT ["thalamus"]

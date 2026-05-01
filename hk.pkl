@@ -1,0 +1,30 @@
+amends "package://github.com/jdx/hk/releases/download/v1.46.0/hk@1.46.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.46.0/hk@1.46.0#/Builtins.pkl"
+
+local linters = new Mapping<String, Step> {
+    ["rustfmt"] {
+        glob = List("*.rs")
+        check = "cargo fmt --all -- --check"
+        fix = "cargo fmt --all"
+    }
+    ["clippy"] {
+        glob = List("*.rs")
+        check = "cargo clippy --all-targets --all-features -- -D warnings"
+    }
+    ["editorconfig-checker"] = Builtins.editorconfig_checker
+    ["check-json"] {
+        glob = List("*.json")
+        check = "mise run check-json"
+    }
+    ["end-of-file-fixer"] = Builtins.end_of_file_fixer
+    ["trim-trailing-whitespace"] = Builtins.trailing_whitespace
+    ["mixed-line-endings"] = Builtins.mixed_line_endings
+}
+
+hooks {
+    ["pre-commit"] {
+        fix = true
+        stash = "git"
+        steps = linters
+    }
+}

@@ -29,7 +29,6 @@ exclude-files = [
     "ui/*",
     "tests/*",
     "target/*",
-    ".devenv/*",
     ".git/*",
     "*.gen.rs",
 ]

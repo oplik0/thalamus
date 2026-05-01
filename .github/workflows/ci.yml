@@ -14,38 +14,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-      - name: Cache Rust store
-        uses: Swatinem/rust-cache@v2
+      - uses: jdx/mise-action@v2
 
-      - uses: cachix/install-nix-action@v31
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-
-      - name: Cache Nix store
-        uses: nix-community/cache-nix-action@v7
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 2G
-
-      - uses: cachix/cachix-action@v16
-        with:
-          name: devenv
-
-      - name: Install devenv.sh
-        run: nix profile add nixpkgs#devenv
-
-      - name: Build devenv shell
-        run: devenv shell -- echo "Shell built successfully"
+      - uses: Swatinem/rust-cache@v2
+      - uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Start services
-        shell: devenv shell bash -- -e {0}
         run: |
-          devenv up -d postgres redis
-
-          # Wait for PostgreSQL to be ready
+          mise run services:up
           for i in {1..30}; do
             if pg_isready -h localhost -U $USER -d thalamus > /dev/null 2>&1; then
               echo "PostgreSQL is ready"
@@ -56,24 +32,19 @@ jobs:
           done
 
       - name: Run database migrations
-        shell: devenv shell bash -- -e {0}
-        run: db-migrate
+        run: mise run db:migrate
 
       - name: Check formatting
-        shell: devenv shell bash -- -e {0}
-        run: fmt-check
+        run: mise run fmt:check
 
       - name: Run linter
-        shell: devenv shell bash -- -e {0}
-        run: lint
+        run: mise run lint
 
       - name: Run tests
-        shell: devenv shell bash -- -e {0}
-        run: test-ci
+        run: mise run test:ci
 
   coverage:
     runs-on: ubuntu-latest
-    # Run coverage on main branch and PRs to main
     if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -81,36 +52,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-      - name: Cache Rust store
-        uses: Swatinem/rust-cache@v2
+      - uses: jdx/mise-action@v2
 
-      - uses: cachix/install-nix-action@v31
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-
-      - name: Cache Nix store
-        uses: nix-community/cache-nix-action@v7
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 2G
-
-      - uses: cachix/cachix-action@v16
-        with:
-          name: devenv
-
-      - name: Install devenv.sh
-        run: nix profile add nixpkgs#devenv
-
-      - name: Build devenv shell
-        run: devenv shell -- echo "Shell built successfully"
+      - uses: Swatinem/rust-cache@v2
+      - uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Start services
-        shell: devenv shell bash -- -e {0}
         run: |
-          devenv up -d postgres redis
+          mise run services:up
           for i in {1..30}; do
             if pg_isready -h localhost -U $USER -d thalamus > /dev/null 2>&1; then
               echo "PostgreSQL is ready"
@@ -121,12 +70,10 @@ jobs:
           done
 
       - name: Run database migrations
-        shell: devenv shell bash -- -e {0}
-        run: db-migrate
+        run: mise run db:migrate
 
       - name: Run tests with coverage
-        shell: devenv shell bash -- -e {0}
-        run: test-coverage-xml
+        run: mise run test:coverage-xml
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -135,7 +82,7 @@ jobs:
           path: coverage/
           retention-days: 30
 
-      - name: Upload coverage to Codecov (optional)
+      - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         if: env.CODECOV_TOKEN != ''
         with:

@@ -7,10 +7,10 @@ A backend-centric LLM router and load balancer. Routes requests across multiple 
 
 ## Prerequisites
 
-- [Nix](https://nixos.org/download.html) with flakes enabled
-- [devenv](https://devenv.sh/getting-started/)
+- [mise](https://mise.run) (manages all tools, env vars, and tasks)
+- [Docker](https://docs.docker.com/get-docker/) (for dev services)
 
-The development environment is fully managed by devenv. All toolchains, services, and shell scripts are declared in `devenv.nix` - no manual installation of Rust, PostgreSQL, or Redis is required.
+The development environment is fully managed by mise. All toolchains, services, and tasks are declared in `mise.toml` — no manual installation of Rust, PostgreSQL, or Redis is required.
 
 ## Getting Started
 
@@ -18,60 +18,60 @@ The development environment is fully managed by devenv. All toolchains, services
 git clone https://github.com/yourusername/thalamus.git
 cd thalamus
 
-# Enter the development shell (installs all dependencies automatically)
-devenv shell
+# Install all tools (rust, node, sqlx-cli, bacon, etc.)
+mise install
 
-# Start PostgreSQL and Redis
-services-up
+# Start PostgreSQL and Valkey
+mise run services:up
 
 # Run database migrations
-db-migrate
+mise run db:migrate
 
 # Start the server (listens on port 3000)
-run
+mise run run
 ```
 
 For development with automatic rebuild on file changes:
 
 ```bash
-dev
+mise run dev
 ```
 
 This uses [bacon](https://github.com/Canop/bacon) to watch for changes and restart the server.
 
 ## Commands
 
-All commands are available inside `devenv shell`.
+All commands are run via `mise run <task>`. Run `mise tasks` to see all available tasks.
 
 | Command | Description |
 |---|---|
-| `build` | Build in debug mode |
-| `build-release` | Build in release mode (LTO, stripped) |
-| `run` | Run the server |
-| `dev` | Run with auto-reload via bacon |
-| `test` | Run tests with cargo-nextest |
-| `test-verbose` | Run tests with immediate output |
-| `test-ci` | Run tests in CI mode (fail-fast) |
-| `test-cargo` | Run tests with standard `cargo test` |
-| `check` | Type-check without building |
-| `lint` | Run clippy with all warnings denied |
-| `fmt` | Format code with rustfmt |
-| `fmt-check` | Check formatting without modifying files |
-| `ci` | Run format check, lint, and tests sequentially |
-| `db-migrate` | Run SQLx migrations |
-| `db-create-migration <name>` | Create a new migration file |
-| `db-reset` | Drop and recreate the database schema |
-| `services-up` | Start PostgreSQL and Redis in background |
-| `services-down` | Stop all services |
-| `clean` | Remove build artifacts |
-| `update` | Update Cargo dependencies |
+| `mise run build` | Build in debug mode |
+| `mise run build:release` | Build in release mode (LTO, stripped) |
+| `mise run run` | Run the server |
+| `mise run dev` | Run with auto-reload via bacon |
+| `mise run test` | Run tests with cargo-nextest |
+| `mise run test:verbose` | Run tests with immediate output |
+| `mise run test:ci` | Run tests in CI mode (fail-fast) |
+| `mise run test:cargo` | Run tests with standard `cargo test` |
+| `mise run check` | Type-check without building |
+| `mise run lint` | Run clippy with all warnings denied |
+| `mise run fmt` | Format code with rustfmt |
+| `mise run fmt:check` | Check formatting without modifying files |
+| `mise run ci` | Run format check, lint, and tests sequentially |
+| `mise run db:migrate` | Run SQLx migrations |
+| `mise run db:create-migration <name>` | Create a new migration file |
+| `mise run db:reset` | Drop and recreate the database schema |
+| `mise run services:up` | Start PostgreSQL and Valkey in background |
+| `mise run services:down` | Stop all services |
+| `mise run clean` | Remove build artifacts |
+| `mise run update` | Update Cargo dependencies |
 
 ## Services
 
-devenv manages two services:
+Docker Compose manages two services:
 
 - **PostgreSQL** -- `127.0.0.1:5432`, databases `thalamus` and `thalamus_test`
-- **Redis** -- `127.0.0.1:6379`
+- **Valkey** -- `127.0.0.1:6379` (Redis-compatible)
 
 Connection strings are set automatically on shell entry via `DATABASE_URL`, `TEST_DATABASE_URL`, and `REDIS_URL` environment variables.
 
@@ -108,8 +108,8 @@ Thalamus uses [KCL](https://kcl-lang.io/) for type-safe configuration. Schemas a
 
 ## Container Build
 
-A production container image is defined in `devenv.nix` using [Crane](https://crane.dev/). It produces a minimal image with only the compiled binary, CA certificates, and migration files:
+A production container image is built with Docker using a multi-stage build and a distroless base:
 
 ```bash
-devenv container build prod
+mise run container:build
 ```
