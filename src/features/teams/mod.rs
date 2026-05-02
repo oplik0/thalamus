@@ -2,8 +2,9 @@
 //!
 //! Team management with budgets, rate limits, and access control.
 
-// Module structure for future implementation
-// pub mod api;
-// pub mod domain;
-// pub mod infra;
-// pub mod dto;
+pub mod api;
+pub mod domain;
+pub mod dto;
+pub mod infra;
+
+pub use api::router;
