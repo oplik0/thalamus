@@ -84,3 +84,9 @@ pub struct ProjectResponse {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+
+/// Request to set a parent team
+#[derive(Debug, Clone, Deserialize)]
+pub struct SetParentRequest {
+    pub parent_team_id: Option<Uuid>,
+}
