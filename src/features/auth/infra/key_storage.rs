@@ -64,6 +64,28 @@ pub async fn store_key(
         full_key.to_string()
     };
 
+    // Validate project_id if provided
+    if let Some(project_id) = request.project_id {
+        let project_exists = sqlx::query_scalar!(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM projects
+                WHERE id = $1 AND team_id = $2 AND deleted_at IS NULL
+            ) as "exists!"
+            "#,
+            project_id,
+            request.team_id
+        )
+        .fetch_one(&state.db_pool)
+        .await?;
+
+        if !project_exists {
+            return Err(Error::InvalidInput(
+                "Project does not belong to the specified team or does not exist".to_string(),
+            ));
+        }
+    }
+
     let id = Uuid::new_v4();
     let created_at = Utc::now();
 
