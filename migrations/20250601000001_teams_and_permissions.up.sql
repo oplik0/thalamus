@@ -27,9 +27,10 @@ CREATE TABLE projects (
     metadata JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at TIMESTAMPTZ,
-    CONSTRAINT unique_team_project_name UNIQUE(team_id, name) WHERE deleted_at IS NULL
+    deleted_at TIMESTAMPTZ
 );
+
+CREATE UNIQUE INDEX unique_team_project_name ON projects(team_id, name) WHERE deleted_at IS NULL;
 
 -- Trigger for updated_at on projects
 CREATE TRIGGER update_projects_updated_at

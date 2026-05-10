@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, key_id, key_hash, key_prefix,\n            user_id, team_id, name, description,\n            scopes, is_active as \"is_active!\", last_used_at,\n            expires_at, created_at, revoked_at\n        FROM api_keys\n        WHERE key_id = $1\n        ",
+  "query": "\n        SELECT\n            id, key_id, key_hash, key_prefix,\n            user_id, team_id, project_id, name, description,\n            scopes, is_active as \"is_active!\", last_used_at,\n            expires_at, created_at, revoked_at\n        FROM api_keys\n        WHERE key_id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -35,41 +35,46 @@
       },
       {
         "ordinal": 6,
+        "name": "project_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 7,
         "name": "name",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "description",
         "type_info": "Text"
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "scopes",
         "type_info": "TextArray"
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "is_active!",
         "type_info": "Bool"
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "last_used_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "expires_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "revoked_at",
         "type_info": "Timestamptz"
       }
@@ -86,6 +91,7 @@
       false,
       false,
       false,
+      true,
       false,
       true,
       true,
@@ -96,5 +102,5 @@
       true
     ]
   },
-  "hash": "48ca5923b4a3cb111bce94bb51f6fa394892918ff46858b4f4fa24b06efeb50c"
+  "hash": "d91ee638c00649ff4886da1a94dcbd3702d1f4731e4b930236128649c5485add"
 }

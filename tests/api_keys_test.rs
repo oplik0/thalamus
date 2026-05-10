@@ -57,6 +57,7 @@ async fn test_api_key_lifecycle(pool: PgPool) {
     let request = CreateApiKeyRequest {
         user_id,
         team_id,
+        project_id: None,
         name: "Test Key".to_string(),
         description: Some("A test API key".to_string()),
         scopes: Some(vec!["chat:read".to_string(), "chat:write".to_string()]),
@@ -143,6 +144,7 @@ async fn test_expired_key(pool: PgPool) {
     let request = CreateApiKeyRequest {
         user_id,
         team_id,
+        project_id: None,
         name: "Expired Key".to_string(),
         description: None,
         scopes: None,
