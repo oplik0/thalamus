@@ -138,7 +138,7 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
         r#"
         SELECT
             id, key_id, key_hash, key_prefix,
-            user_id, team_id, name, description,
+            user_id, team_id, project_id, name, description,
             scopes, is_active as "is_active!", last_used_at,
             expires_at, created_at, revoked_at
         FROM api_keys
@@ -237,7 +237,7 @@ pub async fn list_user_keys(user_id: Uuid, state: &AppState) -> Result<Vec<ApiKe
         r#"
         SELECT
             id, key_id, key_hash, key_prefix,
-            user_id, team_id, name, description,
+            user_id, team_id, project_id, name, description,
             scopes, is_active as "is_active!", last_used_at,
             expires_at, created_at, revoked_at
         FROM api_keys
@@ -259,7 +259,7 @@ pub async fn list_team_keys(team_id: Uuid, state: &AppState) -> Result<Vec<ApiKe
         r#"
         SELECT
             id, key_id, key_hash, key_prefix,
-            user_id, team_id, name, description,
+            user_id, team_id, project_id, name, description,
             scopes, is_active as "is_active!", last_used_at,
             expires_at, created_at, revoked_at
         FROM api_keys

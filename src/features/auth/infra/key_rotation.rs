@@ -34,7 +34,7 @@ pub async fn rotate_key_with_grace_period(
     let old_key = sqlx::query!(
         r#"
         SELECT
-            id, user_id, team_id, name, description, scopes as "scopes: Vec<String>"
+            id, user_id, team_id, project_id, name, description, scopes as "scopes: Vec<String>"
         FROM api_keys
         WHERE key_id = $1 AND is_active = true AND revoked_at IS NULL
         "#,
@@ -51,6 +51,7 @@ pub async fn rotate_key_with_grace_period(
     let request = CreateApiKeyRequest {
         user_id: old_key.user_id,
         team_id: old_key.team_id,
+        project_id: old_key.project_id,
         name: format!("{} (rotated)", old_key.name),
         description: old_key.description.clone(),
         scopes: old_key.scopes.clone(),
@@ -114,7 +115,7 @@ pub async fn rotate_key_immediate(
     let old_key = sqlx::query!(
         r#"
         SELECT
-            id, user_id, team_id, name, description, scopes as "scopes: Vec<String>"
+            id, user_id, team_id, project_id, name, description, scopes as "scopes: Vec<String>"
         FROM api_keys
         WHERE key_id = $1 AND is_active = true AND revoked_at IS NULL
         "#,
@@ -129,6 +130,7 @@ pub async fn rotate_key_immediate(
     let request = CreateApiKeyRequest {
         user_id: old_key.user_id,
         team_id: old_key.team_id,
+        project_id: old_key.project_id,
         name: format!("{} (rotated)", old_key.name),
         description: old_key.description.clone(),
         scopes: old_key.scopes.clone(),

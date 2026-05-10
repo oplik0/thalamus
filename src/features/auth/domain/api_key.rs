@@ -11,6 +11,7 @@ pub struct ApiKey {
     pub key_prefix: String,
     pub user_id: Uuid,
     pub team_id: Uuid,
+    pub project_id: Option<Uuid>,
     pub name: String,
     pub description: Option<String>,
     pub scopes: Option<Vec<String>>,
@@ -102,6 +103,7 @@ mod tests {
         let request = CreateApiKeyRequest {
             user_id,
             team_id,
+            project_id: None,
             name: "My API Key".to_string(),
             description: Some("For testing".to_string()),
             scopes: Some(vec!["read".to_string()]),
