@@ -15,7 +15,7 @@ pub struct Team {
     pub description: Option<String>,
     pub parent_team_id: Option<Uuid>,
     pub is_active: bool,
-    pub budget_limit_usd: Option<rust_decimal::Decimal>,
+    pub budget_limit_usd: Option<f64>,
     pub rate_limit_rpm: Option<i32>,
     pub rate_limit_burst: Option<i32>,
     pub allowed_models: Option<Vec<String>>,

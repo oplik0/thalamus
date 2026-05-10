@@ -15,6 +15,7 @@ use axum::{
 use uuid::Uuid;
 
 /// Teams service struct that holds all repositories
+#[derive(Debug)]
 pub struct TeamsService;
 
 /// Create teams router
