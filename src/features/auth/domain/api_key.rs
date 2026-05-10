@@ -26,6 +26,7 @@ pub struct ApiKey {
 pub struct CreateApiKeyRequest {
     pub user_id: Uuid,
     pub team_id: Uuid,
+    pub project_id: Option<Uuid>,
     pub name: String,
     pub description: Option<String>,
     pub scopes: Option<Vec<String>>,
@@ -52,6 +53,7 @@ pub struct ValidatedApiKey {
     pub key_id: String,
     pub user_id: Uuid,
     pub team_id: Uuid,
+    pub project_id: Option<Uuid>,
     pub scopes: Option<Vec<String>>,
 }
 
