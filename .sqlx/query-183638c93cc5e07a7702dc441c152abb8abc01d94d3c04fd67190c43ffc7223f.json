@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, user_id, team_id, name, description, scopes as \"scopes: Vec<String>\"\n        FROM api_keys\n        WHERE key_id = $1 AND is_active = true AND revoked_at IS NULL\n        ",
+  "query": "\n        SELECT\n            id, user_id, team_id, project_id, name, description, scopes as \"scopes: Vec<String>\"\n        FROM api_keys\n        WHERE key_id = $1 AND is_active = true AND revoked_at IS NULL\n        ",
   "describe": {
     "columns": [
       {
@@ -20,16 +20,21 @@
       },
       {
         "ordinal": 3,
+        "name": "project_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
         "name": "name",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "description",
         "type_info": "Text"
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "scopes: Vec<String>",
         "type_info": "TextArray"
       }
@@ -43,10 +48,11 @@
       false,
       false,
       false,
+      true,
       false,
       true,
       true
     ]
   },
-  "hash": "55a863c4dda5cb52e2764b8779b7a671b93f27f74567511515fb39ab0cd6c31d"
+  "hash": "183638c93cc5e07a7702dc441c152abb8abc01d94d3c04fd67190c43ffc7223f"
 }

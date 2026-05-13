@@ -249,6 +249,18 @@ pub async fn init_test_state_legacy() -> thalamus::bootstrap::AppState {
         backend_registry.clone(),
     ));
 
+    // Initialize team repositories (needed for compilation)
+    let team_repository = Arc::new(thalamus::features::teams::infra::SqlxTeamRepository::new(pool.clone()));
+    let membership_repository = Arc::new(thalamus::features::teams::infra::SqlxMembershipRepository::new(pool.clone()));
+    let project_repository = Arc::new(thalamus::features::teams::infra::SqlxProjectRepository::new(pool.clone()));
+    let team_hierarchy_resolver = Arc::new(thalamus::features::teams::infra::SqlxTeamHierarchyResolver::new(pool.clone()));
+    // Use a simple stub permission service for tests
+    let team_permission_service: Arc<dyn thalamus::features::teams::domain::TeamPermissionService> = Arc::new(
+        thalamus::features::teams::infra::CasbinTeamPermissionService::new(
+            Arc::new(thalamus::features::authorization::CasbinAuthorizer::new(pool.clone()).await.expect("Failed to create Casbin authorizer")),
+        ),
+    );
+
     thalamus::bootstrap::AppState {
         db_pool: pool,
         config: Arc::new(config),
@@ -258,6 +270,11 @@ pub async fn init_test_state_legacy() -> thalamus::bootstrap::AppState {
         oauth_service,
         backend_registry,
         proxy,
+        team_repository,
+        membership_repository,
+        project_repository,
+        team_hierarchy_resolver,
+        team_permission_service,
     }
 }
 

@@ -64,6 +64,28 @@ pub async fn store_key(
         full_key.to_string()
     };
 
+    // Validate project_id if provided
+    if let Some(project_id) = request.project_id {
+        let project_exists = sqlx::query_scalar!(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM projects
+                WHERE id = $1 AND team_id = $2 AND deleted_at IS NULL
+            ) as "exists!"
+            "#,
+            project_id,
+            request.team_id
+        )
+        .fetch_one(&state.db_pool)
+        .await?;
+
+        if !project_exists {
+            return Err(Error::InvalidInput(
+                "Project does not belong to the specified team or does not exist".to_string(),
+            ));
+        }
+    }
+
     let id = Uuid::new_v4();
     let created_at = Utc::now();
 
@@ -72,10 +94,10 @@ pub async fn store_key(
         r#"
         INSERT INTO api_keys (
             id, key_id, key_hash, key_prefix,
-            user_id, team_id, name, description,
+            user_id, team_id, project_id, name, description,
             scopes, is_active, expires_at, created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, $12)
         "#,
         id,
         key_id,
@@ -83,6 +105,7 @@ pub async fn store_key(
         key_prefix,
         request.user_id,
         request.team_id,
+        request.project_id,
         request.name,
         request.description,
         request.scopes.as_deref(),
@@ -137,7 +160,7 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
         r#"
         SELECT
             id, key_id, key_hash, key_prefix,
-            user_id, team_id, name, description,
+            user_id, team_id, project_id, name, description,
             scopes, is_active as "is_active!", last_used_at,
             expires_at, created_at, revoked_at
         FROM api_keys
@@ -207,6 +230,7 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
         key_id: api_key.key_id,
         user_id: api_key.user_id,
         team_id: api_key.team_id,
+        project_id: api_key.project_id,
         scopes: api_key.scopes,
     })
 }
@@ -235,7 +259,7 @@ pub async fn list_user_keys(user_id: Uuid, state: &AppState) -> Result<Vec<ApiKe
         r#"
         SELECT
             id, key_id, key_hash, key_prefix,
-            user_id, team_id, name, description,
+            user_id, team_id, project_id, name, description,
             scopes, is_active as "is_active!", last_used_at,
             expires_at, created_at, revoked_at
         FROM api_keys
@@ -257,7 +281,7 @@ pub async fn list_team_keys(team_id: Uuid, state: &AppState) -> Result<Vec<ApiKe
         r#"
         SELECT
             id, key_id, key_hash, key_prefix,
-            user_id, team_id, name, description,
+            user_id, team_id, project_id, name, description,
             scopes, is_active as "is_active!", last_used_at,
             expires_at, created_at, revoked_at
         FROM api_keys

@@ -120,7 +120,7 @@ async fn make_authenticated_request(
         None => request_builder.body(Body::empty()).unwrap(),
     };
 
-    let response = ServiceExt::oneshot(app, request).await.unwrap();
+    let response = (*app).clone().oneshot(request).await.unwrap();
     let status = response.status();
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -147,6 +147,7 @@ async fn test_api_key_authentication_flow(pool: PgPool) {
     let request = CreateApiKeyRequest {
         user_id,
         team_id,
+        project_id: None,
         name: "Master Key".to_string(),
         description: Some("Key with full permissions".to_string()),
         scopes: Some(vec![
@@ -238,6 +239,7 @@ async fn test_scope_based_authorization(pool: PgPool) {
     let read_only_request = CreateApiKeyRequest {
         user_id,
         team_id,
+        project_id: None,
         name: "Read Only Key".to_string(),
         description: None,
         scopes: Some(vec!["api_keys:read".to_string()]),
@@ -284,6 +286,7 @@ async fn test_token_exchange_flow(pool: PgPool) {
     let request = CreateApiKeyRequest {
         user_id,
         team_id,
+        project_id: None,
         name: "Token Test Key".to_string(),
         description: None,
         scopes: Some(vec!["chat:read".to_string()]),
@@ -400,6 +403,7 @@ async fn test_expired_api_key(pool: PgPool) {
     let request = CreateApiKeyRequest {
         user_id,
         team_id,
+        project_id: None,
         name: "Expired Key".to_string(),
         description: None,
         scopes: Some(vec!["chat:read".to_string()]),

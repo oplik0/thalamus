@@ -11,6 +11,7 @@ pub struct ApiKey {
     pub key_prefix: String,
     pub user_id: Uuid,
     pub team_id: Uuid,
+    pub project_id: Option<Uuid>,
     pub name: String,
     pub description: Option<String>,
     pub scopes: Option<Vec<String>>,
@@ -26,6 +27,7 @@ pub struct ApiKey {
 pub struct CreateApiKeyRequest {
     pub user_id: Uuid,
     pub team_id: Uuid,
+    pub project_id: Option<Uuid>,
     pub name: String,
     pub description: Option<String>,
     pub scopes: Option<Vec<String>>,
@@ -52,6 +54,7 @@ pub struct ValidatedApiKey {
     pub key_id: String,
     pub user_id: Uuid,
     pub team_id: Uuid,
+    pub project_id: Option<Uuid>,
     pub scopes: Option<Vec<String>>,
 }
 
@@ -73,6 +76,7 @@ mod tests {
             key_prefix: "thl_abc123".to_string(),
             user_id,
             team_id,
+            project_id: None,
             name: "Test Key".to_string(),
             description: Some("A test key".to_string()),
             scopes: Some(vec!["read".to_string(), "write".to_string()]),
@@ -100,6 +104,7 @@ mod tests {
         let request = CreateApiKeyRequest {
             user_id,
             team_id,
+            project_id: None,
             name: "My API Key".to_string(),
             description: Some("For testing".to_string()),
             scopes: Some(vec!["read".to_string()]),
@@ -152,6 +157,7 @@ mod tests {
             key_id: "key_123".to_string(),
             user_id,
             team_id,
+            project_id: None,
             scopes: Some(vec!["admin".to_string()]),
         };
 
@@ -176,6 +182,7 @@ mod tests {
             key_prefix: "thl_abc123".to_string(),
             user_id,
             team_id,
+            project_id: None,
             name: "Test Key".to_string(),
             description: None,
             scopes: None,

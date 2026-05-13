@@ -8,6 +8,14 @@ use crate::features::authorization::CasbinAuthorizer;
 use crate::features::backends::infra::{AdaptingBackendClient, InMemoryBackendRegistry};
 use crate::features::llm_proxy::ProxyService;
 use crate::features::routing::infra::RouterService;
+use crate::features::teams::domain::{
+    MembershipRepository, ProjectRepository, TeamHierarchyResolver, TeamPermissionService,
+    TeamRepository,
+};
+use crate::features::teams::infra::{
+    CasbinTeamPermissionService, SqlxMembershipRepository, SqlxProjectRepository,
+    SqlxTeamHierarchyResolver, SqlxTeamRepository,
+};
 use crate::middleware::rate_limit::RateLimiter;
 use crate::shared::config::types::Config;
 use axum::Router;
@@ -35,6 +43,16 @@ pub struct AppState {
     pub backend_registry: Arc<InMemoryBackendRegistry>,
     /// Unified LLM proxy orchestrator
     pub proxy: Arc<ProxyService>,
+    /// Team repository
+    pub team_repository: Arc<dyn TeamRepository>,
+    /// Membership repository
+    pub membership_repository: Arc<dyn MembershipRepository>,
+    /// Project repository
+    pub project_repository: Arc<dyn ProjectRepository>,
+    /// Team hierarchy resolver
+    pub team_hierarchy_resolver: Arc<dyn TeamHierarchyResolver>,
+    /// Team permission service
+    pub team_permission_service: Arc<dyn TeamPermissionService>,
 }
 
 // Manual Debug implementation since AppTasks doesn't implement Debug
@@ -48,6 +66,11 @@ impl std::fmt::Debug for AppState {
             .field("authorizer", &"<CasbinAuthorizer>")
             .field("backend_registry", &"<InMemoryBackendRegistry>")
             .field("proxy", &"<ProxyService>")
+            .field("team_repository", &"<TeamRepository>")
+            .field("membership_repository", &"<MembershipRepository>")
+            .field("project_repository", &"<ProjectRepository>")
+            .field("team_hierarchy_resolver", &"<TeamHierarchyResolver>")
+            .field("team_permission_service", &"<TeamPermissionService>")
             .finish()
     }
 }
@@ -69,7 +92,8 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/admin/tasks", admin_routes::<AppState>())
         // Unified LLM proxy routes
         .merge(crate::features::llm_proxy::router())
-        // Future stateful routes will go here
+        // Teams and projects routes
+        .merge(crate::features::teams::router())
         .with_state(state)
 }
 
@@ -219,6 +243,34 @@ pub async fn init_app_state(
         }
     };
 
+    // Initialize team repositories
+    let team_repository = Arc::new(SqlxTeamRepository::new(db_pool.clone()));
+    let membership_repository = Arc::new(SqlxMembershipRepository::new(db_pool.clone()));
+    let project_repository = Arc::new(SqlxProjectRepository::new(db_pool.clone()));
+    let team_hierarchy_resolver = Arc::new(SqlxTeamHierarchyResolver::new(db_pool.clone()));
+
+    // Initialize team permission service (needs Casbin authorizer)
+    let team_permission_service: Arc<dyn TeamPermissionService> = if let Some(authz) = &authorizer
+    {
+        Arc::new(CasbinTeamPermissionService::new(authz.clone()))
+    } else {
+        // Fallback: create a new authorizer just for team permissions (shouldn't happen in normal operation)
+        tracing::warn!("No authorizer available for team permission service, creating standalone");
+        match CasbinAuthorizer::new(db_pool.clone()).await {
+            Ok(authz) => Arc::new(CasbinTeamPermissionService::new(Arc::new(authz))),
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to create standalone Casbin authorizer for team permissions");
+                // This will cause runtime errors if team permissions are used, but allows the app to start
+                return Err(crate::Error::Internal(format!(
+                    "Failed to initialize team permission service: {}",
+                    e
+                )));
+            }
+        }
+    };
+
+    tracing::info!("Team repositories initialized successfully");
+
     Ok(AppState {
         db_pool,
         config,
@@ -228,6 +280,11 @@ pub async fn init_app_state(
         oauth_service,
         backend_registry,
         proxy,
+        team_repository,
+        membership_repository,
+        project_repository,
+        team_hierarchy_resolver,
+        team_permission_service,
     })
 }
 

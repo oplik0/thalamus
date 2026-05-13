@@ -190,8 +190,7 @@ pub async fn seed_sample_api_key(
         ON CONFLICT (id) DO UPDATE SET
             name = EXCLUDED.name,
             scopes = EXCLUDED.scopes,
-            expires_at = EXCLUDED.expires_at,
-            updated_at = NOW()
+            expires_at = EXCLUDED.expires_at
         "#,
         key_id,
         public_id,
@@ -214,32 +213,14 @@ pub async fn seed_sample_api_key(
     Ok(full_key)
 }
 
-/// Create a sample backend configuration
+/// Create a sample backend configuration (in-memory only, no DB table)
 pub async fn seed_sample_backend(
-    pool: &PgPool,
+    _pool: &PgPool,
     name: &str,
     base_url: &str,
     provider: &str,
 ) -> anyhow::Result<Uuid> {
     let backend_id = Uuid::new_v4();
-
-    sqlx::query!(
-        r#"
-        INSERT INTO backends (id, name, base_url, provider, is_enabled, health_status, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, true, 'unknown', NOW(), NOW())
-        ON CONFLICT (name) DO UPDATE SET
-            base_url = EXCLUDED.base_url,
-            provider = EXCLUDED.provider,
-            updated_at = NOW()
-        RETURNING id
-        "#,
-        backend_id,
-        name,
-        base_url,
-        provider
-    )
-    .fetch_one(pool)
-    .await?;
 
     println!("Created backend: {} (id: {})", name, backend_id);
     println!("  URL: {}", base_url);

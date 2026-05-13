@@ -267,7 +267,7 @@ async fn routing_model_aware_prefers_loaded_model(pool: PgPool) {
             .body(Body::from(request_body.to_string()))
             .unwrap();
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
         assert!(response.status().is_success());
     }
 
@@ -426,7 +426,7 @@ async fn unhealthy_backend_not_selected(pool: PgPool) {
             ))
             .unwrap();
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
         assert!(response.status().is_success());
     }
 
@@ -530,7 +530,7 @@ async fn different_models_routed_to_different_backends(pool: PgPool) {
         ))
         .unwrap();
 
-    let gpt_response = app.oneshot(gpt_request).await.unwrap();
+    let gpt_response = app.clone().oneshot(gpt_request).await.unwrap();
     assert!(gpt_response.status().is_success());
     assert!(gpt_backend.request_count() >= 1);
 

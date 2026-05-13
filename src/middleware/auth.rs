@@ -17,6 +17,7 @@ use uuid::Uuid;
 pub struct Auth {
     pub user_id: Uuid,
     pub team_id: Uuid,
+    pub project_id: Option<Uuid>,
     pub scopes: Option<Vec<String>>,
     pub roles: Option<Vec<String>>,
     pub key_id: Option<String>, // Only present if authenticated via API key
@@ -113,6 +114,7 @@ impl ApiKeyAuth {
             Ok(ApiKeyAuth(Auth {
                 user_id: claims.sub,
                 team_id: claims.dom,
+                project_id: None,
                 scopes: claims.scopes,
                 roles: claims.roles,
                 key_id: None,
@@ -126,6 +128,7 @@ impl ApiKeyAuth {
             Ok(ApiKeyAuth(Auth {
                 user_id: validated.user_id,
                 team_id: validated.team_id,
+                project_id: validated.project_id,
                 scopes: validated.scopes,
                 roles: None, // API keys don't currently carry roles, but could be fetched
                 key_id: Some(validated.key_id),
@@ -144,6 +147,7 @@ impl ApiKeyAuth {
         Ok(ApiKeyAuth(Auth {
             user_id: verified.user_id,
             team_id: verified.team_id,
+            project_id: None,
             scopes: verified.scopes,
             roles: None, // HTTP signatures don't currently carry roles
             key_id: Some(verified.key_id),
@@ -183,6 +187,7 @@ impl FromRequestParts<AppState> for OptionalApiKeyAuth {
                 Ok(claims) => Ok(OptionalApiKeyAuth(Some(Auth {
                     user_id: claims.sub,
                     team_id: claims.dom,
+                    project_id: None,
                     scopes: claims.scopes,
                     roles: claims.roles,
                     key_id: None,
@@ -196,6 +201,7 @@ impl FromRequestParts<AppState> for OptionalApiKeyAuth {
                 Ok(validated) => Ok(OptionalApiKeyAuth(Some(Auth {
                     user_id: validated.user_id,
                     team_id: validated.team_id,
+                    project_id: validated.project_id,
                     scopes: validated.scopes,
                     roles: None,
                     key_id: Some(validated.key_id),
@@ -259,6 +265,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: Some(vec!["read".to_string(), "write".to_string()]),
             roles: None,
             key_id: Some("test_key".to_string()),
@@ -275,6 +282,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: None,
             roles: None,
             key_id: Some("test_key".to_string()),
@@ -290,6 +298,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: Some(vec!["read".to_string()]),
             roles: None,
             key_id: Some("test_key".to_string()),
@@ -307,6 +316,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: None,
             roles: None,
             key_id: Some("test_key".to_string()),
@@ -321,6 +331,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: Some(vec!["read".to_string(), "write".to_string()]),
             roles: None,
             key_id: Some("test_key".to_string()),
@@ -338,6 +349,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: None,
             roles: None,
             key_id: Some("test_key".to_string()),
@@ -356,6 +368,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: Some(vec!["read".to_string(), "write".to_string()]),
             roles: None,
             key_id: Some("test_key".to_string()),
@@ -372,6 +385,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: Some(vec!["read".to_string()]),
             roles: None,
             key_id: Some("test_key".to_string()),
@@ -388,6 +402,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: Some(vec!["read".to_string()]),
             roles: None,
             key_id: Some("test_key".to_string()),
@@ -403,6 +418,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: Some(vec!["read".to_string()]),
             roles: None,
             key_id: Some("test_key".to_string()),
@@ -419,6 +435,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: Some(vec!["read".to_string(), "write".to_string()]),
             roles: None,
             key_id: Some("test_key".to_string()),
@@ -435,6 +452,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: Some(vec!["read".to_string()]),
             roles: None,
             key_id: Some("test_key".to_string()),
@@ -451,6 +469,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: Some(vec!["read".to_string()]),
             roles: Some(vec!["user".to_string()]),
             key_id: Some("test_key".to_string()),
@@ -460,6 +479,7 @@ mod tests {
         let cloned = auth.clone();
         assert_eq!(auth.user_id, cloned.user_id);
         assert_eq!(auth.team_id, cloned.team_id);
+        assert_eq!(auth.project_id, cloned.project_id);
         assert_eq!(auth.scopes, cloned.scopes);
         assert_eq!(auth.roles, cloned.roles);
         assert_eq!(auth.key_id, cloned.key_id);
@@ -471,6 +491,7 @@ mod tests {
         let auth = Auth {
             user_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
+            project_id: None,
             scopes: Some(vec!["read".to_string()]),
             roles: None,
             key_id: Some("test_key".to_string()),

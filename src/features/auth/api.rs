@@ -31,6 +31,7 @@ pub struct CreateKeyRequest {
     pub name: String,
     pub description: Option<String>,
     pub scopes: Option<Vec<String>>,
+    pub project_id: Option<Uuid>,
     pub expires_in_days: Option<i64>,
 }
 
@@ -42,6 +43,7 @@ pub struct ApiKeyInfo {
     pub name: String,
     pub description: Option<String>,
     pub scopes: Option<Vec<String>>,
+    pub project_id: Option<Uuid>,
     pub is_active: bool,
     pub last_used_at: Option<String>,
     pub expires_at: Option<String>,
@@ -66,6 +68,7 @@ pub async fn create_key(
     let request = CreateApiKeyRequest {
         user_id: auth.user_id,
         team_id: auth.team_id,
+        project_id: req.project_id,
         name: req.name,
         description: req.description,
         scopes: req.scopes,
@@ -94,6 +97,7 @@ pub async fn list_keys(
             name: key.name,
             description: key.description,
             scopes: key.scopes,
+            project_id: key.project_id,
             is_active: key.is_active,
             last_used_at: key.last_used_at.map(|dt| dt.to_rfc3339()),
             expires_at: key.expires_at.map(|dt| dt.to_rfc3339()),
@@ -131,6 +135,7 @@ pub async fn whoami(ApiKeyAuth(auth): ApiKeyAuth) -> Result<Json<serde_json::Val
     Ok(Json(serde_json::json!({
         "user_id": auth.user_id,
         "team_id": auth.team_id,
+        "project_id": auth.project_id,
         "key_id": auth.key_id,
         "token_id": auth.token_id,
         "scopes": auth.scopes,
