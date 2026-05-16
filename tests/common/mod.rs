@@ -215,6 +215,7 @@ pub async fn init_test_state_legacy() -> thalamus::bootstrap::AppState {
             paseto_secret_key: "exactly_32_bytes_for_paseto_key!".to_string(),
             opaque_server_setup: "test_opaque_setup".to_string(),
         },
+        plugins: None,
     };
     let tasks = axum_tasks::AppTasks::new();
 
@@ -242,6 +243,7 @@ pub async fn init_test_state_legacy() -> thalamus::bootstrap::AppState {
     let router_service = Arc::new(RouterService::from_config(
         backend_registry.clone(),
         &config.routing,
+        None,
     ));
     let proxy = Arc::new(ProxyService::new(
         router_service,
@@ -270,6 +272,7 @@ pub async fn init_test_state_legacy() -> thalamus::bootstrap::AppState {
         oauth_service,
         backend_registry,
         proxy,
+        plugin_manager: None,
         team_repository,
         membership_repository,
         project_repository,

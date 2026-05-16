@@ -283,6 +283,55 @@ pub struct SecurityConfig {
     pub opaque_server_setup: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginConfig {
+    pub enabled: bool,
+    pub directory: String,
+    pub timeout_ms: u64,
+    pub max_instances: usize,
+    pub plugins: Vec<PluginManifest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginManifest {
+    pub name: String,
+    pub plugin_type: PluginType,
+    pub wasm_path: String,
+    #[serde(default)]
+    pub config: HashMap<String, String>,
+    #[serde(default)]
+    pub wasi: bool,
+    #[serde(default = "default_max_instances")]
+    pub max_instances: usize,
+    #[serde(default = "default_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+fn default_max_instances() -> usize {
+    10
+}
+
+fn default_timeout_ms() -> u64 {
+    30000
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginType {
+    Routing,
+    Adapter,
+    Guardrail,
+    Health,
+    Observability,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginInfo {
+    pub name: String,
+    pub plugin_type: PluginType,
+    pub loaded: bool,
+}
+
 /// Root configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -296,6 +345,8 @@ pub struct Config {
     #[serde(default)]
     pub oauth_providers: Vec<OAuthProvider>,
     pub security: SecurityConfig,
+    #[serde(default)]
+    pub plugins: Option<PluginConfig>,
 }
 
 impl Config {

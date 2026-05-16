@@ -732,5 +732,6 @@ fn create_test_config() -> thalamus::shared::config::types::Config {
             paseto_secret_key: "exactly_32_bytes_for_paseto_key!".to_string(),
             opaque_server_setup: "test_opaque_setup".to_string(),
         },
+        plugins: None,
     }
 }

@@ -63,6 +63,7 @@ pub async fn init_test_state(pool: PgPool) -> thalamus::bootstrap::AppState {
     let router_service = Arc::new(RouterService::from_config(
         backend_registry.clone(),
         &config.routing,
+        None,
     ));
     let proxy = Arc::new(ProxyService::new(
         router_service,
@@ -91,6 +92,7 @@ pub async fn init_test_state(pool: PgPool) -> thalamus::bootstrap::AppState {
         oauth_service,
         backend_registry,
         proxy,
+        plugin_manager: None,
         team_repository,
         membership_repository,
         project_repository,
@@ -159,6 +161,7 @@ pub async fn init_test_state_with_backends(
     let router_service = Arc::new(RouterService::from_config(
         backend_registry.clone(),
         &config.routing,
+        None,
     ));
     let proxy = Arc::new(ProxyService::new(
         router_service,
@@ -187,6 +190,7 @@ pub async fn init_test_state_with_backends(
         oauth_service,
         backend_registry,
         proxy,
+        plugin_manager: None,
         team_repository,
         membership_repository,
         project_repository,
@@ -231,6 +235,7 @@ pub async fn init_test_state_with_config(
     let router_service = Arc::new(RouterService::from_config(
         backend_registry.clone(),
         &config.routing,
+        None,
     ));
     let proxy = Arc::new(ProxyService::new(
         router_service,
@@ -259,6 +264,7 @@ pub async fn init_test_state_with_config(
         oauth_service,
         backend_registry,
         proxy,
+        plugin_manager: None,
         team_repository,
         membership_repository,
         project_repository,
@@ -337,6 +343,7 @@ fn create_test_config() -> Config {
             paseto_secret_key: "exactly_32_bytes_for_paseto_key!".to_string(),
             opaque_server_setup: "test_opaque_setup".to_string(),
         },
+        plugins: None,
     }
 }
 

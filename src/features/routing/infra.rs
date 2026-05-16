@@ -3,6 +3,8 @@ use std::sync::Arc;
 use crate::Error;
 use crate::Result;
 use crate::features::backends::domain::{BackendRegistry, EndpointSnapshot};
+use crate::features::plugin::PluginManager;
+use crate::features::plugin::routing_bridge::ExtismRoutingStrategy;
 use crate::features::routing::domain::{RoutingContext, RoutingStrategy};
 use crate::features::routing::strategies::{
     HealthWeightedStrategy, LeastBusyStrategy, LeastConnectionsStrategy, ModelAwareStrategy,
@@ -16,6 +18,7 @@ pub struct RouterService {
     strategy: Box<dyn RoutingStrategy>,
     fallback_strategy: Option<Box<dyn RoutingStrategy>>,
     admission_control: bool,
+    plugin_manager: Option<Arc<PluginManager>>,
 }
 
 impl std::fmt::Debug for RouterService {
@@ -28,8 +31,12 @@ impl std::fmt::Debug for RouterService {
 
 impl RouterService {
     #[must_use]
-    pub fn from_config(registry: Arc<dyn BackendRegistry>, routing_config: &RoutingConfig) -> Self {
-        let primary = strategy_from_config(&routing_config.strategy);
+    pub fn from_config(
+        registry: Arc<dyn BackendRegistry>,
+        routing_config: &RoutingConfig,
+        plugin_manager: Option<Arc<PluginManager>>,
+    ) -> Self {
+        let primary = strategy_from_config(&routing_config.strategy, plugin_manager.clone());
 
         let fallback_name = routing_config.strategy.fallback_strategy.trim();
         let fallback = if fallback_name.is_empty() {
@@ -44,7 +51,7 @@ impl RouterService {
                 health_weighted: routing_config.strategy.health_weighted,
                 admission_control: routing_config.strategy.admission_control,
             };
-            Some(strategy_from_config(&fallback_config))
+            Some(strategy_from_config(&fallback_config, plugin_manager.clone()))
         };
 
         Self {
@@ -52,6 +59,7 @@ impl RouterService {
             strategy: primary,
             fallback_strategy: fallback,
             admission_control: routing_config.strategy.admission_control,
+            plugin_manager,
         }
     }
 
@@ -93,15 +101,34 @@ impl RouterService {
     }
 }
 
-fn strategy_from_config(config: &StrategyConfig) -> Box<dyn RoutingStrategy> {
-    let base: Box<dyn RoutingStrategy> = match config.name.as_str() {
-        "random" => Box::<RandomStrategy>::default(),
-        "weighted" => Box::<WeightedStrategy>::default(),
-        "least_busy" | "model_aware_least_busy" => {
-            Box::new(LeastBusyStrategy::new(config.hysteresis_threshold))
+fn strategy_from_config(
+    config: &StrategyConfig,
+    plugin_manager: Option<Arc<PluginManager>>,
+) -> Box<dyn RoutingStrategy> {
+    let base: Box<dyn RoutingStrategy> = if let Some(pm) = &plugin_manager {
+        if pm.plugin_exists(&config.name) {
+            Box::new(ExtismRoutingStrategy::new(pm.clone(), config.name.clone()))
+        } else {
+            match config.name.as_str() {
+                "random" => Box::<RandomStrategy>::default(),
+                "weighted" => Box::<WeightedStrategy>::default(),
+                "least_busy" | "model_aware_least_busy" => {
+                    Box::new(LeastBusyStrategy::new(config.hysteresis_threshold))
+                }
+                "least_connections" => Box::<LeastConnectionsStrategy>::default(),
+                _ => Box::<RoundRobinStrategy>::default(),
+            }
         }
-        "least_connections" => Box::<LeastConnectionsStrategy>::default(),
-        _ => Box::<RoundRobinStrategy>::default(),
+    } else {
+        match config.name.as_str() {
+            "random" => Box::<RandomStrategy>::default(),
+            "weighted" => Box::<WeightedStrategy>::default(),
+            "least_busy" | "model_aware_least_busy" => {
+                Box::new(LeastBusyStrategy::new(config.hysteresis_threshold))
+            }
+            "least_connections" => Box::<LeastConnectionsStrategy>::default(),
+            _ => Box::<RoundRobinStrategy>::default(),
+        }
     };
 
     // Composition order: base → HealthWeighted → ModelAware

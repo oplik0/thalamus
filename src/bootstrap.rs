@@ -7,6 +7,7 @@ use crate::features::auth::infra::OAuthService;
 use crate::features::authorization::CasbinAuthorizer;
 use crate::features::backends::infra::{AdaptingBackendClient, InMemoryBackendRegistry};
 use crate::features::llm_proxy::ProxyService;
+use crate::features::plugin::PluginManager;
 use crate::features::routing::infra::RouterService;
 use crate::features::teams::domain::{
     MembershipRepository, ProjectRepository, TeamHierarchyResolver, TeamPermissionService,
@@ -43,6 +44,8 @@ pub struct AppState {
     pub backend_registry: Arc<InMemoryBackendRegistry>,
     /// Unified LLM proxy orchestrator
     pub proxy: Arc<ProxyService>,
+    /// Plugin manager for WASM plugins
+    pub plugin_manager: Option<Arc<PluginManager>>,
     /// Team repository
     pub team_repository: Arc<dyn TeamRepository>,
     /// Membership repository
@@ -66,6 +69,7 @@ impl std::fmt::Debug for AppState {
             .field("authorizer", &"<CasbinAuthorizer>")
             .field("backend_registry", &"<InMemoryBackendRegistry>")
             .field("proxy", &"<ProxyService>")
+            .field("plugin_manager", &"<PluginManager>")
             .field("team_repository", &"<TeamRepository>")
             .field("membership_repository", &"<MembershipRepository>")
             .field("project_repository", &"<ProjectRepository>")
@@ -195,6 +199,26 @@ pub async fn init_app_state(
 
     // Initialize backend registry and proxy pipeline
     let backend_registry = Arc::new(InMemoryBackendRegistry::from_config(&config.backends));
+
+    // Initialize plugin manager if plugins are configured
+    let plugin_manager = config.plugins.as_ref().and_then(|pc| {
+        if pc.enabled {
+            match PluginManager::load_from_config(pc) {
+                Ok(pm) => {
+                    tracing::info!("Plugin manager initialized with {} plugins", pm.list_plugins().len());
+                    Some(Arc::new(pm))
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to initialize plugin manager");
+                    None
+                }
+            }
+        } else {
+            tracing::info!("Plugin system disabled");
+            None
+        }
+    });
+
     let adapters = AdaptingBackendClient::adapters_from_config(&config);
 
     let http_client = reqwest::Client::builder()
@@ -211,6 +235,7 @@ pub async fn init_app_state(
     let router_service = Arc::new(RouterService::from_config(
         backend_registry.clone(),
         &config.routing,
+        plugin_manager.clone(),
     ));
     let proxy = Arc::new(ProxyService::new(
         router_service,
@@ -280,6 +305,7 @@ pub async fn init_app_state(
         oauth_service,
         backend_registry,
         proxy,
+        plugin_manager,
         team_repository,
         membership_repository,
         project_repository,
