@@ -63,8 +63,8 @@ impl RoutingStrategy for ExtismRoutingStrategy {
 
         // Use pool to get exclusive mutable access to a plugin instance
         let mut plugin = self.pool.get(self.timeout).ok()??;
-        let output: &str = plugin.call::<&str, &str>("select", &input_json).ok()?;
-        let result: PluginRoutingResult = serde_json::from_str(output).ok()?;
+        let output: String = plugin.call::<&str, String>("select", &input_json).ok()?;
+        let result: PluginRoutingResult = serde_json::from_str(&output).ok()?;
 
         let endpoint_id = result.endpoint_id?;
         ctx.candidates

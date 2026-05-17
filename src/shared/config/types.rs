@@ -315,7 +315,7 @@ fn default_timeout_ms() -> u64 {
     30000
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginType {
     Routing,
@@ -323,6 +323,33 @@ pub enum PluginType {
     Guardrail,
     Health,
     Observability,
+}
+
+impl std::fmt::Display for PluginType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Routing => write!(f, "routing"),
+            Self::Adapter => write!(f, "adapter"),
+            Self::Guardrail => write!(f, "guardrail"),
+            Self::Health => write!(f, "health"),
+            Self::Observability => write!(f, "observability"),
+        }
+    }
+}
+
+impl std::str::FromStr for PluginType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "routing" => Ok(Self::Routing),
+            "adapter" => Ok(Self::Adapter),
+            "guardrail" => Ok(Self::Guardrail),
+            "health" => Ok(Self::Health),
+            "observability" => Ok(Self::Observability),
+            _ => Err(format!("Unknown plugin type: {}", s)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

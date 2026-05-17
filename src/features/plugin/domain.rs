@@ -1,70 +1,19 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use serde::{Deserialize, Serialize};
 
-/// Types of plugins supported by the system
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PluginType {
-    Routing,
-    Adapter,
-    Guardrail,
-    Health,
-    Observability,
-}
-
-/// Manifest describing a plugin to load
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginManifest {
-    pub name: String,
-    pub plugin_type: PluginType,
-    pub wasm_path: String,
-    #[serde(default)]
-    pub config: HashMap<String, String>,
-    #[serde(default = "default_wasi")]
-    pub wasi: bool,
-    #[serde(default = "default_max_instances")]
-    pub max_instances: usize,
-    #[serde(default = "default_timeout_ms")]
-    pub timeout_ms: u64,
-}
-
-fn default_wasi() -> bool {
-    false
-}
-
-fn default_max_instances() -> usize {
-    4
-}
-
-fn default_timeout_ms() -> u64 {
-    500
-}
 
 /// Runtime information about a loaded plugin
 #[derive(Debug, Clone)]
 pub struct PluginInfo {
     pub name: String,
-    pub plugin_type: PluginType,
+    pub plugin_type: crate::shared::config::types::PluginType,
     pub wasm_path: String,
     pub loaded_at: chrono::DateTime<chrono::Utc>,
     pub call_count: u64,
     pub error_count: u64,
     pub active_instances: usize,
     pub max_instances: usize,
-}
-
-/// Configuration for the plugin system
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginConfig {
-    pub enabled: bool,
-    pub directory: String,
-    #[serde(default = "default_timeout_ms")]
-    pub timeout_ms: u64,
-    #[serde(default = "default_max_instances")]
-    pub max_instances: usize,
-    pub plugins: Vec<PluginManifest>,
 }
 
 /// Manager for loaded plugins
@@ -93,7 +42,7 @@ impl PluginManager {
     }
 
     /// Load plugins from a configuration
-    pub fn load_from_config(config: &PluginConfig) -> crate::Result<Self> {
+    pub fn load_from_config(config: &crate::shared::config::types::PluginConfig) -> crate::Result<Self> {
         let manager = Self::new();
         if !config.enabled {
             return Ok(manager);
@@ -122,9 +71,9 @@ impl PluginManager {
                         .to_string();
                     let wasm_path = path.to_string_lossy().to_string();
 
-                    let manifest = PluginManifest {
+                    let manifest = crate::shared::config::types::PluginManifest {
                         name,
-                        plugin_type: PluginType::Routing,
+                        plugin_type: crate::shared::config::types::PluginType::Routing,
                         wasm_path,
                         config: HashMap::new(),
                         wasi: false,
@@ -145,7 +94,7 @@ impl PluginManager {
     }
 
     /// Load a single plugin from its manifest
-    pub fn load_plugin(&self, manifest: PluginManifest) -> crate::Result<()> {
+    pub fn load_plugin(&self, manifest: crate::shared::config::types::PluginManifest) -> crate::Result<()> {
         let pool = crate::features::plugin::infra::PluginRuntime::build_pool(&manifest)?;
 
         // Validate: check that the plugin has expected exports
@@ -158,7 +107,7 @@ impl PluginManager {
                 ))
             })?;
 
-        if manifest.plugin_type == PluginType::Routing && !has_select {
+        if manifest.plugin_type == crate::shared::config::types::PluginType::Routing && !has_select {
             return Err(crate::Error::InvalidInput(format!(
                 "Routing plugin '{}' must export a 'select' function",
                 manifest.name

@@ -4,7 +4,7 @@ use std::time::Duration;
 /// Internal entry for a loaded plugin
 pub struct PluginEntry {
     pub pool: Arc<extism::Pool>,
-    pub manifest: crate::features::plugin::domain::PluginManifest,
+    pub manifest: crate::shared::config::types::PluginManifest,
     pub loaded_at: chrono::DateTime<chrono::Utc>,
     pub call_count: std::sync::atomic::AtomicU64,
     pub error_count: std::sync::atomic::AtomicU64,
@@ -34,7 +34,7 @@ pub struct PluginRuntime;
 impl PluginRuntime {
     /// Build an Extism pool from a plugin manifest
     pub fn build_pool(
-        manifest: &crate::features::plugin::domain::PluginManifest,
+        manifest: &crate::shared::config::types::PluginManifest,
     ) -> crate::Result<Arc<extism::Pool>> {
         let extism_manifest = extism::Manifest::new([extism::Wasm::file(&manifest.wasm_path)])
             .with_timeout(Duration::from_millis(manifest.timeout_ms))

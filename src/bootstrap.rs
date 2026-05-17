@@ -94,6 +94,8 @@ pub fn build_router(state: AppState) -> Router {
         // Note: admin_routes returns Router<()> so we need to use a different approach
         // We'll protect individual routes within admin_routes using middleware
         .nest("/admin/tasks", admin_routes::<AppState>())
+        // Plugin management routes (admin only)
+        .nest("/admin/plugins", crate::features::plugin::api::router())
         // Unified LLM proxy routes
         .merge(crate::features::llm_proxy::router())
         // Teams and projects routes
