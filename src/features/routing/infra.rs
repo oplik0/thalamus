@@ -4,7 +4,7 @@ use crate::Error;
 use crate::Result;
 use crate::features::backends::domain::{BackendRegistry, EndpointSnapshot};
 use crate::features::plugin::PluginManager;
-use crate::features::plugin::routing_bridge::ExtismRoutingStrategy;
+use crate::features::plugin::routing_bridge::{ExtismRoutingStrategy, DEFAULT_PLUGIN_TIMEOUT_MS};
 use crate::features::routing::domain::{RoutingContext, RoutingStrategy};
 use crate::features::routing::strategies::{
     HealthWeightedStrategy, LeastBusyStrategy, LeastConnectionsStrategy, ModelAwareStrategy,
@@ -36,7 +36,7 @@ impl RouterService {
         routing_config: &RoutingConfig,
         plugin_manager: Option<Arc<PluginManager>>,
     ) -> Self {
-        let primary = strategy_from_config(&routing_config.strategy, plugin_manager.clone());
+        let primary = strategy_from_config(&routing_config.strategy, &plugin_manager);
 
         let fallback_name = routing_config.strategy.fallback_strategy.trim();
         let fallback = if fallback_name.is_empty() {
@@ -51,7 +51,7 @@ impl RouterService {
                 health_weighted: routing_config.strategy.health_weighted,
                 admission_control: routing_config.strategy.admission_control,
             };
-            Some(strategy_from_config(&fallback_config, plugin_manager.clone()))
+            Some(strategy_from_config(&fallback_config, &plugin_manager))
         };
 
         Self {
@@ -103,18 +103,44 @@ impl RouterService {
 
 fn strategy_from_config(
     config: &StrategyConfig,
-    plugin_manager: Option<Arc<PluginManager>>,
+    plugin_manager: &Option<Arc<PluginManager>>,
 ) -> Box<dyn RoutingStrategy> {
-    let base: Box<dyn RoutingStrategy> = if let Some(pm) = &plugin_manager {
+    // Check for plugin strategies first, before falling through to built-ins
+    if let Some(pm) = plugin_manager {
         if pm.plugin_exists(&config.name) {
-            Box::new(ExtismRoutingStrategy::new(pm.clone(), config.name.clone()))
-        } else {
-            match config.name.as_str() {
-                "random" => Box::<RandomStrategy>::default(),
-                "weighted" => Box::<WeightedStrategy>::default(),
-                "least_busy" | "model_aware_least_busy" => {
-                    Box::new(LeastBusyStrategy::new(config.hysteresis_threshold))
-                }
+            if let Some(pool) = pm.get_pool(&config.name) {
+                return Box::new(ExtismRoutingStrategy::new(
+                    pool,
+                    config.name.clone(),
+                    DEFAULT_PLUGIN_TIMEOUT_MS,
+                ));
+            }
+        }
+    }
+
+    let base: Box<dyn RoutingStrategy> = match config.name.as_str() {
+        "random" => Box::<RandomStrategy>::default(),
+        "weighted" => Box::<WeightedStrategy>::default(),
+        "least_busy" | "model_aware_least_busy" => {
+            Box::new(LeastBusyStrategy::new(config.hysteresis_threshold))
+        }
+        "least_connections" => Box::<LeastConnectionsStrategy>::default(),
+        _ => Box::<RoundRobinStrategy>::default(),
+    };
+
+    // Composition order: base → HealthWeighted → ModelAware
+    let with_health: Box<dyn RoutingStrategy> = if config.health_weighted {
+        Box::new(HealthWeightedStrategy::new(base))
+    } else {
+        base
+    };
+
+    if config.prefer_loaded_models {
+        Box::new(ModelAwareStrategy::new(with_health))
+    } else {
+        with_health
+    }
+}
                 "least_connections" => Box::<LeastConnectionsStrategy>::default(),
                 _ => Box::<RoundRobinStrategy>::default(),
             }
@@ -128,6 +154,28 @@ fn strategy_from_config(
             }
             "least_connections" => Box::<LeastConnectionsStrategy>::default(),
             _ => Box::<RoundRobinStrategy>::default(),
+=======
+    plugin_manager: &Option<Arc<PluginManager>>,
+) -> Box<dyn RoutingStrategy> {
+    // Check for plugin strategies first, before falling through to built-ins
+    if let Some(pm) = plugin_manager {
+        if pm.plugin_exists(&config.name) {
+            if let Some(pool) = pm.get_pool(&config.name) {
+                return Box::new(ExtismRoutingStrategy::new(
+                    pool,
+                    config.name.clone(),
+                    DEFAULT_PLUGIN_TIMEOUT_MS,
+                ));
+            }
+        }
+    }
+
+    let base: Box<dyn RoutingStrategy> = match config.name.as_str() {
+        "random" => Box::<RandomStrategy>::default(),
+        "weighted" => Box::<WeightedStrategy>::default(),
+        "least_busy" | "model_aware_least_busy" => {
+            Box::new(LeastBusyStrategy::new(config.hysteresis_threshold))
+>>>>>>> ensemble/preserved/plugin-system/plugin-routing
         }
     };
 

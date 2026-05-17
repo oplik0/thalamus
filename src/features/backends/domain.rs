@@ -10,10 +10,12 @@ use futures::Stream;
 use reqwest::StatusCode;
 
 use crate::Result;
+use serde::Serialize;
+
 use crate::shared::config::types::{AuthConfig, EndpointConfig, RetryConfig};
 use crate::shared::models::{ChatResponse, EmbeddingRequest, LlmRequest, StreamEvent};
 
-#[derive(Debug, Clone, Eq)]
+#[derive(Debug, Clone, Eq, Serialize)]
 pub struct EndpointId {
     pub backend: String,
     pub index: usize,
@@ -45,7 +47,7 @@ pub struct EndpointState {
     pub active_requests: AtomicU32,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize)]
 pub struct EndpointSnapshot {
     pub id: EndpointId,
     pub url: String,
