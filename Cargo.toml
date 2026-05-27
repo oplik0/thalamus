@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "crates/thalamus-plugin"]
+resolver = "3"
+
 [package]
 name = "thalamus"
 version = "0.1.0"
