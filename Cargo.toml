@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/thalamus-plugin"]
+members = [".", "crates/thalamus-plugin", "examples/plugins/routing-echo"]
 resolver = "3"
 
 [package]
@@ -92,6 +92,7 @@ dashmap = "6.1"
 base64 = "0.22.1"
 rand_hc = "0.4.0"
 extism = "1.21"
+thalamus-plugin = { path = "crates/thalamus-plugin" }
 axum-tasks = "0.1.14"
 tokio-util = "0.7.17"
 async-trait = "0.1.89"

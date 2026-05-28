@@ -2,13 +2,13 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::types::{Endpoint, EndpointId, LlmRequest};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingContext {
     pub request: LlmRequest,
     pub candidates: Vec<Endpoint>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingResult {
     pub endpoint_id: Option<EndpointId>,
 }

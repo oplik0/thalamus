@@ -5737,6 +5737,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "routing-echo"
+version = "0.1.0"
+dependencies = [
+ "extism-pdk",
+ "thalamus-plugin",
+]
+
+[[package]]
 name = "rsa"
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7053,6 +7061,7 @@ dependencies = [
  "sha2 0.10.9",
  "sqlx",
  "sqlx-adapter",
+ "thalamus-plugin",
  "thiserror 2.0.18",
  "tokio",
  "tokio-test",

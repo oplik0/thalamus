@@ -2,10 +2,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use extism::Pool;
-use serde::{Deserialize, Serialize};
 
 use crate::features::backends::domain::EndpointSnapshot;
 use crate::features::routing::domain::{RoutingContext, RoutingStrategy};
+use crate::shared::models::LlmRequest;
+use thalamus_plugin::routing::{
+    RoutingContext as PluginRoutingContext, RoutingResult as PluginRoutingResult,
+};
+use thalamus_plugin::types::{
+    Endpoint as PluginEndpoint, EndpointId as PluginEndpointId, LlmRequest as PluginLlmRequest,
+};
 
 /// Default timeout for plugin calls in milliseconds.
 pub const DEFAULT_PLUGIN_TIMEOUT_MS: u64 = 500;
@@ -35,31 +41,39 @@ impl std::fmt::Debug for ExtismRoutingStrategy {
     }
 }
 
-// JSON schemas for the plugin boundary
-#[derive(Serialize)]
-struct PluginRoutingContext<'a> {
-    request: &'a crate::shared::models::LlmRequest,
-    candidates: &'a [EndpointSnapshot],
+fn to_plugin_endpoint(snapshot: &EndpointSnapshot) -> PluginEndpoint {
+    PluginEndpoint {
+        id: PluginEndpointId {
+            backend: snapshot.id.backend.clone(),
+            index: snapshot.id.index,
+        },
+        url: snapshot.url.clone(),
+        models: snapshot.models.clone(),
+        currently_loaded_models: snapshot.currently_loaded_models.clone(),
+        model_loading_aware: snapshot.model_loading_aware,
+        tags: snapshot.tags.clone(),
+        weight: snapshot.weight,
+        capacity: snapshot.capacity,
+        healthy: snapshot.healthy,
+        active_requests: snapshot.active_requests,
+        consecutive_failures: snapshot.consecutive_failures,
+        consecutive_successes: snapshot.consecutive_successes,
+    }
 }
 
-#[derive(Deserialize)]
-struct PluginRoutingResult {
-    endpoint_id: Option<PluginEndpointId>,
-}
-
-#[derive(Deserialize)]
-struct PluginEndpointId {
-    backend: String,
-    index: usize,
+fn to_plugin_request(request: &LlmRequest) -> PluginLlmRequest {
+    PluginLlmRequest {
+        model: request.model().to_string(),
+    }
 }
 
 impl RoutingStrategy for ExtismRoutingStrategy {
     fn select(&self, ctx: &RoutingContext<'_>) -> Option<EndpointSnapshot> {
-        let input = PluginRoutingContext {
-            request: ctx.request,
-            candidates: ctx.candidates,
+        let plugin_ctx = PluginRoutingContext {
+            request: to_plugin_request(ctx.request),
+            candidates: ctx.candidates.iter().map(to_plugin_endpoint).collect(),
         };
-        let input_json = serde_json::to_string(&input).ok()?;
+        let input_json = serde_json::to_string(&plugin_ctx).ok()?;
 
         // Use pool to get exclusive mutable access to a plugin instance
         let mut plugin = self.pool.get(self.timeout).ok()??;
