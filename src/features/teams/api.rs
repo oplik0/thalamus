@@ -2,9 +2,7 @@
 
 use crate::bootstrap::AppState;
 use crate::error::{Error, Result};
-use crate::features::teams::domain::{
-    MemberInfo, Team, TEAM_ROLE_ADMIN,
-};
+use crate::features::teams::domain::{MemberInfo, TEAM_ROLE_ADMIN, Team};
 use crate::features::teams::dto::{
     AddMemberRequest, CreateProjectRequest, CreateTeamRequest, MemberResponse, ProjectResponse,
     SetParentRequest, TeamResponse, UpdateMemberRoleRequest, UpdateProjectRequest,
@@ -55,10 +53,7 @@ async fn create_team(
 
     // Validate parent team if provided
     if let Some(parent_id) = req.parent_team_id {
-        let parent = state
-            .team_repository
-            .get_by_id(parent_id)
-            .await?;
+        let parent = state.team_repository.get_by_id(parent_id).await?;
         if parent.is_none() {
             return Err(Error::NotFound(format!(
                 "Parent team not found: {}",
@@ -305,10 +300,7 @@ async fn set_parent(
         }
 
         // Verify parent team exists
-        let parent = state
-            .team_repository
-            .get_by_id(parent_id)
-            .await?;
+        let parent = state.team_repository.get_by_id(parent_id).await?;
         if parent.is_none() {
             return Err(Error::NotFound(format!(
                 "Parent team not found: {}",
@@ -330,10 +322,7 @@ async fn set_parent(
     }
 
     // Update parent
-    let _updated = state
-        .team_repository
-        .update(id, None, None, None)
-        .await?;
+    let _updated = state.team_repository.update(id, None, None, None).await?;
 
     // Update parent_team_id separately
     sqlx::query!(
@@ -555,10 +544,7 @@ async fn remove_member(
     }
 
     // Check if target user is a member
-    let target = state
-        .membership_repository
-        .get_member(id, user_id)
-        .await?;
+    let target = state.membership_repository.get_member(id, user_id).await?;
 
     if target.is_none() {
         return Err(Error::NotFound(format!(
@@ -568,7 +554,10 @@ async fn remove_member(
     }
 
     // Remove member
-    state.membership_repository.remove_member(id, user_id).await?;
+    state
+        .membership_repository
+        .remove_member(id, user_id)
+        .await?;
 
     // Remove Casbin role
     state
@@ -637,12 +626,9 @@ async fn update_member_role(
         .await?;
 
     // Fetch user details
-    let user = sqlx::query!(
-        "SELECT username, email FROM users WHERE id = $1",
-        user_id
-    )
-    .fetch_one(&state.db_pool)
-    .await?;
+    let user = sqlx::query!("SELECT username, email FROM users WHERE id = $1", user_id)
+        .fetch_one(&state.db_pool)
+        .await?;
 
     Ok(Json(MemberResponse {
         id: member.id,

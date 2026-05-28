@@ -134,11 +134,7 @@ pub trait MembershipRepository: Send + Sync {
         role: String,
     ) -> Result<TeamMembership>;
     async fn list_members(&self, team_id: Uuid) -> Result<Vec<MemberInfo>>;
-    async fn get_member(
-        &self,
-        team_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<Option<TeamMembership>>;
+    async fn get_member(&self, team_id: Uuid, user_id: Uuid) -> Result<Option<TeamMembership>>;
 }
 
 /// Team hierarchy resolver

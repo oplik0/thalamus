@@ -8,6 +8,7 @@ use crate::features::authorization::CasbinAuthorizer;
 use crate::features::backends::infra::{AdaptingBackendClient, InMemoryBackendRegistry};
 use crate::features::llm_proxy::ProxyService;
 use crate::features::plugin::PluginManager;
+use crate::features::plugin::guardrail_bridge::GuardrailService;
 use crate::features::routing::infra::RouterService;
 use crate::features::teams::domain::{
     MembershipRepository, ProjectRepository, TeamHierarchyResolver, TeamPermissionService,
@@ -207,7 +208,10 @@ pub async fn init_app_state(
         if pc.enabled {
             match PluginManager::load_from_config(pc) {
                 Ok(pm) => {
-                    tracing::info!("Plugin manager initialized with {} plugins", pm.list_plugins().len());
+                    tracing::info!(
+                        "Plugin manager initialized with {} plugins",
+                        pm.list_plugins().len()
+                    );
                     Some(Arc::new(pm))
                 }
                 Err(e) => {
@@ -221,7 +225,7 @@ pub async fn init_app_state(
         }
     });
 
-    let adapters = AdaptingBackendClient::adapters_from_config(&config);
+    let adapters = AdaptingBackendClient::adapters_from_config(&config, plugin_manager.as_deref());
 
     let http_client = reqwest::Client::builder()
         .pool_idle_timeout(Some(std::time::Duration::from_secs(90)))
@@ -239,10 +243,13 @@ pub async fn init_app_state(
         &config.routing,
         plugin_manager.clone(),
     ));
+    let guardrail_service = GuardrailService::from_plugin_manager(plugin_manager.as_deref(), 200);
+
     let proxy = Arc::new(ProxyService::new(
         router_service,
         backend_client,
         backend_registry.clone(),
+        guardrail_service,
     ));
 
     let health_tasks = crate::features::backends::health::spawn_health_checks(
@@ -277,8 +284,7 @@ pub async fn init_app_state(
     let team_hierarchy_resolver = Arc::new(SqlxTeamHierarchyResolver::new(db_pool.clone()));
 
     // Initialize team permission service (needs Casbin authorizer)
-    let team_permission_service: Arc<dyn TeamPermissionService> = if let Some(authz) = &authorizer
-    {
+    let team_permission_service: Arc<dyn TeamPermissionService> = if let Some(authz) = &authorizer {
         Arc::new(CasbinTeamPermissionService::new(authz.clone()))
     } else {
         // Fallback: create a new authorizer just for team permissions (shouldn't happen in normal operation)

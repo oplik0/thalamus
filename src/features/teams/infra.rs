@@ -1,9 +1,9 @@
 //! Teams infrastructure implementations
 
 use crate::error::{Error, Result};
+use crate::features::authorization::PolicyManager;
 use crate::features::authorization::domain::{AuthRequest, Authorizer};
 use crate::features::authorization::infra::CasbinAuthorizer;
-use crate::features::authorization::PolicyManager;
 use crate::features::teams::domain::{
     MemberInfo, MembershipRepository, Project, ProjectRepository, Team, TeamAction,
     TeamHierarchyResolver, TeamMembership, TeamPermissionService, TeamRepository,
@@ -217,9 +217,10 @@ impl MembershipRepository for SqlxMembershipRepository {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| match e {
-            sqlx::Error::RowNotFound => {
-                Error::NotFound(format!("Membership not found for team {} and user {}", team_id, user_id))
-            }
+            sqlx::Error::RowNotFound => Error::NotFound(format!(
+                "Membership not found for team {} and user {}",
+                team_id, user_id
+            )),
             _ => Error::Database(e),
         })?;
 
@@ -261,11 +262,7 @@ impl MembershipRepository for SqlxMembershipRepository {
         Ok(members)
     }
 
-    async fn get_member(
-        &self,
-        team_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<Option<TeamMembership>> {
+    async fn get_member(&self, team_id: Uuid, user_id: Uuid) -> Result<Option<TeamMembership>> {
         let membership = sqlx::query_as::<_, TeamMembership>(
             r#"
             SELECT * FROM team_memberships

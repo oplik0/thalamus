@@ -13,6 +13,7 @@ use crate::features::backends::adapter::adapter_for_backend;
 use crate::features::backends::domain::{
     AdapterMap, BackendClient, BackendRegistry, EndpointId, EndpointSnapshot, EndpointState,
 };
+use crate::features::plugin::PluginManager;
 use crate::shared::config::types::{AuthConfig, BackendConfig, Config, RetryConfig};
 use crate::shared::models::{ChatResponse, EmbeddingRequest, LlmRequest, StreamEvent};
 use crate::shared::utils::parse_duration_or_default;
@@ -189,10 +190,16 @@ impl AdaptingBackendClient {
     }
 
     #[must_use]
-    pub fn adapters_from_config(config: &Config) -> AdapterMap {
+    pub fn adapters_from_config(
+        config: &Config,
+        plugin_manager: Option<&PluginManager>,
+    ) -> AdapterMap {
         let mut adapters = HashMap::new();
         for (name, backend) in &config.backends {
-            adapters.insert(name.clone(), adapter_for_backend(name, backend));
+            adapters.insert(
+                name.clone(),
+                adapter_for_backend(name, backend, plugin_manager),
+            );
         }
         adapters
     }

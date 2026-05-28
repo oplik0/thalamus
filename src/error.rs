@@ -48,6 +48,10 @@ pub enum Error {
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
 
+    /// Request or response blocked by a guardrail plugin
+    #[error("Guardrail blocked: {0}")]
+    Guardrail(String),
+
     /// Internal server errors
     #[error("Internal error: {0}")]
     Internal(String),
@@ -67,6 +71,7 @@ impl Error {
             Self::InvalidInput(_) => StatusCode::BAD_REQUEST,
             Self::Backend(_) => StatusCode::BAD_GATEWAY,
             Self::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Guardrail(_) => StatusCode::UNPROCESSABLE_ENTITY,
         }
     }
 }

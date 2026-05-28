@@ -6,6 +6,7 @@ use futures::Stream;
 
 use crate::Result;
 use crate::features::backends::domain::{BackendClient, BackendRegistry, EndpointId};
+use crate::features::plugin::guardrail_bridge::GuardrailService;
 use crate::features::routing::infra::RouterService;
 use crate::shared::models::{ChatResponse, EmbeddingRequest, LlmRequest, StreamEvent};
 
@@ -13,6 +14,7 @@ pub struct ProxyService {
     router: Arc<RouterService>,
     client: Arc<dyn BackendClient>,
     registry: Arc<dyn BackendRegistry>,
+    guardrails: GuardrailService,
 }
 
 impl std::fmt::Debug for ProxyService {
@@ -27,19 +29,30 @@ impl ProxyService {
         router: Arc<RouterService>,
         client: Arc<dyn BackendClient>,
         registry: Arc<dyn BackendRegistry>,
+        guardrails: GuardrailService,
     ) -> Self {
         Self {
             router,
             client,
             registry,
+            guardrails,
         }
     }
 
     pub async fn handle(&self, request: LlmRequest) -> Result<ChatResponse> {
+        self.guardrails.inspect_request(&request)?;
+
         let endpoint = self.router.route(&request)?;
         self.registry.acquire(&endpoint.id);
-        let result = self.client.send(&endpoint, &request).await;
+        let mut result = self.client.send(&endpoint, &request).await;
         self.registry.release(&endpoint.id);
+
+        if let Ok(ref response) = result {
+            if let Err(guardrail_err) = self.guardrails.inspect_response(response) {
+                result = Err(guardrail_err);
+            }
+        }
+
         result
     }
 
@@ -47,6 +60,8 @@ impl ProxyService {
         &self,
         request: LlmRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
+        self.guardrails.inspect_request(&request)?;
+
         let endpoint = self.router.route(&request)?;
         self.registry.acquire(&endpoint.id);
 
@@ -65,6 +80,8 @@ impl ProxyService {
 
     pub async fn handle_embedding(&self, request: EmbeddingRequest) -> Result<serde_json::Value> {
         let envelope = LlmRequest::Embedding(request.clone());
+        self.guardrails.inspect_request(&envelope)?;
+
         let endpoint = self.router.route(&envelope)?;
         self.registry.acquire(&endpoint.id);
         let result = self.client.send_embedding(&endpoint, &request).await;

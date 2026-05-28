@@ -4,7 +4,7 @@ use crate::Error;
 use crate::Result;
 use crate::features::backends::domain::{BackendRegistry, EndpointSnapshot};
 use crate::features::plugin::PluginManager;
-use crate::features::plugin::routing_bridge::{ExtismRoutingStrategy, DEFAULT_PLUGIN_TIMEOUT_MS};
+use crate::features::plugin::routing_bridge::{DEFAULT_PLUGIN_TIMEOUT_MS, ExtismRoutingStrategy};
 use crate::features::routing::domain::{RoutingContext, RoutingStrategy};
 use crate::features::routing::strategies::{
     HealthWeightedStrategy, LeastBusyStrategy, LeastConnectionsStrategy, ModelAwareStrategy,
@@ -35,8 +35,7 @@ impl RouterService {
     pub fn from_config(
         registry: Arc<dyn BackendRegistry>,
         routing_config: &RoutingConfig,
-    #[allow(dead_code)]
-    plugin_manager: Option<Arc<PluginManager>>,
+        #[allow(dead_code)] plugin_manager: Option<Arc<PluginManager>>,
     ) -> Self {
         let primary = strategy_from_config(&routing_config.strategy, &plugin_manager);
 

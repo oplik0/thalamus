@@ -5,8 +5,8 @@
 
 use crate::bootstrap::AppState;
 use crate::error::{Error, Result};
-use crate::shared::config::types::{PluginManifest, PluginType};
 use crate::middleware::{ApiKeyAuth, require_scope};
+use crate::shared::config::types::{PluginManifest, PluginType};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -200,7 +200,10 @@ async fn reload_plugin(
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/admin/plugins", get(list_plugins).post(load_plugin))
-        .route("/admin/plugins/{name}", get(get_plugin).delete(unload_plugin))
+        .route(
+            "/admin/plugins/{name}",
+            get(get_plugin).delete(unload_plugin),
+        )
         .route("/admin/plugins/{name}/reload", post(reload_plugin))
 }
 

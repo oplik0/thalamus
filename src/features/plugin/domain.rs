@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-
 /// Runtime information about a loaded plugin
 #[derive(Debug, Clone)]
 pub struct PluginInfo {
@@ -26,7 +25,11 @@ impl std::fmt::Debug for PluginManager {
         f.debug_struct("PluginManager")
             .field(
                 "plugins",
-                &self.plugins.iter().map(|e| e.key().clone()).collect::<Vec<_>>(),
+                &self
+                    .plugins
+                    .iter()
+                    .map(|e| e.key().clone())
+                    .collect::<Vec<_>>(),
             )
             .finish_non_exhaustive()
     }
@@ -42,7 +45,9 @@ impl PluginManager {
     }
 
     /// Load plugins from a configuration
-    pub fn load_from_config(config: &crate::shared::config::types::PluginConfig) -> crate::Result<Self> {
+    pub fn load_from_config(
+        config: &crate::shared::config::types::PluginConfig,
+    ) -> crate::Result<Self> {
         let manager = Self::new();
         if !config.enabled {
             return Ok(manager);
@@ -94,25 +99,12 @@ impl PluginManager {
     }
 
     /// Load a single plugin from its manifest
-    pub fn load_plugin(&self, manifest: crate::shared::config::types::PluginManifest) -> crate::Result<()> {
+    pub fn load_plugin(
+        &self,
+        manifest: crate::shared::config::types::PluginManifest,
+    ) -> crate::Result<()> {
         let pool = crate::features::plugin::infra::PluginRuntime::build_pool(&manifest)?;
-
-        // Validate: check that the plugin has expected exports
-        let has_select = pool
-            .function_exists("select", Duration::from_secs(1))
-            .map_err(|e| {
-                crate::Error::Internal(format!(
-                    "Plugin '{}' failed validation: {}",
-                    manifest.name, e
-                ))
-            })?;
-
-        if manifest.plugin_type == crate::shared::config::types::PluginType::Routing && !has_select {
-            return Err(crate::Error::InvalidInput(format!(
-                "Routing plugin '{}' must export a 'select' function",
-                manifest.name
-            )));
-        }
+        Self::validate_plugin_exports(&pool, &manifest)?;
 
         let entry = crate::features::plugin::infra::PluginEntry {
             pool,
@@ -123,6 +115,74 @@ impl PluginManager {
         };
 
         self.plugins.insert(manifest.name.clone(), entry);
+        Ok(())
+    }
+
+    fn validate_plugin_exports(
+        pool: &extism::Pool,
+        manifest: &crate::shared::config::types::PluginManifest,
+    ) -> crate::Result<()> {
+        let timeout = Duration::from_secs(1);
+
+        match manifest.plugin_type {
+            crate::shared::config::types::PluginType::Routing => {
+                Self::require_export(pool, manifest, "select", timeout)?;
+            }
+            crate::shared::config::types::PluginType::Adapter => {
+                Self::require_export(pool, manifest, "build_request", timeout)?;
+                Self::require_export(pool, manifest, "parse_response", timeout)?;
+            }
+            crate::shared::config::types::PluginType::Guardrail => {
+                let has_request =
+                    pool.function_exists("inspect_request", timeout)
+                        .map_err(|e| {
+                            crate::Error::Internal(format!(
+                                "Plugin '{}' failed validation for 'inspect_request': {}",
+                                manifest.name, e
+                            ))
+                        })?;
+                let has_response =
+                    pool.function_exists("inspect_response", timeout)
+                        .map_err(|e| {
+                            crate::Error::Internal(format!(
+                                "Plugin '{}' failed validation for 'inspect_response': {}",
+                                manifest.name, e
+                            ))
+                        })?;
+                if !has_request && !has_response {
+                    return Err(crate::Error::InvalidInput(format!(
+                        "Guardrail plugin '{}' must export 'inspect_request' and/or 'inspect_response'",
+                        manifest.name
+                    )));
+                }
+            }
+            crate::shared::config::types::PluginType::Health => {}
+            crate::shared::config::types::PluginType::Observability => {
+                Self::require_export(pool, manifest, "on_route", timeout)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn require_export(
+        pool: &extism::Pool,
+        manifest: &crate::shared::config::types::PluginManifest,
+        export: &str,
+        timeout: Duration,
+    ) -> crate::Result<()> {
+        let exists = pool.function_exists(export, timeout).map_err(|e| {
+            crate::Error::Internal(format!(
+                "Plugin '{}' failed validation for '{}': {}",
+                manifest.name, export, e
+            ))
+        })?;
+        if !exists {
+            return Err(crate::Error::InvalidInput(format!(
+                "{:?} plugin '{}' must export a '{}' function",
+                manifest.plugin_type, manifest.name, export
+            )));
+        }
         Ok(())
     }
 
@@ -145,15 +205,7 @@ impl PluginManager {
                 let new_pool =
                     crate::features::plugin::infra::PluginRuntime::build_pool(&manifest)?;
 
-                // Validate the new pool
-                new_pool
-                    .function_exists("select", Duration::from_secs(1))
-                    .map_err(|e| {
-                        crate::Error::Internal(format!(
-                            "Reloaded plugin '{}' failed validation: {}",
-                            name, e
-                        ))
-                    })?;
+                Self::validate_plugin_exports(&new_pool, &manifest)?;
 
                 let now = chrono::Utc::now();
                 entry.get_mut().pool = new_pool;
@@ -212,6 +264,20 @@ impl PluginManager {
     #[must_use]
     pub fn plugin_exists(&self, name: &str) -> bool {
         self.plugins.contains_key(name)
+    }
+
+    /// Check if a plugin exports a specific function
+    #[must_use]
+    pub fn function_exists(&self, name: &str, function: &str) -> bool {
+        self.plugins
+            .get(name)
+            .and_then(|entry| {
+                entry
+                    .pool
+                    .function_exists(function, Duration::from_secs(1))
+                    .ok()
+            })
+            .unwrap_or(false)
     }
 }
 
