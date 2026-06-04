@@ -9,21 +9,32 @@ pub trait AdapterPlugin: Send + Sync {
 #[macro_export]
 macro_rules! register_adapter_plugin {
     ($plugin:expr) => {
-        #[extism_pdk::plugin_fn]
+        #[$crate::extism_pdk::plugin_fn]
         pub fn build_request(
-            extism_pdk::Json(input): extism_pdk::Json<(String, $crate::types::LlmRequest)>,
-        ) -> extism_pdk::FnResult<extism_pdk::Json<Option<$crate::types::HttpRequest>>> {
+            $crate::extism_pdk::Json(input): $crate::extism_pdk::Json<(
+                String,
+                $crate::types::LlmRequest,
+            )>,
+        ) -> $crate::extism_pdk::FnResult<
+            $crate::extism_pdk::Json<Option<$crate::types::HttpRequest>>,
+        > {
             let plugin = $plugin;
             let (endpoint_url, request) = input;
-            Ok(extism_pdk::Json(plugin.build_request(&endpoint_url, &request)))
+            Ok($crate::extism_pdk::Json(
+                plugin.build_request(&endpoint_url, &request),
+            ))
         }
 
-        #[extism_pdk::plugin_fn]
+        #[$crate::extism_pdk::plugin_fn]
         pub fn parse_response(
-            extism_pdk::Json(response): extism_pdk::Json<$crate::types::HttpResponse>,
-        ) -> extism_pdk::FnResult<extism_pdk::Json<Option<$crate::types::ChatResponse>>> {
+            $crate::extism_pdk::Json(response): $crate::extism_pdk::Json<
+                $crate::types::HttpResponse,
+            >,
+        ) -> $crate::extism_pdk::FnResult<
+            $crate::extism_pdk::Json<Option<$crate::types::ChatResponse>>,
+        > {
             let plugin = $plugin;
-            Ok(extism_pdk::Json(plugin.parse_response(&response)))
+            Ok($crate::extism_pdk::Json(plugin.parse_response(&response)))
         }
     };
 }

@@ -19,12 +19,14 @@ pub trait ResponseGuardrailPlugin: Send + Sync {
 #[macro_export]
 macro_rules! register_request_guardrail_plugin {
     ($plugin:expr) => {
-        #[extism_pdk::plugin_fn]
+        #[$crate::extism_pdk::plugin_fn]
         pub fn inspect_request(
-            extism_pdk::Json(request): extism_pdk::Json<$crate::types::LlmRequest>,
-        ) -> extism_pdk::FnResult<extism_pdk::Json<$crate::guardrail::GuardrailResult>> {
+            $crate::extism_pdk::Json(request): $crate::extism_pdk::Json<$crate::types::LlmRequest>,
+        ) -> $crate::extism_pdk::FnResult<
+            $crate::extism_pdk::Json<$crate::guardrail::GuardrailResult>,
+        > {
             let plugin = $plugin;
-            Ok(extism_pdk::Json(plugin.inspect_request(&request)))
+            Ok($crate::extism_pdk::Json(plugin.inspect_request(&request)))
         }
     };
 }
@@ -32,12 +34,16 @@ macro_rules! register_request_guardrail_plugin {
 #[macro_export]
 macro_rules! register_response_guardrail_plugin {
     ($plugin:expr) => {
-        #[extism_pdk::plugin_fn]
+        #[$crate::extism_pdk::plugin_fn]
         pub fn inspect_response(
-            extism_pdk::Json(response): extism_pdk::Json<$crate::types::ChatResponse>,
-        ) -> extism_pdk::FnResult<extism_pdk::Json<$crate::guardrail::GuardrailResult>> {
+            $crate::extism_pdk::Json(response): $crate::extism_pdk::Json<
+                $crate::types::ChatResponse,
+            >,
+        ) -> $crate::extism_pdk::FnResult<
+            $crate::extism_pdk::Json<$crate::guardrail::GuardrailResult>,
+        > {
             let plugin = $plugin;
-            Ok(extism_pdk::Json(plugin.inspect_response(&response)))
+            Ok($crate::extism_pdk::Json(plugin.inspect_response(&response)))
         }
     };
 }

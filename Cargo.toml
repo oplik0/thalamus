@@ -1,5 +1,11 @@
 [workspace]
-members = [".", "crates/thalamus-plugin", "examples/plugins/routing-echo"]
+members = [
+    ".",
+    "crates/thalamus-plugin",
+    "examples/plugins/routing-echo",
+    "examples/plugins/adapter-echo",
+    "examples/plugins/guardrail-blocklist",
+]
 resolver = "3"
 
 [package]

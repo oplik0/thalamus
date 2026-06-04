@@ -16,10 +16,12 @@ pub trait ObservabilityPlugin: Send + Sync {
 #[macro_export]
 macro_rules! register_observability_plugin {
     ($plugin:expr) => {
-        #[extism_pdk::plugin_fn]
+        #[$crate::extism_pdk::plugin_fn]
         pub fn on_route(
-            extism_pdk::Json(event): extism_pdk::Json<$crate::observability::RoutingEvent>,
-        ) -> extism_pdk::FnResult<()> {
+            $crate::extism_pdk::Json(event): $crate::extism_pdk::Json<
+                $crate::observability::RoutingEvent,
+            >,
+        ) -> $crate::extism_pdk::FnResult<()> {
             let plugin = $plugin;
             plugin.on_route(&event);
             Ok(())

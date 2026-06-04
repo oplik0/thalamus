@@ -20,13 +20,16 @@ pub trait RoutingPlugin: Send + Sync {
 #[macro_export]
 macro_rules! register_routing_plugin {
     ($plugin:expr) => {
-        #[extism_pdk::plugin_fn]
+        #[$crate::extism_pdk::plugin_fn]
         pub fn select(
-            extism_pdk::Json(ctx): extism_pdk::Json<$crate::routing::RoutingContext>,
-        ) -> extism_pdk::FnResult<extism_pdk::Json<$crate::routing::RoutingResult>> {
+            $crate::extism_pdk::Json(ctx): $crate::extism_pdk::Json<
+                $crate::routing::RoutingContext,
+            >,
+        ) -> $crate::extism_pdk::FnResult<$crate::extism_pdk::Json<$crate::routing::RoutingResult>>
+        {
             let plugin = $plugin;
             let selected = plugin.select(&ctx);
-            Ok(extism_pdk::Json($crate::routing::RoutingResult {
+            Ok($crate::extism_pdk::Json($crate::routing::RoutingResult {
                 endpoint_id: selected,
             }))
         }
