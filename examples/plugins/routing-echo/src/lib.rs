@@ -1,5 +1,5 @@
-use thalamus_plugin::routing::{EndpointId, RoutingContext, RoutingPlugin};
 use thalamus_plugin::register_routing_plugin;
+use thalamus_plugin::routing::{EndpointId, RoutingContext, RoutingPlugin};
 
 struct EchoPlugin;
 
