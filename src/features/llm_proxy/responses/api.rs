@@ -3,6 +3,7 @@ use std::convert::Infallible;
 use axum::{
     Json, Router,
     extract::State,
+    http::HeaderMap,
     response::sse::{Event, KeepAlive, Sse},
     response::{IntoResponse, Response},
     routing::post,
@@ -11,6 +12,8 @@ use futures::StreamExt;
 
 use crate::Result;
 use crate::bootstrap::AppState;
+use crate::features::routing::priority::resolve_priority;
+use crate::middleware::OptionalApiKeyAuth;
 use crate::shared::models::{ChatRequest, LlmRequest};
 
 pub fn router() -> Router<AppState> {
@@ -19,13 +22,16 @@ pub fn router() -> Router<AppState> {
 
 pub async fn responses(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    OptionalApiKeyAuth(auth): OptionalApiKeyAuth,
     Json(request): Json<ChatRequest>,
 ) -> Result<Response> {
+    let priority = resolve_priority(&headers, auth.as_ref(), &state.config.routing);
     let is_stream = request.stream.unwrap_or(false);
     let unified = LlmRequest::Chat(request);
 
     if is_stream {
-        let stream = state.proxy.handle_stream(unified).await?;
+        let stream = state.proxy.handle_stream(unified, priority).await?;
         let sse_stream = stream.map(|event| {
             let payload = match event {
                 Ok(evt) => serde_json::to_string(&evt).unwrap_or_else(|_| "{}".to_string()),
@@ -41,6 +47,6 @@ pub async fn responses(
             .into_response());
     }
 
-    let response = state.proxy.handle(unified).await?;
+    let response = state.proxy.handle(unified, priority).await?;
     Ok(Json(response).into_response())
 }

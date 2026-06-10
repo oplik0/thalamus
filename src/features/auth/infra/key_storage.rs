@@ -155,21 +155,21 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
     };
 
     // Look up the key in the database by key_id (public part only)
-    let result = sqlx::query_as!(
-        ApiKey,
-        r#"
-        SELECT
-            id, key_id, key_hash, key_prefix,
-            user_id, team_id, project_id, name, description,
-            scopes, is_active as "is_active!", last_used_at,
-            expires_at, created_at, revoked_at
-        FROM api_keys
-        WHERE key_id = $1
-        "#,
-        key_id
-    )
-    .fetch_optional(&state.db_pool)
-    .await?;
+        let result = sqlx::query_as!(
+            ApiKey,
+            r#"
+            SELECT
+                id, key_id, key_hash, key_prefix,
+                user_id, team_id, project_id, name, description,
+                scopes, default_priority, is_active as "is_active!", last_used_at,
+                expires_at, created_at, revoked_at
+            FROM api_keys
+            WHERE key_id = $1
+            "#,
+            key_id
+        )
+        .fetch_optional(&state.db_pool)
+        .await?;
 
     let api_key = result.ok_or_else(|| Error::Authentication("Invalid API key".to_string()))?;
 
@@ -232,6 +232,7 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
         team_id: api_key.team_id,
         project_id: api_key.project_id,
         scopes: api_key.scopes,
+        default_priority: api_key.default_priority,
     })
 }
 
@@ -260,7 +261,7 @@ pub async fn list_user_keys(user_id: Uuid, state: &AppState) -> Result<Vec<ApiKe
         SELECT
             id, key_id, key_hash, key_prefix,
             user_id, team_id, project_id, name, description,
-            scopes, is_active as "is_active!", last_used_at,
+            scopes, default_priority, is_active as "is_active!", last_used_at,
             expires_at, created_at, revoked_at
         FROM api_keys
         WHERE user_id = $1
@@ -282,7 +283,7 @@ pub async fn list_team_keys(team_id: Uuid, state: &AppState) -> Result<Vec<ApiKe
         SELECT
             id, key_id, key_hash, key_prefix,
             user_id, team_id, project_id, name, description,
-            scopes, is_active as "is_active!", last_used_at,
+            scopes, default_priority, is_active as "is_active!", last_used_at,
             expires_at, created_at, revoked_at
         FROM api_keys
         WHERE team_id = $1

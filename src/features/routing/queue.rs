@@ -42,6 +42,18 @@ impl Priority {
         }
     }
 
+    /// Return the canonical kebab-case name for this priority.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Critical => "critical",
+            Self::Realtime => "realtime",
+            Self::Interactive => "interactive",
+            Self::Batch => "batch",
+            Self::Background => "background",
+        }
+    }
+
     /// Return the next lower priority level (for aging/promotion).
     #[must_use]
     pub fn promoted(self) -> Self {
@@ -145,8 +157,16 @@ impl PriorityQueueManager {
     }
 
     /// Try to dequeue the highest-priority request and route it.
+    ///
+    /// `route_fn` must atomically select and acquire an endpoint slot. It returns
+    /// `Some(endpoint)` on success or `None` if no capacity is currently
+    /// available for the request.
+    ///
     /// Called when an endpoint is released.
-    pub async fn try_dispatch(&self, route_fn: &dyn Fn(&LlmRequest) -> Result<EndpointSnapshot>) {
+    pub async fn try_dispatch(
+        &self,
+        route_fn: &(dyn Fn(&LlmRequest) -> Option<EndpointSnapshot> + Send + Sync),
+    ) {
         let mut queues = self.queues.lock().await;
         let now = Instant::now();
 
@@ -168,11 +188,11 @@ impl PriorityQueueManager {
 
             while let Some(entry) = queues[priority_idx].pop_front() {
                 match route_fn(&entry.request) {
-                    Ok(endpoint) => {
+                    Some(endpoint) => {
                         let _ = entry.responder.send(Ok(endpoint));
                         return;
                     }
-                    Err(_) => {
+                    None => {
                         // No capacity yet, put it back at the front
                         queues[priority_idx].push_front(entry);
                         break;
@@ -325,7 +345,7 @@ mod tests {
         assert_eq!(manager.total_queued().await, 1);
 
         let endpoint = make_endpoint("backend-a");
-        let route_fn = |_req: &LlmRequest| -> Result<EndpointSnapshot> { Ok(endpoint.clone()) };
+        let route_fn = |_req: &LlmRequest| -> Option<EndpointSnapshot> { Some(endpoint.clone()) };
 
         manager.try_dispatch(&route_fn).await;
         assert_eq!(manager.total_queued().await, 0);
@@ -371,7 +391,7 @@ mod tests {
         assert_eq!(manager.total_queued().await, 2);
 
         let endpoint = make_endpoint("backend-a");
-        let route_fn = |_req: &LlmRequest| -> Result<EndpointSnapshot> { Ok(endpoint.clone()) };
+        let route_fn = |_req: &LlmRequest| -> Option<EndpointSnapshot> { Some(endpoint.clone()) };
 
         // First dispatch should pick the critical request
         manager.try_dispatch(&route_fn).await;
@@ -391,10 +411,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Route function always fails (no capacity)
-        let route_fn = |_req: &LlmRequest| -> Result<EndpointSnapshot> {
-            Err(crate::Error::ServiceUnavailable("at capacity".to_string()))
-        };
+        // Route function reports no capacity
+        let route_fn = |_req: &LlmRequest| -> Option<EndpointSnapshot> { None };
 
         manager.try_dispatch(&route_fn).await;
         // Request should still be in queue

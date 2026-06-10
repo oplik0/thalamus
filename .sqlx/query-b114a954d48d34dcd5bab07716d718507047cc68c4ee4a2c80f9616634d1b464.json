@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE batch_jobs\n            SET status = 'failed', error_message = $2, completed_at = NOW()\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b114a954d48d34dcd5bab07716d718507047cc68c4ee4a2c80f9616634d1b464"
+}
