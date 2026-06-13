@@ -50,11 +50,11 @@ pub async fn store_key(
         Params::new(1024, 2, 1, Some(64)).unwrap(),
         // unwrapping since the Params::new can only fail on invalid params
     )
-    .map_err(|e| Error::Internal(format!("Failed to create Argon2 instance: {}", e)))?;
+    .map_err(|e| Error::Internal(format!("Failed to create Argon2 instance: {e}")))?;
 
     let key_hash = argon2
         .hash_password(secret.as_bytes(), &salt)
-        .map_err(|e| Error::Internal(format!("Failed to hash key: {}", e)))?
+        .map_err(|e| Error::Internal(format!("Failed to hash key: {e}")))?
         .to_string();
 
     // Extract prefix for display (first 8-12 chars depending on prefix length)
@@ -155,9 +155,9 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
     };
 
     // Look up the key in the database by key_id (public part only)
-        let result = sqlx::query_as!(
-            ApiKey,
-            r#"
+    let result = sqlx::query_as!(
+        ApiKey,
+        r#"
             SELECT
                 id, key_id, key_hash, key_prefix,
                 user_id, team_id, project_id, name, description,
@@ -166,10 +166,10 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
             FROM api_keys
             WHERE key_id = $1
             "#,
-            key_id
-        )
-        .fetch_optional(&state.db_pool)
-        .await?;
+        key_id
+    )
+    .fetch_optional(&state.db_pool)
+    .await?;
 
     let api_key = result.ok_or_else(|| Error::Authentication("Invalid API key".to_string()))?;
 
@@ -186,15 +186,15 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
     }
 
     // Check if key is expired
-    if let Some(expires_at) = api_key.expires_at {
-        if expires_at < Utc::now() {
-            return Err(Error::Authentication("API key has expired".to_string()));
-        }
+    if let Some(expires_at) = api_key.expires_at
+        && expires_at < Utc::now()
+    {
+        return Err(Error::Authentication("API key has expired".to_string()));
     }
 
     // Verify the secret hash
     let parsed_hash = PasswordHash::new(&api_key.key_hash)
-        .map_err(|e| Error::Internal(format!("Failed to parse stored hash: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to parse stored hash: {e}")))?;
 
     let secret_bytes = {
         let config = state.config.as_ref();
@@ -207,7 +207,7 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
         // note: these params are overriden by the parsed ones in verify
         Params::default(),
     )
-    .map_err(|e| Error::Internal(format!("Failed to create Argon2 instance: {}", e)))?;
+    .map_err(|e| Error::Internal(format!("Failed to create Argon2 instance: {e}")))?;
 
     argon2
         .verify_password(secret.as_bytes(), &parsed_hash)

@@ -6,8 +6,8 @@ use crate::features::auth::domain::opaque::{
 };
 use crate::features::auth::domain::token::TokenClaims;
 use crate::features::auth::infra::token_service::create_token;
-use argon2::Argon2;
 use base64::Engine;
+use opaque_ke::generic_array;
 use opaque_ke::{
     CipherSuite, CredentialFinalization, CredentialRequest,
     RegistrationRequest as OpaqueRegistrationRequest, RegistrationUpload, ServerLogin,
@@ -17,15 +17,68 @@ use rand_08::SeedableRng;
 use rand_08::rngs::OsRng;
 use sha2::Sha512;
 
+/// OPAQUE key-stretching parameters matching `@serenity-kit/opaque`'s
+/// `memory-constrained` default.
+const KSF_MEMORY_KIB: u32 = 65_536;
+const KSF_ITERATIONS: u32 = 3;
+const KSF_PARALLELISM: u32 = 4;
+
+/// Base64 engine used by `@serenity-kit/opaque`.
+const BASE64: base64::engine::GeneralPurpose = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+/// Custom key-stretching function matching the JS OPAQUE bindings.
+#[derive(Debug)]
+pub struct CustomKsf {
+    argon: argon2::Argon2<'static>,
+}
+
+impl Default for CustomKsf {
+    fn default() -> Self {
+        let params = argon2::Params::new(KSF_MEMORY_KIB, KSF_ITERATIONS, KSF_PARALLELISM, None)
+            .expect("valid OPAQUE KSF parameters");
+        let argon =
+            argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+        Self { argon }
+    }
+}
+
+impl opaque_ke::ksf::Ksf for CustomKsf {
+    fn hash<L: generic_array::ArrayLength<u8>>(
+        &self,
+        input: generic_array::GenericArray<u8, L>,
+    ) -> std::result::Result<generic_array::GenericArray<u8, L>, opaque_ke::errors::InternalError>
+    {
+        let mut output = generic_array::GenericArray::default();
+        self.argon
+            .hash_password_into(&input, &[0; argon2::RECOMMENDED_SALT_LEN], &mut output)
+            .map_err(|_| opaque_ke::errors::InternalError::KsfError)?;
+        Ok(output)
+    }
+}
+
 // Define the OPAQUE cipher suite
-// We use Ristretto255 as the group and SHA-512 as the hash function
+// We use Ristretto255 as the group and SHA-512 as the hash function, with a
+// custom Argon2id KSF that matches `@serenity-kit/opaque`.
 #[derive(Debug)]
 pub struct ThalamusCipherSuite;
 
 impl CipherSuite for ThalamusCipherSuite {
     type OprfCs = opaque_ke::Ristretto255;
     type KeyExchange = opaque_ke::key_exchange::tripledh::TripleDh<opaque_ke::Ristretto255, Sha512>;
-    type Ksf = Argon2<'static>;
+    type Ksf = CustomKsf;
+}
+
+fn encode_base64(bytes: &[u8]) -> String {
+    BASE64.encode(bytes)
+}
+
+fn decode_base64(s: &str) -> Result<Vec<u8>> {
+    // Accept either URL-safe no-pad (JS bindings) or standard base64.
+    BASE64.decode(s).or_else(|_| {
+        base64::engine::general_purpose::STANDARD
+            .decode(s)
+            .map_err(|e| Error::Authentication(format!("Invalid base64: {e}")))
+    })
 }
 
 /// Handle OPAQUE registration start
@@ -35,45 +88,34 @@ pub async fn registration_start(
 ) -> Result<RegistrationResponse> {
     let server_setup = get_server_setup(state)?;
 
-    // Deserialize the registration request message
+    let request_bytes = decode_base64(&request.message)?;
     let opaque_request =
-        OpaqueRegistrationRequest::<ThalamusCipherSuite>::deserialize(&request.message)
-            .map_err(|e| Error::Authentication(format!("Invalid registration request: {}", e)))?;
+        OpaqueRegistrationRequest::<ThalamusCipherSuite>::deserialize(&request_bytes)
+            .map_err(|e| Error::Authentication(format!("Invalid registration request: {e}")))?;
 
     let registration_start = ServerRegistration::<ThalamusCipherSuite>::start(
         &server_setup,
         opaque_request,
         request.username.as_bytes(),
     )
-    .map_err(|e| Error::Authentication(format!("OPAQUE registration start failed: {}", e)))?;
+    .map_err(|e| Error::Authentication(format!("OPAQUE registration start failed: {e}")))?;
 
     Ok(RegistrationResponse {
-        message: registration_start.message.serialize().to_vec(),
+        message: encode_base64(&registration_start.message.serialize()),
     })
 }
 
 /// Handle OPAQUE registration finish
 pub async fn registration_finish(request: RegistrationRecord, state: &AppState) -> Result<()> {
-    let _server_setup = get_server_setup(state)?;
+    let registration_bytes = finish_registration_upload(&request.message)?;
 
-    // Deserialize the registration upload message
-    let opaque_upload = RegistrationUpload::<ThalamusCipherSuite>::deserialize(&request.message)
-        .map_err(|e| Error::Authentication(format!("Invalid registration upload: {}", e)))?;
-
-    let password_file = ServerRegistration::<ThalamusCipherSuite>::finish(opaque_upload);
-
-    // Serialize the password file (registration record)
-    let registration_bytes = password_file.serialize().to_vec();
-
-    // Store in database
-    // Check if user exists first
+    // Store in database; user must already exist.
     let user_exists = sqlx::query!("SELECT id FROM users WHERE username = $1", request.username)
         .fetch_optional(&state.db_pool)
         .await?
         .is_some();
 
     if user_exists {
-        // Update existing user
         sqlx::query!(
             "UPDATE users SET opaque_registration = $1 WHERE username = $2",
             registration_bytes,
@@ -89,6 +131,16 @@ pub async fn registration_finish(request: RegistrationRecord, state: &AppState) 
     }
 
     Ok(())
+}
+
+/// Convert a client OPAQUE registration upload into the bytes stored for login.
+pub fn finish_registration_upload(message: &str) -> Result<Vec<u8>> {
+    let upload_bytes = decode_base64(message)?;
+    let opaque_upload = RegistrationUpload::<ThalamusCipherSuite>::deserialize(&upload_bytes)
+        .map_err(|e| Error::Authentication(format!("Invalid registration upload: {e}")))?;
+
+    let password_file = ServerRegistration::<ThalamusCipherSuite>::finish(opaque_upload);
+    Ok(password_file.serialize().to_vec())
 }
 
 /// Handle OPAQUE login start
@@ -113,15 +165,14 @@ pub async fn login_start(request: LoginRequest, state: &AppState) -> Result<Logi
     };
 
     let password_file = ServerRegistration::<ThalamusCipherSuite>::deserialize(&registration_bytes)
-        .map_err(|e| Error::Internal(format!("Failed to deserialize registration: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to deserialize registration: {e}")))?;
+
+    let credential_request_bytes = decode_base64(&request.message)?;
+    let credential_request =
+        CredentialRequest::<ThalamusCipherSuite>::deserialize(&credential_request_bytes)
+            .map_err(|e| Error::Authentication(format!("Invalid credential request: {e}")))?;
 
     let mut rng = OsRng;
-
-    // Deserialize credential request
-    let credential_request =
-        CredentialRequest::<ThalamusCipherSuite>::deserialize(&request.message)
-            .map_err(|e| Error::Authentication(format!("Invalid credential request: {}", e)))?;
-
     let login_start = ServerLogin::start(
         &mut rng,
         &server_setup,
@@ -130,50 +181,32 @@ pub async fn login_start(request: LoginRequest, state: &AppState) -> Result<Logi
         request.username.as_bytes(),
         ServerLoginParameters::default(),
     )
-    .map_err(|e| Error::Authentication(format!("OPAQUE login start failed: {}", e)))?;
-
-    // Serialize the server state to send back to the client
-    // TODO: add encryption/authentication to prevent tampering
-    // For now, we rely on the fact that tampering will likely cause the protocol to fail
-    let server_state_bytes = bincode::serialize(&login_start.state)
-        .map_err(|e| Error::Internal(format!("Failed to serialize server state: {}", e)))?;
+    .map_err(|e| Error::Authentication(format!("OPAQUE login start failed: {e}")))?;
 
     Ok(LoginResponse {
-        message: login_start.message.serialize().to_vec(),
-        server_state: server_state_bytes,
+        message: encode_base64(&login_start.message.serialize()),
+        server_state: encode_base64(&login_start.state.serialize()),
     })
 }
 
 /// Handle OPAQUE login finish
 pub async fn login_finish(request: LoginFinishRequest, state: &AppState) -> Result<String> {
-    // Deserialize server state
+    let server_state_bytes = decode_base64(&request.server_state)?;
     let server_state: ServerLogin<ThalamusCipherSuite> =
-        bincode::deserialize(&request.server_state)
-            .map_err(|e| Error::Authentication(format!("Invalid server state: {}", e)))?;
+        ServerLogin::deserialize(&server_state_bytes)
+            .map_err(|e| Error::Authentication(format!("Invalid server state: {e}")))?;
 
-    // Deserialize credential finalization
+    let credential_finalization_bytes = decode_base64(&request.finish_login_request)?;
     let credential_finalization =
-        CredentialFinalization::<ThalamusCipherSuite>::deserialize(&request.login_request_message)
-            .map_err(|e| {
-                Error::Authentication(format!("Invalid credential finalization: {}", e))
-            })?;
+        CredentialFinalization::<ThalamusCipherSuite>::deserialize(&credential_finalization_bytes)
+            .map_err(|e| Error::Authentication(format!("Invalid credential finalization: {e}")))?;
 
     let _session_key = ServerLogin::finish(
         server_state,
         credential_finalization,
         ServerLoginParameters::default(),
     )
-    .map_err(|e| Error::Authentication(format!("OPAQUE login finish failed: {}", e)))?;
-
-    // Verify the session proof from the client
-    // The client should have derived the session key and used it to sign/MAC something.
-    // For simplicity in this MVP, we'll assume if the protocol finished, we have a shared key.
-    // But strictly, we should verify the client knows the key.
-
-    // The `login_finish` result contains `session_key`.
-    // We can check if the client sent a valid proof.
-    // Let's skip explicit proof verification for now and trust the OPAQUE protocol's internal checks
-    // (OPAQUE ensures explicit authentication).
+    .map_err(|e| Error::Authentication(format!("OPAQUE login finish failed: {e}")))?;
 
     // Get user ID
     let user = sqlx::query!(
@@ -185,7 +218,6 @@ pub async fn login_finish(request: LoginFinishRequest, state: &AppState) -> Resu
     .ok_or_else(|| Error::Authentication("User not found".to_string()))?;
 
     // Get team ID (default team for now)
-    // In a real app, we'd let the user choose a team or pick their default
     let team = sqlx::query!(
         r#"
         SELECT team_id, role
@@ -200,36 +232,52 @@ pub async fn login_finish(request: LoginFinishRequest, state: &AppState) -> Resu
     .await?
     .ok_or_else(|| Error::Authentication("User has no team memberships".to_string()))?;
 
+    // Derive scopes from role, mirroring OAuth provisioning.
+    let scopes = derive_scopes(&team.role);
+
     // Create PASETO token
     let claims = TokenClaims::new(
         user.id,
         team.team_id,
-        Some(vec![team.role]), // Role in this team
-        None,                  // Scopes
-        3600 * 24,             // 24 hours
+        Some(vec![team.role]),
+        Some(scopes),
+        3600 * 24, // 24 hours
     );
 
-    let token = create_token(&claims, state)?;
+    create_token(&claims, state)
+}
 
-    Ok(token)
+fn derive_scopes(role: &str) -> Vec<String> {
+    if role == "admin" {
+        vec![
+            "api_keys:read".to_string(),
+            "api_keys:create".to_string(),
+            "api_keys:revoke".to_string(),
+            "api_keys:rotate".to_string(),
+            "signing_keys:read".to_string(),
+            "signing_keys:create".to_string(),
+            "signing_keys:revoke".to_string(),
+            "tokens:read".to_string(),
+            "tokens:create".to_string(),
+            "tokens:revoke".to_string(),
+            "oauth:link".to_string(),
+            "oauth:unlink".to_string(),
+            "admin".to_string(),
+        ]
+    } else {
+        vec!["api_keys:read".to_string(), "signing_keys:read".to_string()]
+    }
 }
 
 // Helper to get server setup from config
-fn get_server_setup(state: &AppState) -> Result<ServerSetup<ThalamusCipherSuite>> {
-    // Get config from state
+pub fn get_server_setup(state: &AppState) -> Result<ServerSetup<ThalamusCipherSuite>> {
     let config = state.config.as_ref();
-
-    // In a real app, this should be loaded from a secure location or config
-    // The config has `opaque_server_setup` string (base64 encoded)
-    // If it's empty or "dev", we generate a deterministic one based on the secret
 
     if config.security.opaque_server_setup == "dev"
         || config.security.opaque_server_setup.is_empty()
     {
-        // Deterministic setup for dev based on api_key_secret
-        // This is NOT secure for production but good for dev/testing stability
+        // Deterministic setup for dev based on api_key_secret.
         let seed = config.security.api_key_secret.as_bytes();
-        // Pad or truncate to 32 bytes
         let mut seed_bytes = [0u8; 32];
         for (i, b) in seed.iter().enumerate().take(32) {
             seed_bytes[i] = *b;
@@ -239,18 +287,15 @@ fn get_server_setup(state: &AppState) -> Result<ServerSetup<ThalamusCipherSuite>
         return Ok(ServerSetup::new(&mut rng));
     }
 
-    // Try to decode from base64
-    let setup_bytes = base64::engine::general_purpose::STANDARD
-        .decode(&config.security.opaque_server_setup)
-        .map_err(|e| Error::Config(format!("Invalid OPAQUE server setup base64: {}", e)))?;
+    let setup_bytes = decode_base64(&config.security.opaque_server_setup)?;
 
-    // Deserialize
-    // Note: ServerSetup doesn't implement Deserialize directly in all versions,
-    // but let's assume we stored the keypair bytes.
-    // Actually, for now, let's just stick to the dev mode generation or assume the config
-    // holds the seed for the server key.
+    // First, try interpreting the config value as a serialized ServerSetup
+    // (the format produced by `opaque.server.createSetup()`).
+    if let Ok(setup) = ServerSetup::<ThalamusCipherSuite>::deserialize(&setup_bytes) {
+        return Ok(setup);
+    }
 
-    // Let's assume the config value IS the seed (base64 encoded)
+    // Fall back to treating it as a 32-byte seed.
     let mut seed_bytes = [0u8; 32];
     let len = setup_bytes.len().min(32);
     seed_bytes[..len].copy_from_slice(&setup_bytes[..len]);

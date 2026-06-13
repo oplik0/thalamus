@@ -1,8 +1,8 @@
 //! Core message types for LLM conversations
 //!
 //! Provides a unified message representation that maps naturally to
-//! OpenAI Chat Completions, Anthropic Messages, Ollama Chat, and
-//! OpenAI Responses API formats.
+//! `OpenAI` Chat Completions, Anthropic Messages, Ollama Chat, and
+//! `OpenAI` Responses API formats.
 
 use serde::{Deserialize, Serialize};
 
@@ -161,7 +161,7 @@ pub enum ContentPart {
         #[serde(skip_serializing_if = "Option::is_none")]
         encrypted_content: Option<String>,
     },
-    /// Reasoning summary (OpenAI)
+    /// Reasoning summary (`OpenAI`)
     ReasoningSummary { text: String },
     /// Model refusal
     Refusal { refusal: String },
@@ -252,7 +252,7 @@ impl Message {
         }
     }
 
-    /// Create a multimodal message with content parts (wraps each in AnnotatedContentPart with no metadata)
+    /// Create a multimodal message with content parts (wraps each in `AnnotatedContentPart` with no metadata)
     #[must_use]
     pub fn multimodal(role: Role, parts: Vec<ContentPart>) -> Self {
         Self {

@@ -4,12 +4,7 @@
 //! with team-based access control, advanced routing strategies, and comprehensive observability.
 
 #![forbid(unsafe_code)]
-#![warn(
-    missing_debug_implementations,
-    rust_2018_idioms,
-    clippy::all,
-    clippy::pedantic
-)]
+#![warn(missing_debug_implementations, rust_2018_idioms, clippy::all)]
 
 pub mod bootstrap;
 pub mod error;

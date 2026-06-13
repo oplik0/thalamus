@@ -55,8 +55,7 @@ pub fn load_config_profiles<P: AsRef<Path>>(path: P) -> crate::Result<HashMap<St
         if let Err(e) = config.validate() {
             tracing::warn!(profile = %name, error = %e, "Profile validation failed");
             return Err(crate::Error::Config(format!(
-                "Profile '{}' validation failed: {e}",
-                name
+                "Profile '{name}' validation failed: {e}"
             )));
         }
     }
@@ -84,8 +83,7 @@ pub fn load_config<P: AsRef<Path>>(path: P, profile: &str) -> crate::Result<Conf
         .map(|(_, config)| config)
         .ok_or_else(|| {
             crate::Error::Config(format!(
-                "Profile '{}' not found in configuration file",
-                profile
+                "Profile '{profile}' not found in configuration file"
             ))
         })
 }

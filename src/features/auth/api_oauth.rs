@@ -124,7 +124,7 @@ pub async fn oauth_callback(
     let final_url = if redirect_path.starts_with("http") {
         redirect_path
     } else {
-        format!("{}{}", base_url, redirect_path)
+        format!("{base_url}{redirect_path}")
     };
 
     // Add token as query params

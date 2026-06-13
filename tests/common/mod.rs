@@ -7,6 +7,8 @@
 //! - Configuration builders
 //! - HTTP testing helpers
 
+#![allow(dead_code, unused_imports, clippy::wrong_self_convention)]
+
 // Re-export submodules
 pub mod config_builder;
 pub mod fixtures;
@@ -14,17 +16,7 @@ pub mod transactional;
 pub mod wiremock_backends;
 
 // Re-export commonly used types
-pub use config_builder::{BackendConfigBuilder, RoutingConfigBuilder};
-pub use fixtures::{
-    EmbeddingsRequestBuilder, LlmRequestBuilder, RequestFormat, ResponseAsserter, TestApiKey,
-    TestApiKeyBuilder, TestUser, TestUserBuilder, response_parsers,
-};
-pub use transactional::{
-    TestContext, init_test_state, init_test_state_with_backends, init_test_state_with_config,
-};
-pub use wiremock_backends::{
-    ChatCompletionResponseBuilder, MockBackendCluster, MockLlmBackend, StreamingResponseBuilder,
-};
+pub use transactional::{init_test_state_with_backends, init_test_state_with_config};
 
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -85,15 +77,11 @@ pub async fn cleanup_database(pool: &PgPool) {
     let _ = sqlx::query("DELETE FROM api_keys WHERE created_at > NOW() - INTERVAL '1 hour'")
         .execute(pool)
         .await;
-    let _ = sqlx::query("DELETE FROM team_memberships WHERE user_id NOT IN (SELECT id FROM users WHERE username = 'admin')")
+    let _ = sqlx::query("DELETE FROM team_memberships")
         .execute(pool)
         .await;
-    let _ = sqlx::query("DELETE FROM users WHERE username != 'admin'")
-        .execute(pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM teams WHERE name != 'default'")
-        .execute(pool)
-        .await;
+    let _ = sqlx::query("DELETE FROM users").execute(pool).await;
+    let _ = sqlx::query("DELETE FROM teams").execute(pool).await;
 }
 
 /// Legacy Test fixtures builder (deprecated, use builder patterns instead)
@@ -214,7 +202,7 @@ pub async fn init_test_state_legacy() -> thalamus::bootstrap::AppState {
         security: thalamus::shared::config::types::SecurityConfig {
             api_key_secret: "test_secret_key_must_be_at_least_32_bytes_long".to_string(),
             paseto_secret_key: "exactly_32_bytes_for_paseto_key!".to_string(),
-            opaque_server_setup: "test_opaque_setup".to_string(),
+            opaque_server_setup: "dev".to_string(),
         },
         plugins: None,
     };
@@ -252,8 +240,9 @@ pub async fn init_test_state_legacy() -> thalamus::bootstrap::AppState {
         backend_registry.clone(),
         GuardrailService::empty(),
     ));
-    let batch_repository: Arc<dyn thalamus::features::batch::domain::BatchRepository> =
-        Arc::new(thalamus::features::batch::infra::SqlxBatchRepository::new(pool.clone()));
+    let batch_repository: Arc<dyn thalamus::features::batch::domain::BatchRepository> = Arc::new(
+        thalamus::features::batch::infra::SqlxBatchRepository::new(pool.clone()),
+    );
     let batch_service = Arc::new(thalamus::features::batch::BatchService::new(
         batch_repository,
         Arc::clone(&proxy),
@@ -300,7 +289,7 @@ pub async fn init_test_state_legacy() -> thalamus::bootstrap::AppState {
 
 /// HTTP testing helpers
 pub mod http {
-    use axum::body::{Body, to_bytes};
+    use axum::body::to_bytes;
     use axum::http::StatusCode;
     use axum::response::Response;
     use serde_json::Value;

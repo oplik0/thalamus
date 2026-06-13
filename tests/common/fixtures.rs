@@ -6,8 +6,6 @@
 //! - LLM requests in OpenAI and Anthropic formats
 //! - Response assertions
 
-use std::collections::HashMap;
-
 use serde_json::json;
 use sqlx::PgPool;
 
@@ -37,8 +35,8 @@ impl TestUserBuilder {
     pub fn new() -> Self {
         let uuid = uuid::Uuid::new_v4();
         Self {
-            username: format!("testuser_{}", uuid.to_string()[..8].to_string()),
-            email: format!("test_{}@example.com", uuid.to_string()[..8].to_string()),
+            username: format!("testuser_{}", &uuid.to_string()[..8]),
+            email: format!("test_{}@example.com", &uuid.to_string()[..8]),
             password: Some("testpassword123".to_string()),
             scopes: Vec::new(),
             is_admin: false,
@@ -249,8 +247,7 @@ impl TestApiKeyBuilder {
                     None => {
                         // Create a default team for the user
                         let new_team_id = uuid::Uuid::new_v4();
-                        let team_name =
-                            format!("team_{}", new_team_id.to_string()[..8].to_string());
+                        let team_name = format!("team_{}", &new_team_id.to_string()[..8]);
 
                         sqlx::query!(
                             r#"INSERT INTO teams (id, name) VALUES ($1, $2)"#,
@@ -280,10 +277,7 @@ impl TestApiKeyBuilder {
         let key_value = format!("thalamus_test_{}", uuid::Uuid::new_v4());
         let key_hash = sha256_hash(&key_value);
         let key_prefix = &key_value[..8.min(key_value.len())];
-        let key_id = format!(
-            "thal_{}",
-            uuid::Uuid::new_v4().to_string()[..12].to_string()
-        );
+        let key_id = format!("thal_{}", &uuid::Uuid::new_v4().to_string()[..12]);
 
         let expires_at = self
             .expires_in_days

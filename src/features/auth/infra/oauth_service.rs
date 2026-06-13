@@ -195,20 +195,20 @@ impl OAuthService {
 
     /// Get provider by name
     fn get_provider(&self, name: &str) -> Option<ProviderRef<'_>> {
-        if let Some(ref provider) = self.github_provider {
-            if provider.name == name {
-                return Some(ProviderRef::GitHub(provider.as_ref()));
-            }
+        if let Some(ref provider) = self.github_provider
+            && provider.name == name
+        {
+            return Some(ProviderRef::GitHub(provider.as_ref()));
         }
-        if let Some(ref provider) = self.github_enterprise_provider {
-            if provider.name == name {
-                return Some(ProviderRef::GitHubEnterprise(provider.as_ref()));
-            }
+        if let Some(ref provider) = self.github_enterprise_provider
+            && provider.name == name
+        {
+            return Some(ProviderRef::GitHubEnterprise(provider.as_ref()));
         }
-        if let Some(ref provider) = self.oidc_provider {
-            if provider.name == name {
-                return Some(ProviderRef::Oidc(provider.as_ref()));
-            }
+        if let Some(ref provider) = self.oidc_provider
+            && provider.name == name
+        {
+            return Some(ProviderRef::Oidc(provider.as_ref()));
         }
         None
     }
@@ -222,7 +222,7 @@ impl OAuthService {
     ) -> Result<OAuthInitiateResponse> {
         // Check provider exists
         let provider = self.get_provider(provider_name).ok_or_else(|| {
-            Error::NotFound(format!("OAuth provider '{}' not found", provider_name))
+            Error::NotFound(format!("OAuth provider '{provider_name}' not found"))
         })?;
 
         // Create OAuth state with CSRF and PKCE
@@ -237,10 +237,7 @@ impl OAuthService {
         self.state_store.store_state(state)?;
 
         // Build redirect URI
-        let redirect_uri = format!(
-            "{}/v1/auth/oauth/{}/callback",
-            callback_base_url, provider_name
-        );
+        let redirect_uri = format!("{callback_base_url}/v1/auth/oauth/{provider_name}/callback");
 
         // Generate authorization URL using the provider
         let auth_url = provider
@@ -298,13 +295,13 @@ impl OAuthService {
         let token = provider
             .exchange_code(code, &oauth_state.pkce_verifier, &redirect_uri)
             .await
-            .map_err(|e| Error::Authentication(format!("OAuth token exchange failed: {}", e)))?;
+            .map_err(|e| Error::Authentication(format!("OAuth token exchange failed: {e}")))?;
 
         // Get user info
         let user_info = provider
             .get_user_info(&token.access_token)
             .await
-            .map_err(|e| Error::Authentication(format!("Failed to get user info: {}", e)))?;
+            .map_err(|e| Error::Authentication(format!("Failed to get user info: {e}")))?;
 
         // Get organizations for team mapping
         let orgs = provider
@@ -386,34 +383,33 @@ impl OAuthService {
 
         if let Some(user) = existing_user {
             // Get user's team from team_memberships
-            let team_id = match sqlx::query_scalar!(
+            let team_id = if let Some(id) = sqlx::query_scalar!(
                 "SELECT team_id FROM team_memberships WHERE user_id = $1 LIMIT 1",
                 user.id
             )
             .fetch_optional(&state.db_pool)
             .await?
             {
-                Some(id) => id,
-                None => {
-                    // User exists but has no team - create one
-                    let new_team_id = Uuid::new_v4();
-                    sqlx::query!(
-                        "INSERT INTO teams (id, name, description) VALUES ($1, $2, $3)",
-                        new_team_id,
-                        format!("team-{}", user.id),
-                        "Auto-created team for existing user"
-                    )
-                    .execute(&state.db_pool)
-                    .await?;
-                    sqlx::query!(
-                        "INSERT INTO team_memberships (user_id, team_id, role) VALUES ($1, $2, 'admin')",
-                        user.id,
-                        new_team_id
-                    )
-                    .execute(&state.db_pool)
-                    .await?;
+                id
+            } else {
+                // User exists but has no team - create one
+                let new_team_id = Uuid::new_v4();
+                sqlx::query!(
+                    "INSERT INTO teams (id, name, description) VALUES ($1, $2, $3)",
+                    new_team_id,
+                    format!("team-{}", user.id),
+                    "Auto-created team for existing user"
+                )
+                .execute(&state.db_pool)
+                .await?;
+                sqlx::query!(
+                    "INSERT INTO team_memberships (user_id, team_id, role) VALUES ($1, $2, 'admin')",
+                    user.id,
                     new_team_id
-                }
+                )
+                .execute(&state.db_pool)
+                .await?;
+                new_team_id
             };
 
             // Update last login
@@ -470,6 +466,7 @@ impl OAuthService {
     }
 
     /// List configured OAuth providers (public info only)
+    #[must_use]
     pub fn list_providers(&self) -> Vec<ProviderInfo> {
         let mut providers = Vec::new();
 

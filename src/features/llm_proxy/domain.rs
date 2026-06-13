@@ -48,10 +48,10 @@ impl ProxyService {
         self.registry.release(&endpoint.id);
         self.dispatch_queue().await;
 
-        if let Ok(ref response) = result {
-            if let Err(guardrail_err) = self.guardrails.inspect_response(response) {
-                result = Err(guardrail_err);
-            }
+        if let Ok(ref response) = result
+            && let Err(guardrail_err) = self.guardrails.inspect_response(response)
+        {
+            result = Err(guardrail_err);
         }
 
         result

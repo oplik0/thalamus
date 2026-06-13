@@ -43,6 +43,47 @@ export interface OAuthCallbackResponse {
 	is_new_user: boolean;
 }
 
+export interface LoginStartResponse {
+	message: string;
+	server_state: string;
+}
+
+export interface SetupResponse {
+	token: string;
+	user_id: string;
+	team_id: string;
+}
+
+export interface UserInfo {
+	id: string;
+	username: string;
+	email: string;
+	is_service_account: boolean;
+	is_active: boolean;
+	has_password: boolean;
+	created_at: string;
+	updated_at: string;
+	last_login_at?: string;
+}
+
+export interface CreateUserRequest {
+	username: string;
+	email: string;
+	password: string;
+	team_id?: string;
+	role?: "admin" | "member" | "readonly";
+}
+
+export interface CreateUserResponse {
+	user: UserInfo;
+	team_id: string;
+	role: string;
+}
+
+export interface ChangePasswordRequest {
+	password: string;
+}
+
 // ─── API Key Types ─────────────────────────────────────────
 
 export interface ApiKeyInfo {

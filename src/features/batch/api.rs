@@ -48,7 +48,10 @@ pub async fn create_batch(
         .map(|a| (Some(a.team_id), Some(a.user_id)))
         .unwrap_or((None, None));
 
-    let id = state.batch_service.create_job(body, team_id, user_id).await?;
+    let id = state
+        .batch_service
+        .create_job(body, team_id, user_id)
+        .await?;
 
     Ok(Json(json!({
         "id": id.to_string(),

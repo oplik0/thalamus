@@ -71,7 +71,7 @@ pub async fn chat_completions(
                     std::future::ready(Some(sse_event))
                 },
             )
-            .filter_map(|item| std::future::ready(item));
+            .filter_map(std::future::ready);
 
         return Ok(Sse::new(sse_stream)
             .keep_alive(KeepAlive::default())
@@ -89,6 +89,9 @@ pub async fn embeddings(
     Json(request): Json<OpenAiEmbeddingsRequest>,
 ) -> Result<Json<serde_json::Value>> {
     let priority = resolve_priority(&headers, auth.as_ref(), &state.config.routing);
-    let response = state.proxy.handle_embedding(request.into(), priority).await?;
+    let response = state
+        .proxy
+        .handle_embedding(request.into(), priority)
+        .await?;
     Ok(Json(response))
 }

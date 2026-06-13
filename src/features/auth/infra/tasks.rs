@@ -8,7 +8,7 @@ use uuid::Uuid;
 /// Global database pool for background tasks
 ///
 /// This is initialized at application startup and used by background tasks
-/// to access the database without passing the entire AppState around.
+/// to access the database without passing the entire `AppState` around.
 static DB_POOL: OnceCell<PgPool> = OnceCell::new();
 
 /// Initialize the global database pool for background tasks
@@ -23,7 +23,7 @@ fn get_db_pool() -> Option<&'static PgPool> {
     DB_POOL.get()
 }
 
-/// Background task to update the last_used_at timestamp for an API key
+/// Background task to update the `last_used_at` timestamp for an API key
 ///
 /// This task is queued after successful key validation and runs asynchronously,
 /// allowing the authentication request to complete without waiting for the database update.
@@ -36,6 +36,7 @@ pub struct UpdateKeyUsageTask {
 
 impl UpdateKeyUsageTask {
     /// Create a new task to update key usage
+    #[must_use]
     pub fn new(key_id: Uuid) -> Self {
         Self {
             key_id,
@@ -43,14 +44,13 @@ impl UpdateKeyUsageTask {
         }
     }
 
-    /// Execute the task - update the last_used_at timestamp in the database
+    /// Execute the task - update the `last_used_at` timestamp in the database
     pub async fn execute(&self) -> TaskOutput {
-        let pool = match get_db_pool() {
-            Some(pool) => pool,
-            None => {
-                tracing::error!("Database pool not initialized for background tasks");
-                return TaskOutput::PermanentError("Database pool not available".to_string());
-            }
+        let pool = if let Some(pool) = get_db_pool() {
+            pool
+        } else {
+            tracing::error!("Database pool not initialized for background tasks");
+            return TaskOutput::PermanentError("Database pool not available".to_string());
         };
 
         match sqlx::query!(
@@ -83,7 +83,7 @@ impl UpdateKeyUsageTask {
                     "Failed to update API key last_used_at"
                 );
                 // Return retryable error for database issues
-                TaskOutput::RetryableError(format!("Database error: {}", e))
+                TaskOutput::RetryableError(format!("Database error: {e}"))
             }
         }
     }

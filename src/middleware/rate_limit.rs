@@ -76,6 +76,7 @@ impl Default for RateLimitConfig {
 
 impl RateLimiter {
     /// Create a new rate limiter with the given configuration
+    #[must_use]
     pub fn new(config: RateLimitConfig) -> Self {
         let global_quota = Quota::per_minute(
             NonZeroU32::new(config.global_rpm).expect("global_rpm must be non-zero"),
@@ -264,28 +265,26 @@ impl RateLimiter {
     }
 
     /// Check global rate limit for unauthenticated requests
+    #[must_use]
     pub fn check_global(&self, client_ip: std::net::IpAddr) -> (bool, RateLimitHeaders) {
         // Use a deterministic UUID derived from the IP address
         let key = Uuid::new_v5(&Uuid::NAMESPACE_OID, client_ip.to_string().as_bytes());
 
-        match self.global_limiter.check_key(&key) {
-            Ok(()) => {
-                let headers = RateLimitHeaders {
-                    global_limit: Some(self.config.global_rpm),
-                    global_remaining: Some(self.config.global_rpm.saturating_sub(1)),
-                    ..Default::default()
-                };
-                (true, headers)
-            }
-            Err(_) => {
-                let headers = RateLimitHeaders {
-                    global_limit: Some(self.config.global_rpm),
-                    global_remaining: Some(0),
-                    retry_after: Some(60),
-                    ..Default::default()
-                };
-                (false, headers)
-            }
+        if let Ok(()) = self.global_limiter.check_key(&key) {
+            let headers = RateLimitHeaders {
+                global_limit: Some(self.config.global_rpm),
+                global_remaining: Some(self.config.global_rpm.saturating_sub(1)),
+                ..Default::default()
+            };
+            (true, headers)
+        } else {
+            let headers = RateLimitHeaders {
+                global_limit: Some(self.config.global_rpm),
+                global_remaining: Some(0),
+                retry_after: Some(60),
+                ..Default::default()
+            };
+            (false, headers)
         }
     }
 }
@@ -306,6 +305,7 @@ pub struct RateLimitHeaders {
 
 impl RateLimitHeaders {
     /// Convert to HTTP headers
+    #[must_use]
     pub fn to_headers(&self) -> Vec<(String, String)> {
         let mut headers = Vec::new();
 
@@ -362,11 +362,7 @@ pub async fn rate_limit_middleware(
 ) -> Result<Response> {
     // Check if rate limiting is enabled
     let config = state.config.as_ref();
-    let rate_limit_enabled = config
-        .rate_limiting
-        .as_ref()
-        .map(|rl| rl.enabled)
-        .unwrap_or(true);
+    let rate_limit_enabled = config.rate_limiting.as_ref().is_none_or(|rl| rl.enabled);
 
     if !rate_limit_enabled {
         return Ok(next.run(request).await);
@@ -395,10 +391,10 @@ pub async fn rate_limit_middleware(
 
         // Add rate limit headers
         for (name, value) in headers.to_headers() {
-            if let Ok(header_name) = name.parse::<axum::http::HeaderName>() {
-                if let Ok(header_value) = value.parse() {
-                    response.headers_mut().insert(header_name, header_value);
-                }
+            if let Ok(header_name) = name.parse::<axum::http::HeaderName>()
+                && let Ok(header_value) = value.parse()
+            {
+                response.headers_mut().insert(header_name, header_value);
             }
         }
 
@@ -410,10 +406,10 @@ pub async fn rate_limit_middleware(
 
     // Add rate limit headers to successful response
     for (name, value) in headers.to_headers() {
-        if let Ok(header_name) = name.parse::<axum::http::HeaderName>() {
-            if let Ok(header_value) = value.parse() {
-                response.headers_mut().insert(header_name, header_value);
-            }
+        if let Ok(header_name) = name.parse::<axum::http::HeaderName>()
+            && let Ok(header_value) = value.parse()
+        {
+            response.headers_mut().insert(header_name, header_value);
         }
     }
 
@@ -437,38 +433,35 @@ pub async fn strict_rate_limit_middleware(
     // limits per connecting IP address across all requests.
     let key = Uuid::new_v5(&Uuid::NAMESPACE_OID, addr.ip().to_string().as_bytes());
 
-    match limiter.strict_limiter.check_key(&key) {
-        Ok(()) => {
-            let mut response = next.run(request).await;
+    if let Ok(()) = limiter.strict_limiter.check_key(&key) {
+        let mut response = next.run(request).await;
 
-            // Add strict rate limit headers
-            response.headers_mut().insert(
-                "X-RateLimit-Limit",
-                limiter.config.strict_rpm.to_string().parse().unwrap(),
-            );
+        // Add strict rate limit headers
+        response.headers_mut().insert(
+            "X-RateLimit-Limit",
+            limiter.config.strict_rpm.to_string().parse().unwrap(),
+        );
 
-            Ok(response)
-        }
-        Err(_) => {
-            tracing::warn!(
-                ip = %addr.ip(),
-                "Strict rate limit exceeded for auth endpoint"
-            );
+        Ok(response)
+    } else {
+        tracing::warn!(
+            ip = %addr.ip(),
+            "Strict rate limit exceeded for auth endpoint"
+        );
 
-            let mut response = (
-                StatusCode::TOO_MANY_REQUESTS,
-                crate::error::Error::Authentication(
-                    "Too many authentication attempts. Please try again later.".to_string(),
-                ),
-            )
-                .into_response();
+        let mut response = (
+            StatusCode::TOO_MANY_REQUESTS,
+            crate::error::Error::Authentication(
+                "Too many authentication attempts. Please try again later.".to_string(),
+            ),
+        )
+            .into_response();
 
-            response
-                .headers_mut()
-                .insert("Retry-After", "60".parse().unwrap());
+        response
+            .headers_mut()
+            .insert("Retry-After", "60".parse().unwrap());
 
-            Ok(response)
-        }
+        Ok(response)
     }
 }
 
@@ -479,6 +472,7 @@ pub struct RateLimitLayer {
 }
 
 impl RateLimitLayer {
+    #[must_use]
     pub fn new(limiter: Arc<RateLimiter>) -> Self {
         Self { limiter }
     }
@@ -521,7 +515,7 @@ where
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
-        self.inner.poll_ready(cx).map_err(|e| e.into())
+        self.inner.poll_ready(cx).map_err(std::convert::Into::into)
     }
 
     fn call(&mut self, req: Request) -> Self::Future {
@@ -557,10 +551,10 @@ where
                     .unwrap();
 
                 for (name, value) in headers.to_headers() {
-                    if let Ok(header_name) = name.parse::<axum::http::HeaderName>() {
-                        if let Ok(header_value) = value.parse() {
-                            response.headers_mut().insert(header_name, header_value);
-                        }
+                    if let Ok(header_name) = name.parse::<axum::http::HeaderName>()
+                        && let Ok(header_value) = value.parse()
+                    {
+                        response.headers_mut().insert(header_name, header_value);
                     }
                 }
 
@@ -571,10 +565,10 @@ where
 
             // Add rate limit headers
             for (name, value) in headers.to_headers() {
-                if let Ok(header_name) = name.parse::<axum::http::HeaderName>() {
-                    if let Ok(header_value) = value.parse() {
-                        response.headers_mut().insert(header_name, header_value);
-                    }
+                if let Ok(header_name) = name.parse::<axum::http::HeaderName>()
+                    && let Ok(header_value) = value.parse()
+                {
+                    response.headers_mut().insert(header_name, header_value);
                 }
             }
 

@@ -39,6 +39,7 @@ impl std::fmt::Debug for InMemoryOAuthStateStore {
 }
 
 impl InMemoryOAuthStateStore {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             states: Arc::new(DashMap::new()),
@@ -46,6 +47,7 @@ impl InMemoryOAuthStateStore {
     }
 
     /// Generate a new PKCE code verifier (43-128 characters)
+    #[must_use]
     pub fn generate_pkce_verifier() -> String {
         use rand::Rng;
         const VERIFIER_LEN: usize = 43;
@@ -60,6 +62,7 @@ impl InMemoryOAuthStateStore {
     }
 
     /// Generate PKCE code challenge from verifier using SHA256
+    #[must_use]
     pub fn generate_pkce_challenge(verifier: &str) -> String {
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -71,6 +74,7 @@ impl InMemoryOAuthStateStore {
     }
 
     /// Generate a random CSRF state token
+    #[must_use]
     pub fn generate_csrf_token() -> String {
         Uuid::new_v4().to_string()
     }
@@ -107,6 +111,7 @@ impl OAuthStateStore for InMemoryOAuthStateStore {
 }
 
 /// Create a new OAuth flow state with all required fields
+#[must_use]
 pub fn create_oauth_flow_state(
     provider_name: String,
     redirect_url: Option<String>,

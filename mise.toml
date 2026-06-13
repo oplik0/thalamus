@@ -15,21 +15,25 @@ pnpm = "10"
 
 # KCL
 kcl = "latest"
-kcl-language-server = "latest"
+# kcl-language-server is not available in the mise registry or on crates.io.
+# Install it manually from https://github.com/kcl-lang/kcl/releases if needed.
 
 # Git hooks
-hk = "latest"
+hk = "1.48.0"
 
 # Utilities
 jq = "latest"
 gh = "latest"
+"aqua:editorconfig-checker/editorconfig-checker" = "latest"
 
 [env]
-DATABASE_URL = "postgresql://{{USER}}@localhost:5432/thalamus"
-TEST_DATABASE_URL = "postgresql://{{USER}}@localhost:5432/thalamus_test"
+DATABASE_URL = "postgresql://{{ env.USER }}:{{ env.USER }}@localhost:5432/thalamus"
+TEST_DATABASE_URL = "postgresql://{{ env.USER }}:{{ env.USER }}@localhost:5432/thalamus_test"
 REDIS_URL = "redis://localhost:6379"
 HK_PKL_BACKEND = "pklr"
 SQLX_OFFLINE = "true"
+HK_MISE = 1
+
 
 [hooks]
 # Automatically install/update hooks when tools are installed
@@ -71,8 +75,21 @@ description = "Run the server"
 run = "cargo run"
 
 [tasks.dev]
-description = "Auto-reload server on file changes (bacon)"
-run = "bacon"
+description = "Auto-reload server and UI dev server"
+run = '''
+  mkdir -p .logs
+  trap 'kill $UI_PID 2>/dev/null; wait $UI_PID 2>/dev/null' EXIT
+  echo "Starting UI dev server (logs: .logs/ui-dev.log)..."
+  (cd ui && pnpm start --web) > .logs/ui-dev.log 2>&1 &
+  UI_PID=$!
+  echo "UI dev server started (PID: $UI_PID)"
+  bacon --job run-long
+'''
+
+[tasks."dev:server"]
+description = "Auto-reload server only (bacon)"
+run = "bacon --job run-long"
+
 
 [tasks.test]
 description = "Run tests with cargo-nextest"
@@ -178,11 +195,17 @@ run = "cargo clippy --all-targets --all-features -- -D warnings"
 
 [tasks.fmt]
 description = "Format code"
-run = "cargo fmt --all"
+run = '''
+  rustup component add rustfmt
+  cargo fmt --all
+'''
 
 [tasks."fmt:check"]
 description = "Check formatting"
-run = "cargo fmt --all -- --check"
+run = '''
+  rustup component add rustfmt
+  cargo fmt --all -- --check
+'''
 
 [tasks.ci]
 description = "Full CI sequence: fmt:check -> lint -> test:ci"
@@ -206,7 +229,7 @@ run = '''
 [tasks."db:reset"]
 description = "Reset database schema"
 run = '''
-  psql "$DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" || true
+  docker compose -f docker-compose.dev.yml exec -T postgres psql -U "${USER}" -d thalamus -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" || true
   sqlx migrate run --database-url "$DATABASE_URL"
 '''
 

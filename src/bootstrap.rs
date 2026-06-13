@@ -6,8 +6,8 @@
 use crate::features::auth::infra::OAuthService;
 use crate::features::authorization::CasbinAuthorizer;
 use crate::features::backends::infra::{AdaptingBackendClient, InMemoryBackendRegistry};
-use crate::features::batch::infra::{SqlxBatchRepository, spawn_batch_worker};
 use crate::features::batch::BatchService;
+use crate::features::batch::infra::{SqlxBatchRepository, spawn_batch_worker};
 use crate::features::llm_proxy::ProxyService;
 use crate::features::plugin::PluginManager;
 use crate::features::plugin::guardrail_bridge::GuardrailService;
@@ -108,6 +108,9 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::features::batch::api::router())
         // Teams and projects routes
         .merge(crate::features::teams::router())
+        // User management routes
+        .merge(crate::features::users::router())
+        .layer(crate::middleware::cors_layer())
         .with_state(state)
 }
 
@@ -170,11 +173,11 @@ pub async fn init_app_state(
     });
 
     // Load persisted task states if available (for crash recovery)
-    if let Ok(json) = tokio::fs::read_to_string("tasks.json").await {
-        if let Ok(task_states) = serde_json::from_str(&json) {
-            tasks.load_state(task_states).await;
-            tracing::info!("Loaded persisted task states from tasks.json");
-        }
+    if let Ok(json) = tokio::fs::read_to_string("tasks.json").await
+        && let Ok(task_states) = serde_json::from_str(&json)
+    {
+        tasks.load_state(task_states).await;
+        tracing::info!("Loaded persisted task states from tasks.json");
     }
 
     // Initialize OAuth service
@@ -315,8 +318,7 @@ pub async fn init_app_state(
                 tracing::error!(error = %e, "Failed to create standalone Casbin authorizer for team permissions");
                 // This will cause runtime errors if team permissions are used, but allows the app to start
                 return Err(crate::Error::Internal(format!(
-                    "Failed to initialize team permission service: {}",
-                    e
+                    "Failed to initialize team permission service: {e}"
                 )));
             }
         }

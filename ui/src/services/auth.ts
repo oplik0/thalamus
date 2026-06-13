@@ -1,5 +1,4 @@
 import * as Linking from "expo-linking";
-import * as WebBrowser from "expo-web-browser";
 import { ApiError, apiClient } from "@/lib/api-client";
 import {
 	clearToken,
@@ -7,19 +6,26 @@ import {
 	setRefreshToken,
 	setToken,
 } from "@/lib/auth";
+import { ensureOpaqueReady, opaque } from "@/lib/opaque";
 import type {
+	LoginStartResponse,
 	OAuthCallbackResponse,
 	OAuthProviderInfo,
 	RefreshTokenInfo,
+	SetupResponse,
 	TokenRefreshResponse,
 	WhoamiResponse,
 } from "@/lib/types";
 
-// The base URL for the API
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
-
 export async function getProviders(): Promise<OAuthProviderInfo[]> {
 	return apiClient.get<OAuthProviderInfo[]>("/v1/auth/oauth/providers");
+}
+
+/**
+ * Check whether first-run setup is required.
+ */
+export async function getSetupStatus(): Promise<{ needs_setup: boolean }> {
+	return apiClient.get<{ needs_setup: boolean }>("/v1/auth/setup-status");
 }
 
 /**
@@ -148,6 +154,68 @@ export async function revokeRefreshToken(tokenId: string): Promise<void> {
 	await apiClient.post("/v1/auth/refresh-tokens/revoke", {
 		token_id: tokenId,
 	});
+}
+
+/**
+ * Log in with username and password using OPAQUE.
+ */
+export async function loginWithCredentials(
+	username: string,
+	password: string,
+): Promise<void> {
+	await ensureOpaqueReady();
+
+	const { clientLoginState, startLoginRequest } = opaque.client.startLogin({
+		password,
+	});
+
+	const { message: loginResponse, server_state } =
+		await apiClient.post<LoginStartResponse>("/v1/auth/login/start", {
+			username,
+			message: startLoginRequest,
+		});
+
+	const loginResult = opaque.client.finishLogin({
+		clientLoginState,
+		loginResponse,
+		password,
+	});
+
+	if (!loginResult) {
+		throw new Error("Invalid username or password");
+	}
+
+	const { finishLoginRequest } = loginResult;
+
+	const { token } = await apiClient.post<{ token: string }>(
+		"/v1/auth/login/finish",
+		{
+			username,
+			finish_login_request: finishLoginRequest,
+			server_state,
+		},
+	);
+
+	await setToken(token);
+}
+
+/**
+ * Perform first-run setup by creating the first admin user with an OPAQUE
+ * password. The actual OPAQUE registration is run server-side because there is
+ * no prior authentication at this point.
+ */
+export async function setupAccount(
+	username: string,
+	email: string,
+	password: string,
+): Promise<SetupResponse> {
+	const response = await apiClient.post<SetupResponse>("/v1/auth/setup", {
+		username,
+		email,
+		password,
+	});
+	await setToken(response.token);
+	return response;
 }
 
 /**

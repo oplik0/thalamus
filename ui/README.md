@@ -1,56 +1,55 @@
-# Welcome to your Expo app 👋
+# Thalamus UI
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+The Thalamus UI is an Expo web app for administering local and deployed Thalamus instances.
 
-## Get started
+## Development
 
-1. Install dependencies
-
-   ```bash
-   pnpm install
-   ```
-
-2. Start the app
-
-   ```bash
-   pnpx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+From the repository root, prefer the mise tasks:
 
 ```bash
-pnpm run reset-project
+mise install
+mise run ui:dev
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+To run the backend and UI together:
 
-### Other setup steps
+```bash
+mise run services:up
+mise run db:migrate
+mise run dev
+```
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+`mise run dev` starts the backend with auto-reload and starts the web UI dev server in the background. UI logs are written to `.logs/ui-dev.log`.
 
-## Learn more
+If you are working inside `ui/` directly, use pnpm:
 
-To learn more about developing your project with Expo, look at the following resources:
+```bash
+pnpm install
+pnpm start --web
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## Backend URL
 
-## Join the community
+The UI reads the backend URL from `EXPO_PUBLIC_API_URL` and defaults to `http://localhost:3000`.
 
-Join our community of developers creating universal apps.
+For the full containerized test instance, the UI is exposed at `http://localhost:3020` and talks to the backend at `http://localhost:3000`.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## First-Run Setup and Login
+
+On a fresh backend with no OAuth providers configured, the UI checks `/v1/auth/setup-status` and redirects to `/login/setup`. Create the first admin with a username, email, and password.
+
+After setup, sign in with the username and password you created. The UI uses OPAQUE through `/v1/auth/login/start` and `/v1/auth/login/finish`; the password is not sent during normal login.
+
+If OAuth providers are configured, setup is disabled and the login screen shows the configured providers in addition to username/password login.
+
+## Useful Commands
+
+| Command | Description |
+|---|---|
+| `mise run ui:dev` | Start Expo web dev server |
+| `mise run dev` | Start backend auto-reload and UI dev server |
+| `mise run ui:lint` | Run Biome checks |
+| `mise run ui:format` | Format UI code |
+| `pnpm start --web` | Start Expo web from `ui/` |
+| `pnpm run lint` | Run Biome checks from `ui/` |
+| `pnpm run format` | Format UI code from `ui/` |

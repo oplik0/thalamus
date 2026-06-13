@@ -186,7 +186,7 @@ impl PriorityQueueManager {
                 }
             }
 
-            while let Some(entry) = queues[priority_idx].pop_front() {
+            if let Some(entry) = queues[priority_idx].pop_front() {
                 match route_fn(&entry.request) {
                     Some(endpoint) => {
                         let _ = entry.responder.send(Ok(endpoint));
@@ -238,7 +238,7 @@ impl PriorityQueueManager {
                     _ = ticker.tick() => {
                         manager.age_requests().await;
                     }
-                    _ = shutdown.cancelled() => break,
+                    () = shutdown.cancelled() => break,
                 }
             }
         });

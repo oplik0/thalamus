@@ -14,18 +14,33 @@ import { useState } from "react";
 import { ScrollView, View } from "react-native";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
+import { Alert, AlertText } from "@/components/ui/alert";
 import { Badge, BadgeText } from "@/components/ui/badge";
 import { Box } from "@/components/ui/box";
-import { Button, ButtonIcon, ButtonText } from "@/components/ui/button";
+import {
+	Button,
+	ButtonIcon,
+	ButtonSpinner,
+	ButtonText,
+} from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Divider } from "@/components/ui/divider";
+import {
+	FormControl,
+	FormControlHelper,
+	FormControlHelperText,
+	FormControlLabel,
+	FormControlLabelText,
+} from "@/components/ui/form-control";
 import { Heading } from "@/components/ui/heading";
 import { HStack } from "@/components/ui/hstack";
+import { Input, InputField } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Text } from "@/components/ui/text";
 import { Toast, ToastTitle, useToast } from "@/components/ui/toast";
 import { VStack } from "@/components/ui/vstack";
 import { useAuth } from "@/contexts/auth-context";
+import { useChangePassword } from "@/hooks/use-users";
 import type { RefreshTokenInfo } from "@/lib/types";
 import { listRefreshTokens, revokeRefreshToken } from "@/services/auth";
 
@@ -108,6 +123,99 @@ function InfoRow({
 				{value}
 			</Text>
 		</HStack>
+	);
+}
+
+function PasswordSection() {
+	const toast = useToast();
+	const changeMutation = useChangePassword();
+	const [password, setPassword] = useState("");
+	const [confirmPassword, setConfirmPassword] = useState("");
+
+	const canSubmit =
+		password.length >= 8 &&
+		password === confirmPassword &&
+		!changeMutation.isPending;
+
+	const handleChangePassword = async () => {
+		if (!canSubmit) return;
+
+		await changeMutation.mutateAsync({ password });
+		setPassword("");
+		setConfirmPassword("");
+		toast.show({
+			id: "password-updated",
+			render: () => (
+				<Toast action="success">
+					<ToastTitle>Password updated</ToastTitle>
+				</Toast>
+			),
+		});
+	};
+
+	return (
+		<Card className="p-5 gap-4">
+			<HStack className="items-center gap-2">
+				<ShieldCheck size={22} className="text-primary-500" />
+				<Heading size="md">Change Password</Heading>
+			</HStack>
+
+			<VStack className="gap-4">
+				<FormControl isRequired>
+					<FormControlLabel>
+						<FormControlLabelText>New Password</FormControlLabelText>
+					</FormControlLabel>
+					<Input>
+						<InputField
+							value={password}
+							onChangeText={setPassword}
+							secureTextEntry
+						/>
+					</Input>
+					<FormControlHelper>
+						<FormControlHelperText>
+							Use at least 8 characters.
+						</FormControlHelperText>
+					</FormControlHelper>
+				</FormControl>
+
+				<FormControl isRequired>
+					<FormControlLabel>
+						<FormControlLabelText>Confirm Password</FormControlLabelText>
+					</FormControlLabel>
+					<Input>
+						<InputField
+							value={confirmPassword}
+							onChangeText={setConfirmPassword}
+							secureTextEntry
+						/>
+					</Input>
+				</FormControl>
+
+				{password && confirmPassword && password !== confirmPassword && (
+					<Alert action="error">
+						<AlertText>Passwords do not match</AlertText>
+					</Alert>
+				)}
+
+				{changeMutation.error && (
+					<Alert action="error">
+						<AlertText>
+							{changeMutation.error instanceof Error
+								? changeMutation.error.message
+								: "Failed to update password"}
+						</AlertText>
+					</Alert>
+				)}
+
+				<Button onPress={handleChangePassword} isDisabled={!canSubmit}>
+					{changeMutation.isPending && <ButtonSpinner />}
+					<ButtonText>
+						{changeMutation.isPending ? "Updating..." : "Update Password"}
+					</ButtonText>
+				</Button>
+			</VStack>
+		</Card>
 	);
 }
 
@@ -236,6 +344,7 @@ export default function SettingsPage() {
 				/>
 
 				<UserInfoSection />
+				<PasswordSection />
 				<RefreshTokensSection />
 
 				<Divider />

@@ -119,7 +119,7 @@ fn generate_random_key() -> String {
 }
 
 /// Hash an API key secret using Argon2
-async fn hash_key_secret(pool: &PgPool, key: &str) -> anyhow::Result<String> {
+async fn hash_key_secret(_pool: &PgPool, key: &str) -> anyhow::Result<String> {
     use argon2::password_hash::{SaltString, rand_core::OsRng};
     use argon2::{Argon2, Params, PasswordHasher};
 

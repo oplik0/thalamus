@@ -9,8 +9,8 @@
 
 use std::time::Duration;
 
+use axum::Router;
 use axum::body::Body;
-use axum::{Router, ServiceExt};
 use http::{Request, StatusCode};
 use serde_json::json;
 use sqlx::PgPool;
@@ -22,7 +22,7 @@ mod common;
 
 use common::config_builder::{BackendConfigBuilder, RoutingConfigBuilder};
 use common::fixtures::{LlmRequestBuilder, TestApiKeyBuilder, TestUserBuilder};
-use common::http::{assert_status, extract_json};
+use common::http::assert_status;
 use common::wiremock_backends::MockLlmBackend;
 use common::{init_test_logging, init_test_state_with_backends, init_test_state_with_config};
 
@@ -70,22 +70,22 @@ async fn routing_round_robin_distributes_evenly(pool: PgPool) {
             .await;
     }
 
-    let (user, api_key) = setup_user_and_api_key(&pool).await;
+    let (_user, api_key) = setup_user_and_api_key(&pool).await;
 
     // Configure round_robin routing
-    let mut config = thalamus::shared::config::types::Config {
+    let config = thalamus::shared::config::types::Config {
         backends: {
             let mut map = std::collections::HashMap::new();
             map.insert(
                 "backend-1".to_string(),
                 BackendConfigBuilder::new("backend-1")
-                    .with_endpoint(&backend1.base_url(), 10, vec!["gpt-oss:120b"])
+                    .with_endpoint(backend1.base_url(), 10, vec!["gpt-oss:120b"])
                     .build(),
             );
             map.insert(
                 "backend-2".to_string(),
                 BackendConfigBuilder::new("backend-2")
-                    .with_endpoint(&backend2.base_url(), 10, vec!["gpt-oss:120b"])
+                    .with_endpoint(backend2.base_url(), 10, vec!["gpt-oss:120b"])
                     .build(),
             );
             map
@@ -141,22 +141,22 @@ async fn routing_weighted_prefers_higher_weight(pool: PgPool) {
             .await;
     }
 
-    let (user, api_key) = setup_user_and_api_key(&pool).await;
+    let (_user, api_key) = setup_user_and_api_key(&pool).await;
 
     // Configure weighted routing with 1:3 ratio
-    let mut config = thalamus::shared::config::types::Config {
+    let config = thalamus::shared::config::types::Config {
         backends: {
             let mut map = std::collections::HashMap::new();
             map.insert(
                 "light".to_string(),
                 BackendConfigBuilder::new("light")
-                    .with_weighted_endpoint(&light_backend.base_url(), 10, vec!["gpt-oss:120b"], 1)
+                    .with_weighted_endpoint(light_backend.base_url(), 10, vec!["gpt-oss:120b"], 1)
                     .build(),
             );
             map.insert(
                 "heavy".to_string(),
                 BackendConfigBuilder::new("heavy")
-                    .with_weighted_endpoint(&heavy_backend.base_url(), 10, vec!["gpt-oss:120b"], 3)
+                    .with_weighted_endpoint(heavy_backend.base_url(), 10, vec!["gpt-oss:120b"], 3)
                     .build(),
             );
             map
@@ -210,10 +210,10 @@ async fn routing_model_aware_prefers_loaded_model(pool: PgPool) {
             .await;
     }
 
-    let (user, api_key) = setup_user_and_api_key(&pool).await;
+    let (_user, api_key) = setup_user_and_api_key(&pool).await;
 
     // Configure model-aware routing
-    let mut config = thalamus::shared::config::types::Config {
+    let config = thalamus::shared::config::types::Config {
         backends: {
             let mut map = std::collections::HashMap::new();
             // Backend with model already loaded
@@ -221,7 +221,7 @@ async fn routing_model_aware_prefers_loaded_model(pool: PgPool) {
                 "loaded".to_string(),
                 BackendConfigBuilder::new("loaded")
                     .with_model_aware_endpoint(
-                        &loaded_backend.base_url(),
+                        loaded_backend.base_url(),
                         10,
                         vec!["gpt-oss:120b"],
                         vec!["gpt-oss:120b"], // Already loaded
@@ -233,7 +233,7 @@ async fn routing_model_aware_prefers_loaded_model(pool: PgPool) {
                 "unloaded".to_string(),
                 BackendConfigBuilder::new("unloaded")
                     .with_model_aware_endpoint(
-                        &unloaded_backend.base_url(),
+                        unloaded_backend.base_url(),
                         10,
                         vec!["gpt-oss:120b"],
                         Vec::<&str>::new(), // Not loaded
@@ -301,16 +301,16 @@ async fn admission_control_rejects_when_at_capacity(pool: PgPool) {
         .mount()
         .await;
 
-    let (user, api_key) = setup_user_and_api_key(&pool).await;
+    let (_user, api_key) = setup_user_and_api_key(&pool).await;
 
     // Configure strict admission control
-    let mut config = thalamus::shared::config::types::Config {
+    let config = thalamus::shared::config::types::Config {
         backends: {
             let mut map = std::collections::HashMap::new();
             map.insert(
                 "low-capacity".to_string(),
                 BackendConfigBuilder::new("low-capacity")
-                    .with_endpoint(&backend.base_url(), 1, vec!["gpt-oss:120b"]) // Capacity of 1
+                    .with_endpoint(backend.base_url(), 1, vec!["gpt-oss:120b"]) // Capacity of 1
                     .build(),
             );
             map
@@ -369,22 +369,22 @@ async fn unhealthy_backend_not_selected(pool: PgPool) {
     // Unhealthy backend returns error for health checks
     unhealthy_backend.mount_health_endpoint(false).await;
 
-    let (user, api_key) = setup_user_and_api_key(&pool).await;
+    let (_user, api_key) = setup_user_and_api_key(&pool).await;
 
     // Manually mark unhealthy backend as unhealthy in registry
-    let mut config = thalamus::shared::config::types::Config {
+    let config = thalamus::shared::config::types::Config {
         backends: {
             let mut map = std::collections::HashMap::new();
             map.insert(
                 "healthy".to_string(),
                 BackendConfigBuilder::new("healthy")
-                    .with_endpoint(&healthy_backend.base_url(), 10, vec!["gpt-oss:120b"])
+                    .with_endpoint(healthy_backend.base_url(), 10, vec!["gpt-oss:120b"])
                     .build(),
             );
             map.insert(
                 "unhealthy".to_string(),
                 BackendConfigBuilder::new("unhealthy")
-                    .with_endpoint(&unhealthy_backend.base_url(), 10, vec!["gpt-oss:120b"])
+                    .with_endpoint(unhealthy_backend.base_url(), 10, vec!["gpt-oss:120b"])
                     .build(),
             );
             map
@@ -510,7 +510,7 @@ async fn different_models_routed_to_different_backends(pool: PgPool) {
             .await;
     }
 
-    let (user, api_key) = setup_user_and_api_key(&pool).await;
+    let (_user, api_key) = setup_user_and_api_key(&pool).await;
 
     let state = init_test_state_with_backends(pool, &[&gpt_backend, &claude_backend]).await;
     let app = build_app(state);
@@ -667,7 +667,7 @@ async fn backend_invalid_json_returns_502(pool: PgPool) {
 async fn request_is_queued_when_backend_at_capacity(pool: PgPool) {
     init_test_logging();
 
-    let (user, api_key) = setup_user_and_api_key(&pool).await;
+    let (_user, api_key) = setup_user_and_api_key(&pool).await;
 
     // Single-slot backend with a slow response so the first request holds the slot.
     let backend = MockLlmBackend::start_with_capacity("queued", vec!["gpt-oss:120b"], 1).await;
@@ -684,7 +684,7 @@ async fn request_is_queued_when_backend_at_capacity(pool: PgPool) {
         map.insert(
             "queued".to_string(),
             BackendConfigBuilder::new("queued")
-                .with_endpoint(&backend.base_url(), 1, vec!["gpt-oss:120b"])
+                .with_endpoint(backend.base_url(), 1, vec!["gpt-oss:120b"])
                 .build(),
         );
         map
