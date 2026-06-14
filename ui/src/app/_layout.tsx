@@ -3,13 +3,12 @@ import {
 	DefaultTheme,
 	ThemeProvider,
 } from "@react-navigation/native";
-import { Stack } from "expo-router";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { useColorScheme } from "@/hooks/use-color-scheme";
-
+import { Stack } from "expo-router";
 import { GluestackUIProvider } from "@/components/ui/gluestack-ui-provider";
-import { queryClient } from "@/lib/query-client";
 import { AuthProvider } from "@/contexts/auth-context";
+import { useColorScheme } from "@/hooks/use-color-scheme";
+import { queryClient } from "@/lib/query-client";
 
 import "@/global.css";
 

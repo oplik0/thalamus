@@ -60,18 +60,21 @@ const moveDirectories = async (userInput) => {
 			const oldDirPath = path.join(root, dir);
 			if (fs.existsSync(oldDirPath)) {
 				if (userInput === "y") {
-				const newDirPath = path.join(root, exampleDir, dir);
-				try {
-					await fs.promises.rename(oldDirPath, newDirPath);
-				} catch (err) {
-					if (err.code === "EXDEV") {
-						await fs.promises.cp(oldDirPath, newDirPath, { recursive: true });
-						await fs.promises.rm(oldDirPath, { recursive: true, force: true });
-					} else {
-						throw err;
+					const newDirPath = path.join(root, exampleDir, dir);
+					try {
+						await fs.promises.rename(oldDirPath, newDirPath);
+					} catch (err) {
+						if (err.code === "EXDEV") {
+							await fs.promises.cp(oldDirPath, newDirPath, { recursive: true });
+							await fs.promises.rm(oldDirPath, {
+								recursive: true,
+								force: true,
+							});
+						} else {
+							throw err;
+						}
 					}
-				}
-				console.log(`➡️ /${dir} moved to /${exampleDir}/${dir}.`);
+					console.log(`➡️ /${dir} moved to /${exampleDir}/${dir}.`);
 				} else {
 					await fs.promises.rm(oldDirPath, { recursive: true, force: true });
 					console.log(`❌ /${dir} deleted.`);

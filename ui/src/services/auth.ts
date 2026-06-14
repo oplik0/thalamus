@@ -1,25 +1,25 @@
-import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
-import { apiClient, ApiError } from "@/lib/api-client";
+import * as WebBrowser from "expo-web-browser";
+import { ApiError, apiClient } from "@/lib/api-client";
 import {
-  OAuthProviderInfo,
-  OAuthCallbackResponse,
-  WhoamiResponse,
-  TokenRefreshResponse,
-  RefreshTokenInfo,
-} from "@/lib/types";
-import {
-  getRefreshToken,
-  setToken,
-  setRefreshToken,
-  clearToken,
+	clearToken,
+	getRefreshToken,
+	setRefreshToken,
+	setToken,
 } from "@/lib/auth";
+import type {
+	OAuthCallbackResponse,
+	OAuthProviderInfo,
+	RefreshTokenInfo,
+	TokenRefreshResponse,
+	WhoamiResponse,
+} from "@/lib/types";
 
 // The base URL for the API
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
 
 export async function getProviders(): Promise<OAuthProviderInfo[]> {
-  return apiClient.get<OAuthProviderInfo[]>("/v1/auth/oauth/providers");
+	return apiClient.get<OAuthProviderInfo[]>("/v1/auth/oauth/providers");
 }
 
 /**
@@ -30,36 +30,36 @@ export async function getProviders(): Promise<OAuthProviderInfo[]> {
  * 4. Frontend stores token and redirects to dashboard
  */
 export async function startOAuthFlow(
-  providerName: string,
+	providerName: string,
 ): Promise<OAuthCallbackResponse> {
-  // Determine the callback URL based on environment
-  let frontendCallbackUrl: string;
+	// Determine the callback URL based on environment
+	let frontendCallbackUrl: string;
 
-  if (typeof window !== "undefined" && window.location.protocol !== "file:") {
-    // Web: use the current origin + callback path
-    frontendCallbackUrl = `${window.location.origin}/login/oauth/callback`;
-  } else {
-    // Native: use expo-linking to get the scheme-based URL
-    frontendCallbackUrl = Linking.createURL("login/oauth/callback");
-  }
+	if (typeof window !== "undefined" && window.location.protocol !== "file:") {
+		// Web: use the current origin + callback path
+		frontendCallbackUrl = `${window.location.origin}/login/oauth/callback`;
+	} else {
+		// Native: use expo-linking to get the scheme-based URL
+		frontendCallbackUrl = Linking.createURL("login/oauth/callback");
+	}
 
-  // Get the authorization URL from our backend
-  // Pass the frontend's callback URL as the redirect target
-  const { authorization_url } = await apiClient.get<{
-    authorization_url: string;
-    state: string;
-  }>(
-    `/v1/auth/oauth/${encodeURIComponent(
-      providerName,
-    )}/login?redirect_url=${encodeURIComponent(frontendCallbackUrl)}`,
-  );
+	// Get the authorization URL from our backend
+	// Pass the frontend's callback URL as the redirect target
+	const { authorization_url } = await apiClient.get<{
+		authorization_url: string;
+		state: string;
+	}>(
+		`/v1/auth/oauth/${encodeURIComponent(
+			providerName,
+		)}/login?redirect_url=${encodeURIComponent(frontendCallbackUrl)}`,
+	);
 
-  // Redirect to the OAuth provider - this replaces the current page
-  // After auth, the provider will redirect back to our callback URL
-  window.location.href = authorization_url;
+	// Redirect to the OAuth provider - this replaces the current page
+	// After auth, the provider will redirect back to our callback URL
+	window.location.href = authorization_url;
 
-  // This won't be reached since the page redirects away
-  throw new Error("Redirecting to OAuth provider...");
+	// This won't be reached since the page redirects away
+	throw new Error("Redirecting to OAuth provider...");
 }
 
 /**
@@ -67,95 +67,95 @@ export async function startOAuthFlow(
  * This is called from the frontend's callback page
  */
 export async function handleOAuthCallback(
-  providerName: string,
-  code: string,
-  state: string,
+	providerName: string,
+	code: string,
+	state: string,
 ): Promise<OAuthCallbackResponse> {
-  const response = await apiClient.get<OAuthCallbackResponse>(
-    `/v1/auth/oauth/${encodeURIComponent(
-      providerName,
-    )}/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`,
-  );
-  await setToken(response.token);
-  return response;
+	const response = await apiClient.get<OAuthCallbackResponse>(
+		`/v1/auth/oauth/${encodeURIComponent(
+			providerName,
+		)}/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`,
+	);
+	await setToken(response.token);
+	return response;
 }
 
 /**
  * Get current user info
  */
 export async function whoami(): Promise<WhoamiResponse> {
-  return apiClient.get<WhoamiResponse>("/v1/auth/whoami");
+	return apiClient.get<WhoamiResponse>("/v1/auth/whoami");
 }
 
 /**
  * Exchange API key auth for a short-lived PASETO token
  */
 export async function exchangeToken(): Promise<{
-  token: string;
-  expires_in: number;
+	token: string;
+	expires_in: number;
 }> {
-  return apiClient.post<{ token: string; expires_in: number }>(
-    "/v1/auth/token",
-  );
+	return apiClient.post<{ token: string; expires_in: number }>(
+		"/v1/auth/token",
+	);
 }
 
 /**
  * Refresh the access token
  */
 export async function refreshToken(): Promise<TokenRefreshResponse> {
-  const refreshTokenValue = await getRefreshToken();
-  if (!refreshTokenValue) {
-    throw new Error("No refresh token available");
-  }
-  const response = await apiClient.post<TokenRefreshResponse>(
-    "/v1/auth/token/refresh",
-    { refresh_token: refreshTokenValue },
-  );
-  await setToken(response.access_token);
-  if (response.refresh_token) {
-    await setRefreshToken(response.refresh_token);
-  }
-  return response;
+	const refreshTokenValue = await getRefreshToken();
+	if (!refreshTokenValue) {
+		throw new Error("No refresh token available");
+	}
+	const response = await apiClient.post<TokenRefreshResponse>(
+		"/v1/auth/token/refresh",
+		{ refresh_token: refreshTokenValue },
+	);
+	await setToken(response.access_token);
+	if (response.refresh_token) {
+		await setRefreshToken(response.refresh_token);
+	}
+	return response;
 }
 
 /**
  * Logout - revoke token and clear storage
  */
 export async function logout(): Promise<void> {
-  try {
-    await apiClient.post("/v1/auth/logout");
-  } catch {
-    // Ignore errors - clear local state regardless
-  }
-  await clearToken();
+	try {
+		await apiClient.post("/v1/auth/logout");
+	} catch {
+		// Ignore errors - clear local state regardless
+	}
+	await clearToken();
 }
 
 /**
  * List refresh tokens for current user
  */
 export async function listRefreshTokens(): Promise<{
-  tokens: RefreshTokenInfo[];
+	tokens: RefreshTokenInfo[];
 }> {
-  return apiClient.get<{ tokens: RefreshTokenInfo[] }>(
-    "/v1/auth/refresh-tokens",
-  );
+	return apiClient.get<{ tokens: RefreshTokenInfo[] }>(
+		"/v1/auth/refresh-tokens",
+	);
 }
 
 /**
  * Revoke a specific refresh token
  */
 export async function revokeRefreshToken(tokenId: string): Promise<void> {
-  await apiClient.post("/v1/auth/refresh-tokens/revoke", {
-    token_id: tokenId,
-  });
+	await apiClient.post("/v1/auth/refresh-tokens/revoke", {
+		token_id: tokenId,
+	});
 }
 
 /**
  * Check if an error is an authentication error (401/403)
  */
 export function isAuthError(error: unknown): boolean {
-  if (error instanceof ApiError) {
-    return error.status === 401 || error.status === 403;
-  }
-  return false;
+	if (error instanceof ApiError) {
+		return error.status === 401 || error.status === 403;
+	}
+	return false;
 }
