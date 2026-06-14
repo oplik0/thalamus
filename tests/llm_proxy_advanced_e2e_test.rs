@@ -660,6 +660,81 @@ async fn backend_invalid_json_returns_502(pool: PgPool) {
 }
 
 // =============================================================================
+// Priority Queue Tests
+// =============================================================================
+
+#[sqlx::test]
+async fn request_is_queued_when_backend_at_capacity(pool: PgPool) {
+    init_test_logging();
+
+    let (user, api_key) = setup_user_and_api_key(&pool).await;
+
+    // Single-slot backend with a slow response so the first request holds the slot.
+    let backend = MockLlmBackend::start_with_capacity("queued", vec!["gpt-oss:120b"], 1).await;
+    backend
+        .with_response_builder()
+        .content("Slow")
+        .delay(Duration::from_millis(300))
+        .mount()
+        .await;
+
+    let mut config = create_test_config();
+    config.backends = {
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "queued".to_string(),
+            BackendConfigBuilder::new("queued")
+                .with_endpoint(&backend.base_url(), 1, vec!["gpt-oss:120b"])
+                .build(),
+        );
+        map
+    };
+    config.routing = RoutingConfigBuilder::new("round_robin")
+        .with_admission_control(true)
+        .with_default_queue("realtime")
+        .with_queue("realtime", 1, 100, "30s")
+        .build();
+
+    let state = init_test_state_with_config(pool, config).await;
+    let app = build_app(state);
+
+    let auth_header = api_key.auth_header();
+    let build_request = |auth: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/v1/chat/completions")
+            .header("Authorization", auth)
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                LlmRequestBuilder::openai()
+                    .model("gpt-oss:120b")
+                    .user_message("Test")
+                    .build()
+                    .to_string(),
+            ))
+            .unwrap()
+    };
+
+    // Send two requests concurrently. The first acquires the only slot; the
+    // second should be queued and dispatched once the first releases it.
+    let app2 = app.clone();
+    let auth1 = auth_header.clone();
+    let auth2 = auth_header;
+    let first = tokio::spawn(async move { app.oneshot(build_request(&auth1)).await });
+    let second = tokio::spawn(async move { app2.oneshot(build_request(&auth2)).await });
+
+    let (r1, r2) = tokio::join!(first, second);
+    let r1 = r1.unwrap().unwrap();
+    let r2 = r2.unwrap().unwrap();
+
+    assert!(r1.status().is_success());
+    assert!(r2.status().is_success());
+
+    // The slow backend should have received both requests.
+    assert!(backend.verify_calls(2));
+}
+
+// =============================================================================
 // Helper Functions
 // =============================================================================
 

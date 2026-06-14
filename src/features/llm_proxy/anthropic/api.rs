@@ -3,6 +3,7 @@ use std::convert::Infallible;
 use axum::{
     Json, Router,
     extract::State,
+    http::HeaderMap,
     response::sse::{Event, KeepAlive, Sse},
     response::{IntoResponse, Response},
     routing::post,
@@ -15,6 +16,8 @@ use crate::features::llm_proxy::anthropic::dto::{
     AnthropicError, AnthropicMessagesRequest, AnthropicMessagesResponse, AnthropicStreamEvent,
     stream_event_to_anthropic,
 };
+use crate::features::routing::priority::resolve_priority;
+use crate::middleware::OptionalApiKeyAuth;
 use crate::shared::models::LlmRequest;
 
 pub fn router() -> Router<AppState> {
@@ -23,13 +26,16 @@ pub fn router() -> Router<AppState> {
 
 pub async fn messages(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    OptionalApiKeyAuth(auth): OptionalApiKeyAuth,
     Json(request): Json<AnthropicMessagesRequest>,
 ) -> Result<Response> {
+    let priority = resolve_priority(&headers, auth.as_ref(), &state.config.routing);
     let is_stream = request.stream;
     let unified: LlmRequest = request.into();
 
     if is_stream {
-        let stream = state.proxy.handle_stream(unified).await?;
+        let stream = state.proxy.handle_stream(unified, priority).await?;
         let sse_stream = stream.flat_map(|event| {
             let events: Vec<std::result::Result<Event, Infallible>> = match event {
                 Ok(evt) => stream_event_to_anthropic(evt)
@@ -74,6 +80,6 @@ pub async fn messages(
             .into_response());
     }
 
-    let response = state.proxy.handle(unified).await?;
+    let response = state.proxy.handle(unified, priority).await?;
     Ok(Json(AnthropicMessagesResponse::from(response)).into_response())
 }

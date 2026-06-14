@@ -139,6 +139,19 @@ impl BackendRegistry for InMemoryBackendRegistry {
         }
     }
 
+    fn try_acquire(&self, id: &EndpointId) -> bool {
+        let Some(state) = self.endpoints.get(id) else {
+            return false;
+        };
+
+        let active = state.active_requests.fetch_add(1, Ordering::Relaxed) + 1;
+        if active > state.config.capacity {
+            state.active_requests.fetch_sub(1, Ordering::Relaxed);
+            return false;
+        }
+        true
+    }
+
     fn release(&self, id: &EndpointId) {
         if let Some(state) = self.endpoints.get(id) {
             state

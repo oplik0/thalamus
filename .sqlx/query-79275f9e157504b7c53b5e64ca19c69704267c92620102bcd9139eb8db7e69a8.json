@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, key_id, key_hash, key_prefix,\n            user_id, team_id, project_id, name, description,\n            scopes, is_active as \"is_active!\", last_used_at,\n            expires_at, created_at, revoked_at\n        FROM api_keys\n        WHERE team_id = $1\n        ORDER BY created_at DESC\n        ",
+  "query": "\n        SELECT\n            id, key_id, key_hash, key_prefix,\n            user_id, team_id, project_id, name, description,\n            scopes, default_priority, is_active as \"is_active!\", last_used_at,\n            expires_at, created_at, revoked_at\n        FROM api_keys\n        WHERE team_id = $1\n        ORDER BY created_at DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -55,26 +55,31 @@
       },
       {
         "ordinal": 10,
+        "name": "default_priority",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
         "name": "is_active!",
         "type_info": "Bool"
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "last_used_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "expires_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "revoked_at",
         "type_info": "Timestamptz"
       }
@@ -98,9 +103,10 @@
       true,
       true,
       true,
+      true,
       false,
       true
     ]
   },
-  "hash": "a5be8ebcb25ca15106c40a465bbef4cbc1c602df1f48a72eea05dd4ad519468d"
+  "hash": "79275f9e157504b7c53b5e64ca19c69704267c92620102bcd9139eb8db7e69a8"
 }

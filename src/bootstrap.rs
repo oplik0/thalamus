@@ -6,6 +6,8 @@
 use crate::features::auth::infra::OAuthService;
 use crate::features::authorization::CasbinAuthorizer;
 use crate::features::backends::infra::{AdaptingBackendClient, InMemoryBackendRegistry};
+use crate::features::batch::infra::{SqlxBatchRepository, spawn_batch_worker};
+use crate::features::batch::BatchService;
 use crate::features::llm_proxy::ProxyService;
 use crate::features::plugin::PluginManager;
 use crate::features::plugin::guardrail_bridge::GuardrailService;
@@ -45,6 +47,8 @@ pub struct AppState {
     pub backend_registry: Arc<InMemoryBackendRegistry>,
     /// Unified LLM proxy orchestrator
     pub proxy: Arc<ProxyService>,
+    /// Batch job service for asynchronous request processing
+    pub batch_service: Arc<BatchService>,
     /// Plugin manager for WASM plugins
     pub plugin_manager: Option<Arc<PluginManager>>,
     /// Team repository
@@ -70,6 +74,7 @@ impl std::fmt::Debug for AppState {
             .field("authorizer", &"<CasbinAuthorizer>")
             .field("backend_registry", &"<InMemoryBackendRegistry>")
             .field("proxy", &"<ProxyService>")
+            .field("batch_service", &"<BatchService>")
             .field("plugin_manager", &"<PluginManager>")
             .field("team_repository", &"<TeamRepository>")
             .field("membership_repository", &"<MembershipRepository>")
@@ -99,6 +104,8 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/admin/plugins", crate::features::plugin::api::router())
         // Unified LLM proxy routes
         .merge(crate::features::llm_proxy::router())
+        // Batch processing routes
+        .merge(crate::features::batch::api::router())
         // Teams and projects routes
         .merge(crate::features::teams::router())
         .layer(crate::middleware::cors_layer())
@@ -246,12 +253,25 @@ pub async fn init_app_state(
     ));
     let guardrail_service = GuardrailService::from_plugin_manager(plugin_manager.as_deref(), 200);
 
+    let queue_manager = router_service.queue_manager();
+    queue_manager.spawn_aging_task(shutdown.clone());
+
     let proxy = Arc::new(ProxyService::new(
         router_service,
         backend_client,
         backend_registry.clone(),
         guardrail_service,
     ));
+
+    // Initialize batch processing service and worker
+    let batch_repository: Arc<dyn crate::features::batch::domain::BatchRepository> =
+        Arc::new(SqlxBatchRepository::new(db_pool.clone()));
+    let batch_service = Arc::new(BatchService::new(
+        Arc::clone(&batch_repository),
+        Arc::clone(&proxy),
+    ));
+    spawn_batch_worker(batch_repository, Arc::clone(&proxy), shutdown.clone());
+    tracing::info!("Batch processing worker spawned");
 
     let health_tasks = crate::features::backends::health::spawn_health_checks(
         http_client,
@@ -313,6 +333,7 @@ pub async fn init_app_state(
         oauth_service,
         backend_registry,
         proxy,
+        batch_service,
         plugin_manager,
         team_repository,
         membership_repository,

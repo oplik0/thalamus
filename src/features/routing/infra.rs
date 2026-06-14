@@ -6,6 +6,7 @@ use crate::features::backends::domain::{BackendRegistry, EndpointSnapshot};
 use crate::features::plugin::PluginManager;
 use crate::features::plugin::routing_bridge::{DEFAULT_PLUGIN_TIMEOUT_MS, ExtismRoutingStrategy};
 use crate::features::routing::domain::{RoutingContext, RoutingStrategy};
+use crate::features::routing::queue::{Priority, PriorityQueueManager};
 use crate::features::routing::strategies::{
     HealthWeightedStrategy, LeastBusyStrategy, LeastConnectionsStrategy, ModelAwareStrategy,
     RandomStrategy, RoundRobinStrategy, WeightedStrategy,
@@ -18,6 +19,7 @@ pub struct RouterService {
     strategy: Box<dyn RoutingStrategy>,
     fallback_strategy: Option<Box<dyn RoutingStrategy>>,
     admission_control: bool,
+    queue_manager: Arc<PriorityQueueManager>,
     #[allow(dead_code)]
     plugin_manager: Option<Arc<PluginManager>>,
 }
@@ -55,13 +57,91 @@ impl RouterService {
             Some(strategy_from_config(&fallback_config, &plugin_manager))
         };
 
+        let queue_manager = Arc::new(PriorityQueueManager::from_config(routing_config));
+
         Self {
             registry,
             strategy: primary,
             fallback_strategy: fallback,
             admission_control: routing_config.strategy.admission_control,
+            queue_manager,
             plugin_manager,
         }
+    }
+
+    #[must_use]
+    pub fn queue_manager(&self) -> Arc<PriorityQueueManager> {
+        Arc::clone(&self.queue_manager)
+    }
+
+    /// Try to select and atomically acquire an endpoint for the request.
+    /// Returns `None` if no healthy endpoint has capacity right now.
+    fn try_select_and_acquire(&self, request: &LlmRequest) -> Option<EndpointSnapshot> {
+        let candidates = self.registry.endpoints_for_model(request.model());
+        if candidates.is_empty() {
+            return None;
+        }
+
+        // Capacity-aware admission control
+        if self.admission_control && candidates.iter().all(|e| e.active_requests >= e.capacity) {
+            return None;
+        }
+
+        let ctx = RoutingContext {
+            request,
+            candidates: &candidates,
+        };
+
+        if let Some(endpoint) = self.strategy.select(&ctx) {
+            if self.registry.try_acquire(&endpoint.id) {
+                return Some(endpoint);
+            }
+
+            // If the selected endpoint raced to full, try the fallback strategy
+            // without re-checking admission control, since we already know at
+            // least one candidate has capacity.
+            if let Some(fallback) = &self.fallback_strategy {
+                if let Some(endpoint) = fallback.select(&ctx) {
+                    if self.registry.try_acquire(&endpoint.id) {
+                        return Some(endpoint);
+                    }
+                }
+            }
+
+            return None;
+        }
+
+        if let Some(fallback) = &self.fallback_strategy {
+            if let Some(endpoint) = fallback.select(&ctx) {
+                if self.registry.try_acquire(&endpoint.id) {
+                    return Some(endpoint);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Route the request immediately, or enqueue it at the given priority and
+    /// wait for capacity to become available.
+    pub async fn route_or_queue(
+        &self,
+        request: &LlmRequest,
+        priority: Priority,
+    ) -> Result<EndpointSnapshot> {
+        if let Some(endpoint) = self.try_select_and_acquire(request) {
+            return Ok(endpoint);
+        }
+
+        let rx = self.queue_manager.enqueue(request.clone(), priority).await?;
+        rx.await
+            .map_err(|_| Error::Internal("Queue dispatch cancelled".to_string()))?
+    }
+
+    /// Dispatch a single queued request if capacity is available.
+    /// Intended to be called after an endpoint slot is released.
+    pub fn dispatch_one_queued(&self, request: &LlmRequest) -> Option<EndpointSnapshot> {
+        self.try_select_and_acquire(request)
     }
 
     pub fn route(&self, request: &LlmRequest) -> Result<EndpointSnapshot> {

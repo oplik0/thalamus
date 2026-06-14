@@ -3,6 +3,7 @@ use crate::error::{Error, Result};
 use crate::features::auth::infra::http_signature::HttpSignatureVerifier;
 use crate::features::auth::infra::key_storage::validate_key;
 use crate::features::auth::infra::token_service::validate_token;
+use crate::features::routing::queue::Priority;
 use axum::{
     extract::FromRequestParts,
     http::{header::AUTHORIZATION, request::Parts},
@@ -21,7 +22,10 @@ pub struct Auth {
     pub scopes: Option<Vec<String>>,
     pub roles: Option<Vec<String>>,
     pub key_id: Option<String>, // Only present if authenticated via API key
-    pub token_id: Option<Uuid>, // Only present if authenticated via Token
+    pub token_id: Option<Uuid>, // Only present if authenticated via API key
+    /// Resolved default queue priority for this principal. `None` means no
+    /// explicit default was configured and the global config default should be used.
+    pub priority: Option<crate::features::routing::queue::Priority>,
 }
 
 impl Auth {
@@ -56,6 +60,23 @@ impl Auth {
     pub fn is_admin(&self) -> bool {
         self.has_scope("admin")
     }
+}
+
+/// Resolve an optional priority string into a `Priority`.
+fn parse_priority(name: Option<&String>) -> Option<Priority> {
+    name.map(|s| Priority::from_name(s))
+}
+
+/// Fetch a team's configured default queue priority.
+async fn team_priority(team_id: Uuid, state: &AppState) -> Result<Option<Priority>> {
+    let row: Option<Option<String>> = sqlx::query_scalar!(
+        r#"SELECT default_priority FROM teams WHERE id = $1"#,
+        team_id
+    )
+    .fetch_optional(&state.db_pool)
+    .await?;
+
+    Ok(row.flatten().map(|s: String| Priority::from_name(&s)))
 }
 
 /// Extractor for authentication (API Key or PASETO Token)
@@ -118,6 +139,7 @@ impl ApiKeyAuth {
         if token_str.starts_with("v4.public.") || token_str.starts_with("v4.local.") {
             // PASETO Token
             let claims = validate_token(token_str, state).await?;
+            let priority = team_priority(claims.dom, state).await?;
 
             Ok(ApiKeyAuth(Auth {
                 user_id: claims.sub,
@@ -127,11 +149,14 @@ impl ApiKeyAuth {
                 roles: claims.roles,
                 key_id: None,
                 token_id: Some(claims.jti),
+                priority,
             }))
         } else {
             // API Key (assume API key if not PASETO)
             // We could check for specific prefixes like "thl_" but let validate_key handle that
             let validated = validate_key(token_str, state).await?;
+        let priority = parse_priority(validated.default_priority.as_ref())
+            .or(team_priority(validated.team_id, state).await?);
 
             Ok(ApiKeyAuth(Auth {
                 user_id: validated.user_id,
@@ -141,6 +166,7 @@ impl ApiKeyAuth {
                 roles: None, // API keys don't currently carry roles, but could be fetched
                 key_id: Some(validated.key_id),
                 token_id: None,
+                priority,
             }))
         }
     }
@@ -151,15 +177,17 @@ impl ApiKeyAuth {
         let uri = &parts.uri;
 
         let verified = HttpSignatureVerifier::verify(method, uri, &parts.headers, state).await?;
+        let priority = team_priority(verified.team_id, state).await?;
 
         Ok(ApiKeyAuth(Auth {
             user_id: verified.user_id,
             team_id: verified.team_id,
             project_id: None,
             scopes: verified.scopes,
-            roles: None, // HTTP signatures don't currently carry roles
+            roles: None, // HTTP signatures don't carry roles
             key_id: Some(verified.key_id),
             token_id: None,
+            priority,
         }))
     }
 }
@@ -192,29 +220,38 @@ impl FromRequestParts<AppState> for OptionalApiKeyAuth {
         if token_str.starts_with("v4.public.") || token_str.starts_with("v4.local.") {
             // PASETO Token
             match validate_token(token_str, state).await {
-                Ok(claims) => Ok(OptionalApiKeyAuth(Some(Auth {
-                    user_id: claims.sub,
-                    team_id: claims.dom,
-                    project_id: None,
-                    scopes: claims.scopes,
-                    roles: claims.roles,
-                    key_id: None,
-                    token_id: Some(claims.jti),
-                }))),
+                Ok(claims) => {
+                    let priority = team_priority(claims.dom, state).await.ok().flatten();
+                    Ok(OptionalApiKeyAuth(Some(Auth {
+                        user_id: claims.sub,
+                        team_id: claims.dom,
+                        project_id: None,
+                        scopes: claims.scopes,
+                        roles: claims.roles,
+                        key_id: None,
+                        token_id: Some(claims.jti),
+                        priority,
+                    })))
+                }
                 Err(_) => Ok(OptionalApiKeyAuth(None)),
             }
         } else {
             // API Key
             match validate_key(token_str, state).await {
-                Ok(validated) => Ok(OptionalApiKeyAuth(Some(Auth {
-                    user_id: validated.user_id,
-                    team_id: validated.team_id,
-                    project_id: validated.project_id,
-                    scopes: validated.scopes,
-                    roles: None,
-                    key_id: Some(validated.key_id),
-                    token_id: None,
-                }))),
+                Ok(validated) => {
+                    let priority = parse_priority(validated.default_priority.as_ref())
+                        .or(team_priority(validated.team_id, state).await.ok().flatten());
+                    Ok(OptionalApiKeyAuth(Some(Auth {
+                        user_id: validated.user_id,
+                        team_id: validated.team_id,
+                        project_id: validated.project_id,
+                        scopes: validated.scopes,
+                        roles: None,
+                        key_id: Some(validated.key_id),
+                        token_id: None,
+                        priority,
+                    })))
+                }
                 Err(_) => Ok(OptionalApiKeyAuth(None)),
             }
         }
@@ -283,6 +320,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         assert!(auth.has_scope("read"));
@@ -300,6 +338,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         assert!(!auth.has_scope("read"));
@@ -316,6 +355,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         assert!(auth.has_any_scope(&["read", "write"]));
@@ -334,6 +374,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         assert!(!auth.has_any_scope(&["read", "write"]));
@@ -349,6 +390,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         assert!(auth.has_all_scopes(&["read", "write"]));
@@ -367,6 +409,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         // When auth has no scopes, it can't satisfy any scope requirements
@@ -386,6 +429,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         assert!(require_scope(&auth, "read").is_ok());
@@ -403,6 +447,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         let err = require_scope(&auth, "admin").unwrap_err();
@@ -504,6 +549,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         assert!(require_any_scope(&auth, &["read", "write"]).is_ok());
@@ -520,6 +566,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         let err = require_any_scope(&auth, &["admin", "delete"]).unwrap_err();
@@ -537,6 +584,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         assert!(require_all_scopes(&auth, &["read", "write"]).is_ok());
@@ -554,6 +602,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         let err = require_all_scopes(&auth, &["read", "write"]).unwrap_err();
@@ -571,6 +620,7 @@ mod tests {
             roles: Some(vec!["user".to_string()]),
             key_id: Some("test_key".to_string()),
             token_id: Some(Uuid::new_v4()),
+            priority: None,
         };
 
         let cloned = auth.clone();
@@ -593,6 +643,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         let api_key_auth = ApiKeyAuth(auth);
