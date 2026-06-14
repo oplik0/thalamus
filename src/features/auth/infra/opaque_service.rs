@@ -107,14 +107,7 @@ pub async fn registration_start(
 
 /// Handle OPAQUE registration finish
 pub async fn registration_finish(request: RegistrationRecord, state: &AppState) -> Result<()> {
-    let _server_setup = get_server_setup(state)?;
-
-    let upload_bytes = decode_base64(&request.message)?;
-    let opaque_upload = RegistrationUpload::<ThalamusCipherSuite>::deserialize(&upload_bytes)
-        .map_err(|e| Error::Authentication(format!("Invalid registration upload: {e}")))?;
-
-    let password_file = ServerRegistration::<ThalamusCipherSuite>::finish(opaque_upload);
-    let registration_bytes = password_file.serialize().to_vec();
+    let registration_bytes = finish_registration_upload(&request.message)?;
 
     // Store in database; user must already exist.
     let user_exists = sqlx::query!("SELECT id FROM users WHERE username = $1", request.username)
@@ -138,6 +131,16 @@ pub async fn registration_finish(request: RegistrationRecord, state: &AppState) 
     }
 
     Ok(())
+}
+
+/// Convert a client OPAQUE registration upload into the bytes stored for login.
+pub fn finish_registration_upload(message: &str) -> Result<Vec<u8>> {
+    let upload_bytes = decode_base64(message)?;
+    let opaque_upload = RegistrationUpload::<ThalamusCipherSuite>::deserialize(&upload_bytes)
+        .map_err(|e| Error::Authentication(format!("Invalid registration upload: {e}")))?;
+
+    let password_file = ServerRegistration::<ThalamusCipherSuite>::finish(opaque_upload);
+    Ok(password_file.serialize().to_vec())
 }
 
 /// Handle OPAQUE login start

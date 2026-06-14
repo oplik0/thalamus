@@ -22,6 +22,11 @@ const NAV_ITEMS = [
 		icon: LayoutDashboard,
 	},
 	{
+		name: "Users",
+		href: "/(tabs)/(admin)/users",
+		icon: Users,
+	},
+	{
 		name: "Teams",
 		href: "/(tabs)/(admin)/teams",
 		icon: Users,

@@ -108,6 +108,8 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::features::batch::api::router())
         // Teams and projects routes
         .merge(crate::features::teams::router())
+        // User management routes
+        .merge(crate::features::users::router())
         .layer(crate::middleware::cors_layer())
         .with_state(state)
 }

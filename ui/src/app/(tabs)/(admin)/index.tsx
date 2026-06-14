@@ -139,6 +139,11 @@ function QuickStats() {
 function QuickActions() {
 	const actions = [
 		{
+			name: "Create User",
+			href: "/(tabs)/(admin)/users/create",
+			icon: Plus,
+		},
+		{
 			name: "Create Team",
 			href: "/(tabs)/(admin)/teams/create",
 			icon: Plus,

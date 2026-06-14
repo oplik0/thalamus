@@ -310,4 +310,220 @@ async fn test_opaque_setup_and_login_flow(pool: PgPool) {
         "Second login finish should succeed: {login2_finish_body}"
     );
     assert!(login2_finish_body["token"].is_string());
+
+    // 7. Create a third user through the user-management endpoints.
+    let client_reg3_start =
+        ClientRegistration::<Cipher>::start(&mut rng, b"ManagedPass1!").expect("reg3 start");
+
+    let (status, reg3_start_body) = make_authenticated_request(
+        &app,
+        "POST",
+        "/v1/users/register/start",
+        &admin_token,
+        Some(serde_json::json!({
+            "username": "managed",
+            "email": "managed@example.com",
+            "message": BASE64.encode(client_reg3_start.message.serialize())
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "Managed registration start should succeed: {reg3_start_body}"
+    );
+
+    let reg3_response_bytes = BASE64
+        .decode(reg3_start_body["message"].as_str().unwrap())
+        .unwrap();
+    let reg3_response =
+        OpaqueRegistrationResponse::<Cipher>::deserialize(&reg3_response_bytes).unwrap();
+
+    let client_reg3_finish = client_reg3_start
+        .state
+        .finish(
+            &mut rng,
+            b"ManagedPass1!",
+            reg3_response,
+            ClientRegistrationFinishParameters::default(),
+        )
+        .expect("reg3 finish");
+
+    let (status, create_user_body) = make_authenticated_request(
+        &app,
+        "POST",
+        "/v1/users/register/finish",
+        &admin_token,
+        Some(serde_json::json!({
+            "username": "managed",
+            "email": "managed@example.com",
+            "message": BASE64.encode(client_reg3_finish.message.serialize()),
+            "role": "member"
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "Managed registration finish should succeed: {create_user_body}"
+    );
+    assert_eq!(create_user_body["user"]["username"], "managed");
+
+    // 8. Login as the managed user.
+    let client_login3_start =
+        ClientLogin::<Cipher>::start(&mut rng, b"ManagedPass1!").expect("login3 start");
+
+    let (status, login3_start_body) = make_request(
+        &app,
+        "POST",
+        "/v1/auth/login/start",
+        Some(serde_json::json!({
+            "username": "managed",
+            "message": BASE64.encode(client_login3_start.message.serialize())
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "Managed login start should succeed: {login3_start_body}"
+    );
+
+    let server_state3 = login3_start_body["server_state"].as_str().unwrap();
+    let credential_response3_bytes = BASE64
+        .decode(login3_start_body["message"].as_str().unwrap())
+        .unwrap();
+    let credential_response3 =
+        CredentialResponse::<Cipher>::deserialize(&credential_response3_bytes).unwrap();
+
+    let client_login3_finish = client_login3_start
+        .state
+        .finish(
+            &mut rng,
+            b"ManagedPass1!",
+            credential_response3,
+            ClientLoginFinishParameters::default(),
+        )
+        .expect("login3 finish");
+
+    let (status, login3_finish_body) = make_request(
+        &app,
+        "POST",
+        "/v1/auth/login/finish",
+        Some(serde_json::json!({
+            "username": "managed",
+            "finish_login_request": BASE64.encode(client_login3_finish.message.serialize()),
+            "server_state": server_state3
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "Managed login finish should succeed: {login3_finish_body}"
+    );
+    let managed_token = login3_finish_body["token"].as_str().unwrap().to_string();
+
+    // 9. Change the managed user's password while authenticated.
+    let client_change_start =
+        ClientRegistration::<Cipher>::start(&mut rng, b"ChangedPass1!").expect("change start");
+
+    let (status, change_start_body) = make_authenticated_request(
+        &app,
+        "POST",
+        "/v1/users/me/password/start",
+        &managed_token,
+        Some(serde_json::json!({
+            "message": BASE64.encode(client_change_start.message.serialize())
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "Password change start should succeed: {change_start_body}"
+    );
+
+    let change_response_bytes = BASE64
+        .decode(change_start_body["message"].as_str().unwrap())
+        .unwrap();
+    let change_response =
+        OpaqueRegistrationResponse::<Cipher>::deserialize(&change_response_bytes).unwrap();
+    let client_change_finish = client_change_start
+        .state
+        .finish(
+            &mut rng,
+            b"ChangedPass1!",
+            change_response,
+            ClientRegistrationFinishParameters::default(),
+        )
+        .expect("change finish");
+
+    let (status, change_finish_body) = make_authenticated_request(
+        &app,
+        "POST",
+        "/v1/users/me/password/finish",
+        &managed_token,
+        Some(serde_json::json!({
+            "message": BASE64.encode(client_change_finish.message.serialize())
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "Password change finish should succeed: {change_finish_body}"
+    );
+
+    let client_login4_start =
+        ClientLogin::<Cipher>::start(&mut rng, b"ChangedPass1!").expect("login4 start");
+    let (status, login4_start_body) = make_request(
+        &app,
+        "POST",
+        "/v1/auth/login/start",
+        Some(serde_json::json!({
+            "username": "managed",
+            "message": BASE64.encode(client_login4_start.message.serialize())
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "Login with changed password should start: {login4_start_body}"
+    );
+
+    let server_state4 = login4_start_body["server_state"].as_str().unwrap();
+    let credential_response4_bytes = BASE64
+        .decode(login4_start_body["message"].as_str().unwrap())
+        .unwrap();
+    let credential_response4 =
+        CredentialResponse::<Cipher>::deserialize(&credential_response4_bytes).unwrap();
+    let client_login4_finish = client_login4_start
+        .state
+        .finish(
+            &mut rng,
+            b"ChangedPass1!",
+            credential_response4,
+            ClientLoginFinishParameters::default(),
+        )
+        .expect("login4 finish");
+
+    let (status, login4_finish_body) = make_request(
+        &app,
+        "POST",
+        "/v1/auth/login/finish",
+        Some(serde_json::json!({
+            "username": "managed",
+            "finish_login_request": BASE64.encode(client_login4_finish.message.serialize()),
+            "server_state": server_state4
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "Login with changed password should finish: {login4_finish_body}"
+    );
+    assert!(login4_finish_body["token"].is_string());
 }

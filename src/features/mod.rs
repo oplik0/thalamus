@@ -15,3 +15,4 @@ pub mod llm_proxy;
 pub mod plugin;
 pub mod routing;
 pub mod teams;
+pub mod users;
