@@ -26,27 +26,35 @@ pub struct Auth {
 
 impl Auth {
     /// Check if the authenticated entity has the required scope
+    #[must_use]
     pub fn has_scope(&self, scope: &str) -> bool {
         self.scopes
             .as_ref()
-            .map(|s| s.contains(&scope.to_string()))
-            .unwrap_or(false)
+            .is_some_and(|s| s.contains(&scope.to_string()))
     }
 
     /// Check if the authenticated entity has any of the required scopes
+    #[must_use]
     pub fn has_any_scope(&self, scopes: &[&str]) -> bool {
         self.scopes
             .as_ref()
-            .map(|s| scopes.iter().any(|scope| s.contains(&scope.to_string())))
-            .unwrap_or(false)
+            .is_some_and(|s| scopes.iter().any(|scope| s.contains(&scope.to_string())))
     }
 
     /// Check if the authenticated entity has all of the required scopes
+    #[must_use]
     pub fn has_all_scopes(&self, scopes: &[&str]) -> bool {
         self.scopes
             .as_ref()
-            .map(|s| scopes.iter().all(|scope| s.contains(&scope.to_string())))
-            .unwrap_or(false)
+            .is_some_and(|s| scopes.iter().all(|scope| s.contains(&scope.to_string())))
+    }
+
+    /// Check if the authenticated entity has the admin scope.
+    ///
+    /// Admins bypass all scope-based authorization checks.
+    #[must_use]
+    pub fn is_admin(&self) -> bool {
+        self.has_scope("admin")
     }
 }
 
@@ -214,20 +222,23 @@ impl FromRequestParts<AppState> for OptionalApiKeyAuth {
 }
 
 /// Middleware to check if a key has a specific scope
+///
+/// Users with the `admin` scope bypass this check.
 pub fn require_scope(auth: &Auth, required_scope: &str) -> Result<()> {
-    if auth.has_scope(required_scope) {
+    if auth.is_admin() || auth.has_scope(required_scope) {
         Ok(())
     } else {
         Err(Error::Authorization(format!(
-            "Missing required scope: {}",
-            required_scope
+            "Missing required scope: {required_scope}"
         )))
     }
 }
 
 /// Middleware to check if a key has any of the specified scopes
+///
+/// Users with the `admin` scope bypass this check.
 pub fn require_any_scope(auth: &Auth, required_scopes: &[&str]) -> Result<()> {
-    if auth.has_any_scope(required_scopes) {
+    if auth.is_admin() || auth.has_any_scope(required_scopes) {
         Ok(())
     } else {
         Err(Error::Authorization(format!(
@@ -238,14 +249,16 @@ pub fn require_any_scope(auth: &Auth, required_scopes: &[&str]) -> Result<()> {
 }
 
 /// Middleware to check if a key has all of the specified scopes
+///
+/// Users with the `admin` scope bypass this check.
 pub fn require_all_scopes(auth: &Auth, required_scopes: &[&str]) -> Result<()> {
-    if auth.has_all_scopes(required_scopes) {
+    if auth.is_admin() || auth.has_all_scopes(required_scopes) {
         Ok(())
     } else {
         let missing: Vec<_> = required_scopes
             .iter()
             .filter(|scope| !auth.has_scope(scope))
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
 
         Err(Error::Authorization(format!(
@@ -393,8 +406,92 @@ mod tests {
         };
 
         let err = require_scope(&auth, "admin").unwrap_err();
-        let err_string = format!("{}", err);
+        let err_string = format!("{err}");
         assert!(err_string.contains("Missing required scope: admin"));
+    }
+
+    #[test]
+    fn test_require_scope_admin_bypasses() {
+        let auth = Auth {
+            user_id: Uuid::new_v4(),
+            team_id: Uuid::new_v4(),
+            project_id: None,
+            scopes: Some(vec!["admin".to_string()]),
+            roles: None,
+            key_id: Some("test_key".to_string()),
+            token_id: None,
+        };
+
+        assert!(require_scope(&auth, "teams:read").is_ok());
+        assert!(require_scope(&auth, "projects:delete").is_ok());
+    }
+
+    #[test]
+    fn test_require_any_scope_admin_bypasses() {
+        let auth = Auth {
+            user_id: Uuid::new_v4(),
+            team_id: Uuid::new_v4(),
+            project_id: None,
+            scopes: Some(vec!["admin".to_string()]),
+            roles: None,
+            key_id: Some("test_key".to_string()),
+            token_id: None,
+        };
+
+        assert!(require_any_scope(&auth, &["teams:read", "projects:write"]).is_ok());
+    }
+
+    #[test]
+    fn test_require_all_scopes_admin_bypasses() {
+        let auth = Auth {
+            user_id: Uuid::new_v4(),
+            team_id: Uuid::new_v4(),
+            project_id: None,
+            scopes: Some(vec!["admin".to_string()]),
+            roles: None,
+            key_id: Some("test_key".to_string()),
+            token_id: None,
+        };
+
+        assert!(
+            require_all_scopes(&auth, &["teams:read", "projects:write", "api_keys:create"]).is_ok()
+        );
+    }
+
+    #[test]
+    fn test_auth_is_admin() {
+        let admin_auth = Auth {
+            user_id: Uuid::new_v4(),
+            team_id: Uuid::new_v4(),
+            project_id: None,
+            scopes: Some(vec!["admin".to_string()]),
+            roles: None,
+            key_id: Some("test_key".to_string()),
+            token_id: None,
+        };
+        assert!(admin_auth.is_admin());
+
+        let non_admin_auth = Auth {
+            user_id: Uuid::new_v4(),
+            team_id: Uuid::new_v4(),
+            project_id: None,
+            scopes: Some(vec!["read".to_string()]),
+            roles: None,
+            key_id: Some("test_key".to_string()),
+            token_id: None,
+        };
+        assert!(!non_admin_auth.is_admin());
+
+        let no_scopes_auth = Auth {
+            user_id: Uuid::new_v4(),
+            team_id: Uuid::new_v4(),
+            project_id: None,
+            scopes: None,
+            roles: None,
+            key_id: Some("test_key".to_string()),
+            token_id: None,
+        };
+        assert!(!no_scopes_auth.is_admin());
     }
 
     #[test]
@@ -426,7 +523,7 @@ mod tests {
         };
 
         let err = require_any_scope(&auth, &["admin", "delete"]).unwrap_err();
-        let err_string = format!("{}", err);
+        let err_string = format!("{err}");
         assert!(err_string.contains("Missing any of required scopes: admin, delete"));
     }
 
@@ -460,7 +557,7 @@ mod tests {
         };
 
         let err = require_all_scopes(&auth, &["read", "write"]).unwrap_err();
-        let err_string = format!("{}", err);
+        let err_string = format!("{err}");
         assert!(err_string.contains("Missing required scopes: write"));
     }
 

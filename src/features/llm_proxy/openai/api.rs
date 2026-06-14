@@ -65,7 +65,7 @@ pub async fn chat_completions(
                     std::future::ready(Some(sse_event))
                 },
             )
-            .filter_map(|item| std::future::ready(item));
+            .filter_map(std::future::ready);
 
         return Ok(Sse::new(sse_stream)
             .keep_alive(KeepAlive::default())

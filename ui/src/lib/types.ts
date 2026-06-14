@@ -43,6 +43,17 @@ export interface OAuthCallbackResponse {
 	is_new_user: boolean;
 }
 
+export interface LoginStartResponse {
+	message: string;
+	server_state: string;
+}
+
+export interface SetupResponse {
+	token: string;
+	user_id: string;
+	team_id: string;
+}
+
 // ─── API Key Types ─────────────────────────────────────────
 
 export interface ApiKeyInfo {

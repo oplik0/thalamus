@@ -1,7 +1,7 @@
 //! Streaming event types for LLM responses
 //!
 //! Provides a unified streaming protocol with item-aware lifecycle events
-//! that map to OpenAI SSE, Anthropic SSE, and Ollama NDJSON streaming formats.
+//! that map to `OpenAI` SSE, Anthropic SSE, and Ollama NDJSON streaming formats.
 //!
 //! Lifecycle: `ResponseCreated → OutputItemStart → N × ContentDelta →
 //!            ContentDone → OutputItemDone → ResponseDone`
@@ -78,7 +78,7 @@ pub enum OutputItemHeader {
 pub enum ContentDeltaPayload {
     /// Text content delta
     Text { text: String },
-    /// Tool call delta (within an OutputItem::Message that contains tool calls)
+    /// Tool call delta (within an `OutputItem::Message` that contains tool calls)
     ToolCall(ToolCallDelta),
     /// Thinking/reasoning delta
     Thinking {
@@ -89,7 +89,7 @@ pub enum ContentDeltaPayload {
     ReasoningSummary { text: String },
     /// Model refusal delta
     Refusal { refusal: String },
-    /// Function call arguments delta (for OutputItem::FunctionCall streaming)
+    /// Function call arguments delta (for `OutputItem::FunctionCall` streaming)
     FunctionCallArguments {
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,

@@ -23,7 +23,7 @@ impl RoutingStrategy for RoundRobinStrategy {
         ctx.candidates.get(index).cloned()
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "round_robin"
     }
 }
@@ -37,7 +37,7 @@ impl RoutingStrategy for RandomStrategy {
         ctx.candidates.choose(&mut rng).cloned()
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "random"
     }
 }
@@ -62,7 +62,7 @@ impl RoutingStrategy for WeightedStrategy {
         ctx.candidates.get(index).cloned()
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "weighted"
     }
 }
@@ -108,7 +108,7 @@ impl RoutingStrategy for ModelAwareStrategy {
         self.delegate.select(ctx)
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "model_aware"
     }
 }
@@ -144,8 +144,8 @@ impl LeastBusyStrategy {
     }
 
     fn load_ratio(endpoint: &EndpointSnapshot) -> f64 {
-        let capacity = endpoint.capacity.max(1) as f64;
-        endpoint.active_requests as f64 / capacity
+        let capacity = f64::from(endpoint.capacity.max(1));
+        f64::from(endpoint.active_requests) / capacity
     }
 }
 
@@ -187,7 +187,7 @@ impl RoutingStrategy for LeastBusyStrategy {
         Some(best.clone())
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "least_busy"
     }
 }
@@ -205,7 +205,7 @@ impl RoutingStrategy for LeastConnectionsStrategy {
             .cloned()
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "least_connections"
     }
 }
@@ -247,7 +247,7 @@ impl RoutingStrategy for HealthWeightedStrategy {
             .iter()
             .map(|endpoint| {
                 let factor = Self::health_factor(endpoint.consecutive_failures);
-                let original_weight = endpoint.weight.max(1) as f64;
+                let original_weight = f64::from(endpoint.weight.max(1));
                 let min_weight = (0.1 * original_weight).max(1.0);
                 let adjusted_weight = (original_weight * factor).max(min_weight) as u32;
 
@@ -264,7 +264,7 @@ impl RoutingStrategy for HealthWeightedStrategy {
         self.delegate.select(&adjusted_ctx)
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "health_weighted"
     }
 }
@@ -541,7 +541,7 @@ mod tests {
             ctx.candidates.iter().max_by_key(|e| e.weight).cloned()
         }
 
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "weighted_pick_highest"
         }
     }

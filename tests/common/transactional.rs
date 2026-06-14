@@ -369,7 +369,7 @@ fn create_test_config() -> Config {
         security: SecurityConfig {
             api_key_secret: "test_secret_key_must_be_at_least_32_bytes_long".to_string(),
             paseto_secret_key: "exactly_32_bytes_for_paseto_key!".to_string(),
-            opaque_server_setup: "test_opaque_setup".to_string(),
+            opaque_server_setup: "dev".to_string(),
         },
         plugins: None,
     }

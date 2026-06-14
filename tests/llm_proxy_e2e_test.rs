@@ -3,6 +3,8 @@
 //! These tests use WireMock to simulate LLM backends and test the complete
 //! request/response flow including routing, authentication, and streaming.
 
+#![allow(unused_imports, unused_mut, unused_variables)]
+
 use axum::body::Body;
 use axum::{Router, ServiceExt};
 use http::{Request, StatusCode};
@@ -158,7 +160,7 @@ async fn chat_completion_returns_correct_format(pool: PgPool) {
 
 #[sqlx::test]
 async fn chat_completion_no_backends_available(pool: PgPool) {
-    let _ = init_test_logging();
+    init_test_logging();
 
     // Create user and API key but NO backend
     let user = TestUserBuilder::new()
@@ -256,7 +258,7 @@ async fn chat_completion_backend_timeout(pool: PgPool) {
 
     // Configure short timeout
     let mut config = common::config_builder::BackendConfigBuilder::new("test-backend")
-        .with_endpoint(&backend.base_url(), 10, vec!["gpt-oss:120b"])
+        .with_endpoint(backend.base_url(), 10, vec!["gpt-oss:120b"])
         .with_timeout("1s")
         .build();
 
@@ -500,7 +502,7 @@ async fn chat_completion_model_not_supported(pool: PgPool) {
 
 #[sqlx::test]
 async fn chat_completion_multiple_backends_different_models(pool: PgPool) {
-    let _ = init_test_logging();
+    init_test_logging();
 
     // Create user and API key
     let user = TestUserBuilder::new()
@@ -565,7 +567,7 @@ async fn chat_completion_multiple_backends_different_models(pool: PgPool) {
 
 #[sqlx::test]
 async fn chat_completion_no_api_key(pool: PgPool) {
-    let _ = init_test_logging();
+    init_test_logging();
 
     // Create backend but don't provide API key
     let backend = MockLlmBackend::start("test-backend", vec!["gpt-oss:120b"]).await;
@@ -599,7 +601,7 @@ async fn chat_completion_no_api_key(pool: PgPool) {
 
 #[sqlx::test]
 async fn chat_completion_invalid_api_key(pool: PgPool) {
-    let _ = init_test_logging();
+    init_test_logging();
 
     let backend = MockLlmBackend::start("test-backend", vec!["gpt-oss:120b"]).await;
 

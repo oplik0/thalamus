@@ -47,10 +47,10 @@ impl ProxyService {
         let mut result = self.client.send(&endpoint, &request).await;
         self.registry.release(&endpoint.id);
 
-        if let Ok(ref response) = result {
-            if let Err(guardrail_err) = self.guardrails.inspect_response(response) {
-                result = Err(guardrail_err);
-            }
+        if let Ok(ref response) = result
+            && let Err(guardrail_err) = self.guardrails.inspect_response(response)
+        {
+            result = Err(guardrail_err);
         }
 
         result

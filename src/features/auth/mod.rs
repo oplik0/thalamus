@@ -8,6 +8,7 @@
 
 pub mod api;
 pub mod api_oauth;
+pub mod api_setup;
 pub mod domain;
 pub mod infra;
 

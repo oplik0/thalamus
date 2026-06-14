@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::bootstrap::AppState;
 use crate::error::{Error, Result};
 use crate::features::auth::api_oauth::oauth_routes;
+use crate::features::auth::api_setup::setup_router;
 use crate::features::auth::domain::api_key::{CreateApiKeyRequest, CreateApiKeyResponse};
 use crate::features::auth::domain::keys::{Prefix, generate_key};
 use crate::features::auth::domain::opaque::{
@@ -52,7 +53,7 @@ pub struct ApiKeyInfo {
 
 /// Create a new API key
 ///
-/// Requires authentication with a key that has the 'api_keys:create' scope
+/// Requires authentication with a key that has the '`api_keys:create`' scope
 pub async fn create_key(
     State(state): State<AppState>,
     ApiKeyAuth(auth): ApiKeyAuth,
@@ -170,10 +171,16 @@ pub async fn token_exchange(
 }
 
 /// Start OPAQUE registration
+///
+/// Requires authentication. In normal operation this is used by an already
+/// authenticated admin to set or rotate an OPAQUE password for a user. The
+/// first-run setup flow uses `/v1/auth/setup` instead.
 pub async fn register_start_handler(
     State(state): State<AppState>,
+    ApiKeyAuth(auth): ApiKeyAuth,
     Json(req): Json<RegistrationRequest>,
 ) -> Result<Json<RegistrationResponse>> {
+    require_scope(&auth, "admin")?;
     let response = registration_start(req, &state).await?;
     Ok(Json(response))
 }
@@ -181,8 +188,10 @@ pub async fn register_start_handler(
 /// Finish OPAQUE registration
 pub async fn register_finish_handler(
     State(state): State<AppState>,
+    ApiKeyAuth(auth): ApiKeyAuth,
     Json(req): Json<RegistrationRecord>,
 ) -> Result<Json<serde_json::Value>> {
+    require_scope(&auth, "admin")?;
     registration_finish(req, &state).await?;
     Ok(Json(serde_json::json!({
         "message": "Registration successful"
@@ -445,7 +454,7 @@ pub async fn create_signing_key_handler(
 ) -> Result<Json<CreateSigningKeyResponse>> {
     require_scope(&auth, "signing_keys:create")?;
 
-    let algorithm = SignatureAlgorithm::from_str(&req.algorithm)?;
+    let algorithm = req.algorithm.parse::<SignatureAlgorithm>()?;
 
     let key_pair = create_signing_key(
         auth.user_id,
@@ -593,6 +602,7 @@ pub fn router() -> Router<AppState> {
             delete(revoke_signing_key_handler),
         )
         .merge(oauth_routes())
+        .merge(setup_router())
 }
 
 #[cfg(test)]

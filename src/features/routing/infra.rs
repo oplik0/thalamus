@@ -90,10 +90,10 @@ impl RouterService {
             return Ok(endpoint);
         }
 
-        if let Some(fallback) = &self.fallback_strategy {
-            if let Some(endpoint) = fallback.select(&ctx) {
-                return Ok(endpoint);
-            }
+        if let Some(fallback) = &self.fallback_strategy
+            && let Some(endpoint) = fallback.select(&ctx)
+        {
+            return Ok(endpoint);
         }
 
         Err(Error::Backend(
@@ -107,16 +107,15 @@ fn strategy_from_config(
     plugin_manager: &Option<Arc<PluginManager>>,
 ) -> Box<dyn RoutingStrategy> {
     // Check for plugin strategies first, before falling through to built-ins
-    if let Some(pm) = plugin_manager {
-        if pm.plugin_exists(&config.name) {
-            if let Some(pool) = pm.get_pool(&config.name) {
-                return Box::new(ExtismRoutingStrategy::new(
-                    pool,
-                    config.name.clone(),
-                    DEFAULT_PLUGIN_TIMEOUT_MS,
-                ));
-            }
-        }
+    if let Some(pm) = plugin_manager
+        && pm.plugin_exists(&config.name)
+        && let Some(pool) = pm.get_pool(&config.name)
+    {
+        return Box::new(ExtismRoutingStrategy::new(
+            pool,
+            config.name.clone(),
+            DEFAULT_PLUGIN_TIMEOUT_MS,
+        ));
     }
 
     let base: Box<dyn RoutingStrategy> = match config.name.as_str() {

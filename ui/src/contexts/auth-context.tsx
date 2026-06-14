@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import React, {
+import {
 	createContext,
 	type ReactNode,
 	useCallback,
@@ -13,6 +13,7 @@ import { clearToken, getToken } from "@/lib/auth";
 import type { WhoamiResponse } from "@/lib/types";
 import {
 	isAuthError,
+	loginWithCredentials,
 	logout as logoutService,
 	refreshToken,
 	whoami,
@@ -24,6 +25,7 @@ interface AuthContextType {
 	isLoading: boolean;
 	logout: () => Promise<void>;
 	refetchUser: () => Promise<void>;
+	loginWithCredentials: (username: string, password: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -91,6 +93,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
 		await refetch();
 	}, [refetch]);
 
+	const handleLoginWithCredentials = useCallback(
+		async (username: string, password: string) => {
+			await loginWithCredentials(username, password);
+			await refetch();
+		},
+		[refetch],
+	);
+
 	// Combined loading state
 	const isAuthLoading = isLoading || isQueryLoading;
 
@@ -102,6 +112,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 				isLoading: isAuthLoading,
 				logout: handleLogout,
 				refetchUser: handleRefetchUser,
+				loginWithCredentials: handleLoginWithCredentials,
 			}}
 		>
 			{children}

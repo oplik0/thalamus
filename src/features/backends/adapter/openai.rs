@@ -22,7 +22,7 @@ use crate::shared::models::{
 pub struct OpenAiAdapter;
 
 impl BackendAdapter for OpenAiAdapter {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "openai"
     }
 
@@ -419,7 +419,7 @@ fn to_openai_request(chat: &ChatRequest) -> OpenAiChatRequest {
     }
 }
 
-/// Extract tool calls from Content::Parts if any exist
+/// Extract tool calls from `Content::Parts` if any exist
 fn extract_tool_calls(content: &Content) -> Option<Vec<OpenAiMessageToolCall>> {
     let calls: Vec<_> = content
         .tool_calls()
@@ -486,8 +486,7 @@ fn from_openai_response(source: OpenAiChatResponse) -> ChatResponse {
         let finish = choice
             .finish_reason
             .as_deref()
-            .map(parse_finish_reason)
-            .unwrap_or(FinishReason::Stop);
+            .map_or(FinishReason::Stop, parse_finish_reason);
 
         let has_tool_calls = choice
             .message
@@ -495,18 +494,18 @@ fn from_openai_response(source: OpenAiChatResponse) -> ChatResponse {
             .as_ref()
             .is_some_and(|tc| !tc.is_empty());
 
-        if let Some(content) = choice.message.content {
-            if !content.is_empty() || !has_tool_calls {
-                output.push(OutputItem::Message {
-                    id: None,
-                    role: parse_openai_role(&choice.message.role),
-                    content: vec![AnnotatedContentPart::plain(ContentPart::Text {
-                        text: content,
-                    })],
-                    status: Some(ItemStatus::Completed),
-                    finish_reason: Some(finish.clone()),
-                });
-            }
+        if let Some(content) = choice.message.content
+            && (!content.is_empty() || !has_tool_calls)
+        {
+            output.push(OutputItem::Message {
+                id: None,
+                role: parse_openai_role(&choice.message.role),
+                content: vec![AnnotatedContentPart::plain(ContentPart::Text {
+                    text: content,
+                })],
+                status: Some(ItemStatus::Completed),
+                finish_reason: Some(finish.clone()),
+            });
         }
 
         if let Some(tool_calls) = choice.message.tool_calls {

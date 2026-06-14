@@ -166,18 +166,13 @@ impl PriorityQueueManager {
                 }
             }
 
-            while let Some(entry) = queues[priority_idx].pop_front() {
-                match route_fn(&entry.request) {
-                    Ok(endpoint) => {
-                        let _ = entry.responder.send(Ok(endpoint));
-                        return;
-                    }
-                    Err(_) => {
-                        // No capacity yet, put it back at the front
-                        queues[priority_idx].push_front(entry);
-                        break;
-                    }
+            if let Some(entry) = queues[priority_idx].pop_front() {
+                if let Ok(endpoint) = route_fn(&entry.request) {
+                    let _ = entry.responder.send(Ok(endpoint));
+                    return;
                 }
+                // No capacity yet, put it back at the front
+                queues[priority_idx].push_front(entry);
             }
         }
     }
@@ -218,7 +213,7 @@ impl PriorityQueueManager {
                     _ = ticker.tick() => {
                         manager.age_requests().await;
                     }
-                    _ = shutdown.cancelled() => break,
+                    () = shutdown.cancelled() => break,
                 }
             }
         });

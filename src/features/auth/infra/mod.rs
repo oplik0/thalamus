@@ -20,7 +20,9 @@ pub use key_storage::{list_team_keys, list_user_keys, revoke_key, store_key, val
 pub use oauth_providers::{GitHubEnterpriseProvider, GitHubOAuthProvider};
 pub use oauth_service::{OAuthAuthResponse, OAuthInitiateResponse, OAuthService, ProviderInfo};
 pub use oauth_state::{InMemoryOAuthStateStore, OAuthStateStore, create_oauth_flow_state};
-pub use opaque_service::{login_finish, login_start, registration_finish, registration_start};
+pub use opaque_service::{
+    get_server_setup, login_finish, login_start, registration_finish, registration_start,
+};
 pub use signing_key_management::{
     GeneratedKeyPair, SignatureAlgorithm, SigningKey, create_signing_key, get_signing_key,
     get_signing_key_by_fingerprint, list_user_signing_keys, revoke_signing_key,

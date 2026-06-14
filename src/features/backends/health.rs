@@ -7,6 +7,7 @@ use crate::features::backends::infra::InMemoryBackendRegistry;
 use crate::shared::config::types::BackendConfig;
 use crate::shared::utils::parse_duration_or_default;
 
+#[must_use]
 pub fn spawn_health_checks(
     http_client: reqwest::Client,
     registry: Arc<InMemoryBackendRegistry>,
@@ -50,7 +51,7 @@ pub fn spawn_health_checks(
                 let mut ticker = tokio::time::interval(interval);
                 loop {
                     tokio::select! {
-                        _ = token.cancelled() => break,
+                        () = token.cancelled() => break,
                         _ = ticker.tick() => {
                             let outcome = client.get(&url).timeout(timeout).send().await;
                             let healthy = outcome

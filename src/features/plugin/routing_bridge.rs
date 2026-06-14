@@ -24,6 +24,7 @@ pub struct ExtismRoutingStrategy {
 }
 
 impl ExtismRoutingStrategy {
+    #[must_use]
     pub fn new(pool: Arc<Pool>, name: String, timeout_ms: u64) -> Self {
         Self {
             pool,

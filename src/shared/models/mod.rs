@@ -1,7 +1,7 @@
 //! Unified LLM request and response models
 //!
 //! These types provide a provider-agnostic representation for LLM
-//! conversations that supports lossless conversion to/from OpenAI,
+//! conversations that supports lossless conversion to/from `OpenAI`,
 //! Anthropic, Ollama, and other provider formats.
 //!
 //! Uses an item-based model (inspired by the Responses API) as the

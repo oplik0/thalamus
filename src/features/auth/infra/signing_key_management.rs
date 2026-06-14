@@ -24,18 +24,22 @@ pub enum SignatureAlgorithm {
     EcdsaP256Sha256,
 }
 
-impl SignatureAlgorithm {
-    /// Parse from string
-    pub fn from_str(s: &str) -> Result<Self> {
+impl std::str::FromStr for SignatureAlgorithm {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
         match s {
             "ed25519" => Ok(Self::Ed25519),
             "rsa-pss-sha512" => Ok(Self::RsaPssSha512),
             "ecdsa-p256-sha256" => Ok(Self::EcdsaP256Sha256),
-            _ => Err(Error::InvalidInput(format!("Unknown algorithm: {}", s))),
+            _ => Err(Error::InvalidInput(format!("Unknown algorithm: {s}"))),
         }
     }
+}
 
+impl SignatureAlgorithm {
     /// Get the string representation
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Ed25519 => "ed25519",
@@ -96,12 +100,12 @@ pub fn generate_ed25519_key_pair() -> Result<(String, String)> {
 
     let private_pem = format!(
         "-----BEGIN ED25519 PRIVATE KEY-----\n{}\n-----END ED25519 PRIVATE KEY-----",
-        format_pem_body(&BASE64.encode(&private_bytes))
+        format_pem_body(&BASE64.encode(private_bytes))
     );
 
     let public_pem = format!(
         "-----BEGIN ED25519 PUBLIC KEY-----\n{}\n-----END ED25519 PUBLIC KEY-----",
-        format_pem_body(&BASE64.encode(&public_bytes))
+        format_pem_body(&BASE64.encode(public_bytes))
     );
 
     Ok((private_pem, public_pem))
@@ -115,18 +119,18 @@ pub fn generate_rsa_key_pair() -> Result<(String, String)> {
 
     let mut rng = OsRng;
     let private_key = RsaPrivateKey::new(&mut rng, 4096)
-        .map_err(|e| Error::Internal(format!("Failed to generate RSA key: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to generate RSA key: {e}")))?;
 
     let public_key = private_key.to_public_key();
 
     let private_pem = private_key
         .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
-        .map_err(|e| Error::Internal(format!("Failed to encode private key: {}", e)))?
+        .map_err(|e| Error::Internal(format!("Failed to encode private key: {e}")))?
         .to_string();
 
     let public_pem = public_key
         .to_public_key_pem(rsa::pkcs8::LineEnding::LF)
-        .map_err(|e| Error::Internal(format!("Failed to encode public key: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to encode public key: {e}")))?;
 
     Ok((private_pem, public_pem))
 }
@@ -142,13 +146,13 @@ pub fn generate_ecdsa_key_pair() -> Result<(String, String)> {
 
     let private_pem = signing_key
         .to_pkcs8_pem(LineEnding::LF)
-        .map_err(|e| Error::Internal(format!("Failed to encode private key: {}", e)))?
+        .map_err(|e| Error::Internal(format!("Failed to encode private key: {e}")))?
         .to_string();
 
     let verifying_key = signing_key.verifying_key();
     let public_pem = verifying_key
         .to_public_key_pem(LineEnding::LF)
-        .map_err(|e| Error::Internal(format!("Failed to encode public key: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to encode public key: {e}")))?;
 
     Ok((private_pem, public_pem))
 }
@@ -170,7 +174,7 @@ fn compute_fingerprint(public_key_pem: &str) -> Result<String> {
 
     let key_bytes = BASE64
         .decode(&base64_content)
-        .map_err(|e| Error::Internal(format!("Invalid PEM encoding: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Invalid PEM encoding: {e}")))?;
 
     let mut hasher = Sha256::new();
     hasher.update(&key_bytes);
@@ -188,6 +192,7 @@ fn format_pem_body(base64: &str) -> String {
 }
 
 /// Create a new signing key
+#[allow(clippy::too_many_arguments)]
 pub async fn create_signing_key(
     user_id: Uuid,
     team_id: Uuid,
@@ -412,11 +417,7 @@ pub async fn get_signing_key_by_fingerprint(
 // Helper module for hex encoding
 mod hex {
     pub fn encode<T: AsRef<[u8]>>(input: T) -> String {
-        input
-            .as_ref()
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect()
+        input.as_ref().iter().map(|b| format!("{b:02x}")).collect()
     }
 }
 

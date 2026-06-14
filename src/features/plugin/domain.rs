@@ -64,7 +64,7 @@ impl PluginManager {
 
             for entry in entries {
                 let entry = entry.map_err(|e| {
-                    crate::Error::Internal(format!("Failed to read directory entry: {}", e))
+                    crate::Error::Internal(format!("Failed to read directory entry: {e}"))
                 })?;
                 let path = entry.path();
 
@@ -189,10 +189,7 @@ impl PluginManager {
     /// Unload a plugin by name
     pub fn unload_plugin(&self, name: &str) -> crate::Result<()> {
         if self.plugins.remove(name).is_none() {
-            return Err(crate::Error::NotFound(format!(
-                "Plugin '{}' not found",
-                name
-            )));
+            return Err(crate::Error::NotFound(format!("Plugin '{name}' not found")));
         }
         Ok(())
     }
@@ -214,10 +211,9 @@ impl PluginManager {
                 entry.get_mut().error_count = std::sync::atomic::AtomicU64::new(0);
                 Ok(())
             }
-            dashmap::mapref::entry::Entry::Vacant(_) => Err(crate::Error::NotFound(format!(
-                "Plugin '{}' not found",
-                name
-            ))),
+            dashmap::mapref::entry::Entry::Vacant(_) => {
+                Err(crate::Error::NotFound(format!("Plugin '{name}' not found")))
+            }
         }
     }
 
