@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE batch_jobs\n            SET status = 'completed',\n                response_body = $2,\n                completed_count = $3,\n                failed_count = $4,\n                completed_at = NOW()\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3b2c3a1826b05b982a6a747613427df97cbe83a49cfd9c46fe37f98ed27fe862"
+}

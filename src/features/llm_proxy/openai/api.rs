@@ -3,6 +3,7 @@ use std::convert::Infallible;
 use axum::{
     Json, Router,
     extract::State,
+    http::HeaderMap,
     response::IntoResponse,
     response::sse::{Event, KeepAlive, Sse},
     routing::post,
@@ -14,6 +15,8 @@ use crate::bootstrap::AppState;
 use crate::features::llm_proxy::openai::dto::{
     ChatCompletionsRequest, ChatCompletionsResponse, OpenAiEmbeddingsRequest, StreamChunkConverter,
 };
+use crate::features::routing::priority::resolve_priority;
+use crate::middleware::OptionalApiKeyAuth;
 use crate::shared::models::{LlmRequest, StreamEvent};
 
 pub fn router() -> Router<AppState> {
@@ -24,13 +27,16 @@ pub fn router() -> Router<AppState> {
 
 pub async fn chat_completions(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    OptionalApiKeyAuth(auth): OptionalApiKeyAuth,
     Json(request): Json<ChatCompletionsRequest>,
 ) -> Result<axum::response::Response> {
+    let priority = resolve_priority(&headers, auth.as_ref(), &state.config.routing);
     let is_stream = request.stream;
     let unified: LlmRequest = request.into();
 
     if is_stream {
-        let stream = state.proxy.handle_stream(unified).await?;
+        let stream = state.proxy.handle_stream(unified, priority).await?;
 
         // Use scan to carry converter state and a done flag through the stream.
         // Yields Option<Result<Event>>: Some for events to emit, None to skip.
@@ -72,14 +78,17 @@ pub async fn chat_completions(
             .into_response());
     }
 
-    let response = state.proxy.handle(unified).await?;
+    let response = state.proxy.handle(unified, priority).await?;
     Ok(Json(ChatCompletionsResponse::from(response)).into_response())
 }
 
 pub async fn embeddings(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    OptionalApiKeyAuth(auth): OptionalApiKeyAuth,
     Json(request): Json<OpenAiEmbeddingsRequest>,
 ) -> Result<Json<serde_json::Value>> {
-    let response = state.proxy.handle_embedding(request.into()).await?;
+    let priority = resolve_priority(&headers, auth.as_ref(), &state.config.routing);
+    let response = state.proxy.handle_embedding(request.into(), priority).await?;
     Ok(Json(response))
 }
