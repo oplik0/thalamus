@@ -100,23 +100,21 @@ impl RouterService {
             // If the selected endpoint raced to full, try the fallback strategy
             // without re-checking admission control, since we already know at
             // least one candidate has capacity.
-            if let Some(fallback) = &self.fallback_strategy {
-                if let Some(endpoint) = fallback.select(&ctx) {
-                    if self.registry.try_acquire(&endpoint.id) {
-                        return Some(endpoint);
-                    }
-                }
+            if let Some(fallback) = &self.fallback_strategy
+                && let Some(endpoint) = fallback.select(&ctx)
+                && self.registry.try_acquire(&endpoint.id)
+            {
+                return Some(endpoint);
             }
 
             return None;
         }
 
-        if let Some(fallback) = &self.fallback_strategy {
-            if let Some(endpoint) = fallback.select(&ctx) {
-                if self.registry.try_acquire(&endpoint.id) {
-                    return Some(endpoint);
-                }
-            }
+        if let Some(fallback) = &self.fallback_strategy
+            && let Some(endpoint) = fallback.select(&ctx)
+            && self.registry.try_acquire(&endpoint.id)
+        {
+            return Some(endpoint);
         }
 
         None
@@ -133,7 +131,10 @@ impl RouterService {
             return Ok(endpoint);
         }
 
-        let rx = self.queue_manager.enqueue(request.clone(), priority).await?;
+        let rx = self
+            .queue_manager
+            .enqueue(request.clone(), priority)
+            .await?;
         rx.await
             .map_err(|_| Error::Internal("Queue dispatch cancelled".to_string()))?
     }

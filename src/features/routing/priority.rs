@@ -35,10 +35,10 @@ pub fn resolve_priority(
         }
     }
 
-    if let Some(auth) = auth {
-        if let Some(priority) = auth.priority {
-            return priority;
-        }
+    if let Some(auth) = auth
+        && let Some(priority) = auth.priority
+    {
+        return priority;
     }
 
     Priority::from_name(&routing_config.default_queue)

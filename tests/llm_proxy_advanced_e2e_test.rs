@@ -667,7 +667,7 @@ async fn backend_invalid_json_returns_502(pool: PgPool) {
 async fn request_is_queued_when_backend_at_capacity(pool: PgPool) {
     init_test_logging();
 
-    let (user, api_key) = setup_user_and_api_key(&pool).await;
+    let (_user, api_key) = setup_user_and_api_key(&pool).await;
 
     // Single-slot backend with a slow response so the first request holds the slot.
     let backend = MockLlmBackend::start_with_capacity("queued", vec!["gpt-oss:120b"], 1).await;
@@ -684,7 +684,7 @@ async fn request_is_queued_when_backend_at_capacity(pool: PgPool) {
         map.insert(
             "queued".to_string(),
             BackendConfigBuilder::new("queued")
-                .with_endpoint(&backend.base_url(), 1, vec!["gpt-oss:120b"])
+                .with_endpoint(backend.base_url(), 1, vec!["gpt-oss:120b"])
                 .build(),
         );
         map

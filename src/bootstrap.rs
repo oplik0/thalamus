@@ -6,8 +6,8 @@
 use crate::features::auth::infra::OAuthService;
 use crate::features::authorization::CasbinAuthorizer;
 use crate::features::backends::infra::{AdaptingBackendClient, InMemoryBackendRegistry};
-use crate::features::batch::infra::{SqlxBatchRepository, spawn_batch_worker};
 use crate::features::batch::BatchService;
+use crate::features::batch::infra::{SqlxBatchRepository, spawn_batch_worker};
 use crate::features::llm_proxy::ProxyService;
 use crate::features::plugin::PluginManager;
 use crate::features::plugin::guardrail_bridge::GuardrailService;

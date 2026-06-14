@@ -195,11 +195,17 @@ run = "cargo clippy --all-targets --all-features -- -D warnings"
 
 [tasks.fmt]
 description = "Format code"
-run = "cargo fmt --all"
+run = '''
+  rustup component add rustfmt
+  cargo fmt --all
+'''
 
 [tasks."fmt:check"]
 description = "Check formatting"
-run = "cargo fmt --all -- --check"
+run = '''
+  rustup component add rustfmt
+  cargo fmt --all -- --check
+'''
 
 [tasks.ci]
 description = "Full CI sequence: fmt:check -> lint -> test:ci"

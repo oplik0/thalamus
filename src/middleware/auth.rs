@@ -155,8 +155,11 @@ impl ApiKeyAuth {
             // API Key (assume API key if not PASETO)
             // We could check for specific prefixes like "thl_" but let validate_key handle that
             let validated = validate_key(token_str, state).await?;
-        let priority = parse_priority(validated.default_priority.as_ref())
-            .or(team_priority(validated.team_id, state).await?);
+            let priority = parse_priority(validated.default_priority.as_ref()).or(team_priority(
+                validated.team_id,
+                state,
+            )
+            .await?);
 
             Ok(ApiKeyAuth(Auth {
                 user_id: validated.user_id,
@@ -465,6 +468,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         assert!(require_scope(&auth, "teams:read").is_ok());
@@ -481,6 +485,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         assert!(require_any_scope(&auth, &["teams:read", "projects:write"]).is_ok());
@@ -496,6 +501,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
 
         assert!(
@@ -513,6 +519,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
         assert!(admin_auth.is_admin());
 
@@ -524,6 +531,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
         assert!(!non_admin_auth.is_admin());
 
@@ -535,6 +543,7 @@ mod tests {
             roles: None,
             key_id: Some("test_key".to_string()),
             token_id: None,
+            priority: None,
         };
         assert!(!no_scopes_auth.is_admin());
     }

@@ -155,9 +155,9 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
     };
 
     // Look up the key in the database by key_id (public part only)
-        let result = sqlx::query_as!(
-            ApiKey,
-            r#"
+    let result = sqlx::query_as!(
+        ApiKey,
+        r#"
             SELECT
                 id, key_id, key_hash, key_prefix,
                 user_id, team_id, project_id, name, description,
@@ -166,10 +166,10 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
             FROM api_keys
             WHERE key_id = $1
             "#,
-            key_id
-        )
-        .fetch_optional(&state.db_pool)
-        .await?;
+        key_id
+    )
+    .fetch_optional(&state.db_pool)
+    .await?;
 
     let api_key = result.ok_or_else(|| Error::Authentication("Invalid API key".to_string()))?;
 

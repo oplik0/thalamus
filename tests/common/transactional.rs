@@ -72,8 +72,9 @@ pub async fn init_test_state(pool: PgPool) -> thalamus::bootstrap::AppState {
         backend_registry.clone(),
         GuardrailService::empty(),
     ));
-    let batch_repository: Arc<dyn thalamus::features::batch::domain::BatchRepository> =
-        Arc::new(thalamus::features::batch::infra::SqlxBatchRepository::new(pool.clone()));
+    let batch_repository: Arc<dyn thalamus::features::batch::domain::BatchRepository> = Arc::new(
+        thalamus::features::batch::infra::SqlxBatchRepository::new(pool.clone()),
+    );
     let batch_service = Arc::new(thalamus::features::batch::BatchService::new(
         batch_repository,
         Arc::clone(&proxy),
@@ -186,8 +187,9 @@ pub async fn init_test_state_with_backends(
         backend_registry.clone(),
         GuardrailService::empty(),
     ));
-    let batch_repository: Arc<dyn thalamus::features::batch::domain::BatchRepository> =
-        Arc::new(thalamus::features::batch::infra::SqlxBatchRepository::new(pool.clone()));
+    let batch_repository: Arc<dyn thalamus::features::batch::domain::BatchRepository> = Arc::new(
+        thalamus::features::batch::infra::SqlxBatchRepository::new(pool.clone()),
+    );
     let batch_service = Arc::new(thalamus::features::batch::BatchService::new(
         batch_repository,
         Arc::clone(&proxy),
@@ -276,8 +278,9 @@ pub async fn init_test_state_with_config(
         backend_registry.clone(),
         GuardrailService::empty(),
     ));
-    let batch_repository: Arc<dyn thalamus::features::batch::domain::BatchRepository> =
-        Arc::new(thalamus::features::batch::infra::SqlxBatchRepository::new(pool.clone()));
+    let batch_repository: Arc<dyn thalamus::features::batch::domain::BatchRepository> = Arc::new(
+        thalamus::features::batch::infra::SqlxBatchRepository::new(pool.clone()),
+    );
     let batch_service = Arc::new(thalamus::features::batch::BatchService::new(
         batch_repository,
         Arc::clone(&proxy),
