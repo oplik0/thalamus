@@ -159,19 +159,21 @@ default = pkg.ThalamusConfig {
     }
 
     # OAuth providers (optional)
-    oauth_providers = [
-        pkg.OAuthProviderConfig {
-            name = "mock-oidc"
-            provider_type = "oidc"
-            client_id = "test-client"
-            client_secret = "test-secret"
-            enterprise_url = "http://mock-oidc:8080"
-            authorization_endpoint = "http://localhost:9999/connect/authorize"
-            token_endpoint = "http://mock-oidc:8080/connect/token"
-            userinfo_endpoint = "http://mock-oidc:8080/connect/userinfo"
-            scopes = ["openid", "email", "profile"]
-        }
-    ]
+    # Leave this unset for the default username/password first-run setup flow.
+    # Uncomment this block when testing OAuth with docker-compose.yml's mock-oidc service.
+    # oauth_providers = [
+    #     pkg.OAuthProviderConfig {
+    #         name = "mock-oidc"
+    #         provider_type = "oidc"
+    #         client_id = "test-client"
+    #         client_secret = "test-secret"
+    #         enterprise_url = "http://mock-oidc:8080"
+    #         authorization_endpoint = "http://localhost:9999/connect/authorize"
+    #         token_endpoint = "http://mock-oidc:8080/connect/token"
+    #         userinfo_endpoint = "http://mock-oidc:8080/connect/userinfo"
+    #         scopes = ["openid", "email", "profile"]
+    #     }
+    # ]
 }
 
 # Production profile - override settings for production
