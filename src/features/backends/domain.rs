@@ -82,6 +82,10 @@ pub trait BackendRegistry: Send + Sync {
     fn timeout_for(&self, id: &EndpointId) -> Duration;
     fn retry_for(&self, id: &EndpointId) -> Option<RetryConfig>;
     fn acquire(&self, id: &EndpointId);
+    /// Attempt to acquire a slot on the endpoint, returning `false` if the
+    /// endpoint is already at capacity. This makes capacity checks atomic and
+    /// avoids races between routing and outbound request start.
+    fn try_acquire(&self, id: &EndpointId) -> bool;
     fn release(&self, id: &EndpointId);
     fn mark_health(&self, id: &EndpointId, healthy: bool);
 }

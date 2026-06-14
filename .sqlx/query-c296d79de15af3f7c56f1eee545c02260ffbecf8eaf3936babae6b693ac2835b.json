@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, key_id, key_hash, key_prefix,\n            user_id, team_id, project_id, name, description,\n            scopes, is_active as \"is_active!\", last_used_at,\n            expires_at, created_at, revoked_at\n        FROM api_keys\n        WHERE user_id = $1\n        ORDER BY created_at DESC\n        ",
+  "query": "\n            SELECT\n                id, key_id, key_hash, key_prefix,\n                user_id, team_id, project_id, name, description,\n                scopes, default_priority, is_active as \"is_active!\", last_used_at,\n                expires_at, created_at, revoked_at\n            FROM api_keys\n            WHERE key_id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -55,33 +55,38 @@
       },
       {
         "ordinal": 10,
+        "name": "default_priority",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
         "name": "is_active!",
         "type_info": "Bool"
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "last_used_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "expires_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "revoked_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text"
       ]
     },
     "nullable": [
@@ -98,9 +103,10 @@
       true,
       true,
       true,
+      true,
       false,
       true
     ]
   },
-  "hash": "ecf7a362f86292d539f35eb179291127d588e1450d54b609fb23033d3295c5e7"
+  "hash": "c296d79de15af3f7c56f1eee545c02260ffbecf8eaf3936babae6b693ac2835b"
 }
