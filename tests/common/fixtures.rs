@@ -274,10 +274,11 @@ impl TestApiKeyBuilder {
             }
         };
 
-        let key_value = format!("thalamus_test_{}", uuid::Uuid::new_v4());
-        let key_hash = sha256_hash(&key_value);
-        let key_prefix = &key_value[..8.min(key_value.len())];
-        let key_id = format!("thal_{}", &uuid::Uuid::new_v4().to_string()[..12]);
+        let key_id = uuid::Uuid::new_v4().simple().to_string()[..22].to_string();
+        let key_secret = uuid::Uuid::new_v4().simple().to_string();
+        let key_value = format!("thl_{key_id}_{key_secret}");
+        let key_hash = api_key_hash(&key_secret);
+        let key_prefix = key_value[..12.min(key_value.len())].to_string();
 
         let expires_at = self
             .expires_in_days
@@ -762,9 +763,21 @@ pub mod response_parsers {
 }
 
 // Helper functions
-fn sha256_hash(input: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(input.as_bytes());
-    hex::encode(hasher.finalize())
+fn api_key_hash(secret: &str) -> String {
+    use argon2::password_hash::{SaltString, rand_core::OsRng};
+    use argon2::{Argon2, Params, PasswordHasher};
+
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::new_with_secret(
+        b"test_secret_key_must_be_at_least_32_bytes_long",
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        Params::new(1024, 2, 1, Some(64)).expect("valid Argon2 test parameters"),
+    )
+    .expect("valid Argon2 test secret");
+
+    argon2
+        .hash_password(secret.as_bytes(), &salt)
+        .expect("failed to hash test API key")
+        .to_string()
 }

@@ -16,7 +16,7 @@ use crate::features::llm_proxy::openai::dto::{
     ChatCompletionsRequest, ChatCompletionsResponse, OpenAiEmbeddingsRequest, StreamChunkConverter,
 };
 use crate::features::routing::priority::resolve_priority;
-use crate::middleware::OptionalApiKeyAuth;
+use crate::middleware::ApiKeyAuth;
 use crate::shared::models::{LlmRequest, StreamEvent};
 
 pub fn router() -> Router<AppState> {
@@ -28,10 +28,10 @@ pub fn router() -> Router<AppState> {
 pub async fn chat_completions(
     State(state): State<AppState>,
     headers: HeaderMap,
-    OptionalApiKeyAuth(auth): OptionalApiKeyAuth,
+    ApiKeyAuth(auth): ApiKeyAuth,
     Json(request): Json<ChatCompletionsRequest>,
 ) -> Result<axum::response::Response> {
-    let priority = resolve_priority(&headers, auth.as_ref(), &state.config.routing);
+    let priority = resolve_priority(&headers, Some(&auth), &state.config.routing);
     let is_stream = request.stream;
     let unified: LlmRequest = request.into();
 
@@ -85,10 +85,10 @@ pub async fn chat_completions(
 pub async fn embeddings(
     State(state): State<AppState>,
     headers: HeaderMap,
-    OptionalApiKeyAuth(auth): OptionalApiKeyAuth,
+    ApiKeyAuth(auth): ApiKeyAuth,
     Json(request): Json<OpenAiEmbeddingsRequest>,
 ) -> Result<Json<serde_json::Value>> {
-    let priority = resolve_priority(&headers, auth.as_ref(), &state.config.routing);
+    let priority = resolve_priority(&headers, Some(&auth), &state.config.routing);
     let response = state
         .proxy
         .handle_embedding(request.into(), priority)

@@ -62,7 +62,9 @@ impl BackendAdapter for OpenAiAdapter {
             )));
         }
 
-        let parsed: OpenAiChatResponse = serde_json::from_slice(body)?;
+        let parsed: OpenAiChatResponse = serde_json::from_slice(body).map_err(|err| {
+            Error::Backend(format!("Backend returned invalid chat response: {err}"))
+        })?;
         Ok(from_openai_response(parsed))
     }
 
@@ -122,7 +124,11 @@ impl BackendAdapter for OpenAiAdapter {
             )));
         }
 
-        serde_json::from_slice(body).map_err(Error::from)
+        serde_json::from_slice(body).map_err(|err| {
+            Error::Backend(format!(
+                "Backend returned invalid embedding response: {err}"
+            ))
+        })
     }
 }
 

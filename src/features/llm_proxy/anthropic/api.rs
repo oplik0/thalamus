@@ -17,7 +17,7 @@ use crate::features::llm_proxy::anthropic::dto::{
     stream_event_to_anthropic,
 };
 use crate::features::routing::priority::resolve_priority;
-use crate::middleware::OptionalApiKeyAuth;
+use crate::middleware::ApiKeyAuth;
 use crate::shared::models::LlmRequest;
 
 pub fn router() -> Router<AppState> {
@@ -27,10 +27,10 @@ pub fn router() -> Router<AppState> {
 pub async fn messages(
     State(state): State<AppState>,
     headers: HeaderMap,
-    OptionalApiKeyAuth(auth): OptionalApiKeyAuth,
+    ApiKeyAuth(auth): ApiKeyAuth,
     Json(request): Json<AnthropicMessagesRequest>,
 ) -> Result<Response> {
-    let priority = resolve_priority(&headers, auth.as_ref(), &state.config.routing);
+    let priority = resolve_priority(&headers, Some(&auth), &state.config.routing);
     let is_stream = request.stream;
     let unified: LlmRequest = request.into();
 

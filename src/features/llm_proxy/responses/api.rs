@@ -13,7 +13,7 @@ use futures::StreamExt;
 use crate::Result;
 use crate::bootstrap::AppState;
 use crate::features::routing::priority::resolve_priority;
-use crate::middleware::OptionalApiKeyAuth;
+use crate::middleware::ApiKeyAuth;
 use crate::shared::models::{ChatRequest, LlmRequest};
 
 pub fn router() -> Router<AppState> {
@@ -23,10 +23,10 @@ pub fn router() -> Router<AppState> {
 pub async fn responses(
     State(state): State<AppState>,
     headers: HeaderMap,
-    OptionalApiKeyAuth(auth): OptionalApiKeyAuth,
+    ApiKeyAuth(auth): ApiKeyAuth,
     Json(request): Json<ChatRequest>,
 ) -> Result<Response> {
-    let priority = resolve_priority(&headers, auth.as_ref(), &state.config.routing);
+    let priority = resolve_priority(&headers, Some(&auth), &state.config.routing);
     let is_stream = request.stream.unwrap_or(false);
     let unified = LlmRequest::Chat(request);
 

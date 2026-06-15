@@ -542,7 +542,7 @@ async fn different_models_routed_to_different_backends(pool: PgPool) {
         .header("Content-Type", "application/json")
         .body(Body::from(
             LlmRequestBuilder::openai()
-                .model("claude-3-opus")
+                .model("claude-sonnet-4-6")
                 .user_message("Test Claude")
                 .build()
                 .to_string(),

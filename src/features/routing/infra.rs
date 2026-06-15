@@ -127,6 +127,17 @@ impl RouterService {
         request: &LlmRequest,
         priority: Priority,
     ) -> Result<EndpointSnapshot> {
+        if self
+            .registry
+            .endpoints_for_model(request.model())
+            .is_empty()
+        {
+            return Err(Error::InvalidInput(format!(
+                "No healthy backend endpoint supports model '{}'",
+                request.model()
+            )));
+        }
+
         if let Some(endpoint) = self.try_select_and_acquire(request) {
             return Ok(endpoint);
         }

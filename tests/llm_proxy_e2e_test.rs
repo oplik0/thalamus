@@ -413,7 +413,18 @@ async fn chat_completion_streaming_returns_correct_events(pool: PgPool) {
 
 #[sqlx::test]
 async fn embeddings_basic_success(pool: PgPool) {
-    let (user, api_key, backend) = setup_authorized_user_and_backend(&pool).await;
+    init_test_logging();
+
+    let user = TestUserBuilder::new()
+        .with_scope("llm:*")
+        .create(&pool)
+        .await;
+    let api_key = TestApiKeyBuilder::new()
+        .for_user(&user)
+        .with_scope("llm:*")
+        .create(&pool)
+        .await;
+    let backend = MockLlmBackend::start("test-backend", vec!["text-embedding-3-small"]).await;
 
     // Mount embeddings response
     backend
