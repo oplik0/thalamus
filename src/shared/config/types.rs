@@ -359,6 +359,55 @@ pub struct PluginInfo {
     pub loaded: bool,
 }
 
+/// MCP server transport types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpTransport {
+    Http,
+    Sse,
+    Stdio,
+}
+
+/// MCP server authentication configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum McpAuthConfig {
+    None,
+    BearerToken { token: String },
+    ApiKey { header: String, token: String },
+    Headers { headers: HashMap<String, String> },
+}
+
+impl Default for McpAuthConfig {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+/// MCP server configuration (static config file)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    pub alias: String,
+    pub transport: McpTransport,
+    pub url: Option<String>,
+    pub command: Option<String>,
+    pub args: Option<Vec<String>>,
+    pub env: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub auth: McpAuthConfig,
+    #[serde(default)]
+    pub static_headers: HashMap<String, String>,
+    #[serde(default)]
+    pub extra_headers: Vec<String>,
+    #[serde(default = "default_timeout")]
+    pub timeout: String,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub allowed_scopes: Vec<String>,
+    #[serde(default)]
+    pub team_id: Option<String>,
+}
+
 /// Root configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -374,6 +423,8 @@ pub struct Config {
     pub security: SecurityConfig,
     #[serde(default)]
     pub plugins: Option<PluginConfig>,
+    #[serde(default)]
+    pub mcp_servers: HashMap<String, McpServerConfig>,
 }
 
 impl Config {

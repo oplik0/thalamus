@@ -11,6 +11,7 @@ pub mod authorization;
 pub mod backends;
 pub mod health;
 pub mod llm_proxy;
+pub mod mcp;
 pub mod plugin;
 pub mod routing;
 pub mod teams;

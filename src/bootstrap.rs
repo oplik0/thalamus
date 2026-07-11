@@ -7,6 +7,9 @@ use crate::features::auth::infra::OAuthService;
 use crate::features::authorization::CasbinAuthorizer;
 use crate::features::backends::infra::{AdaptingBackendClient, InMemoryBackendRegistry};
 use crate::features::llm_proxy::ProxyService;
+use crate::features::mcp::infra::{
+    McpService, RmcpClientFactory, SqlxMcpServerRepository, SqlxMcpToolsetRepository,
+};
 use crate::features::plugin::PluginManager;
 use crate::features::plugin::guardrail_bridge::GuardrailService;
 use crate::features::routing::infra::RouterService;
@@ -57,6 +60,8 @@ pub struct AppState {
     pub team_hierarchy_resolver: Arc<dyn TeamHierarchyResolver>,
     /// Team permission service
     pub team_permission_service: Arc<dyn TeamPermissionService>,
+    /// MCP gateway service
+    pub mcp_service: Arc<McpService>,
 }
 
 // Manual Debug implementation since AppTasks doesn't implement Debug
@@ -76,6 +81,7 @@ impl std::fmt::Debug for AppState {
             .field("project_repository", &"<ProjectRepository>")
             .field("team_hierarchy_resolver", &"<TeamHierarchyResolver>")
             .field("team_permission_service", &"<TeamPermissionService>")
+            .field("mcp_service", &"<McpService>")
             .finish()
     }
 }
@@ -101,6 +107,8 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::features::llm_proxy::router())
         // Teams and projects routes
         .merge(crate::features::teams::router())
+        // MCP gateway routes
+        .merge(crate::features::mcp::router(state.clone()))
         .with_state(state)
 }
 
@@ -253,7 +261,7 @@ pub async fn init_app_state(
     ));
 
     let health_tasks = crate::features::backends::health::spawn_health_checks(
-        http_client,
+        http_client.clone(),
         backend_registry.clone(),
         &config.backends,
         shutdown.clone(),
@@ -304,6 +312,35 @@ pub async fn init_app_state(
 
     tracing::info!("Team repositories initialized successfully");
 
+    // Initialize MCP gateway
+    let mcp_server_repo: Arc<dyn crate::features::mcp::domain::McpServerRepository> =
+        Arc::new(SqlxMcpServerRepository::new(db_pool.clone()));
+    let mcp_toolset_repo: Arc<dyn crate::features::mcp::domain::McpToolsetRepository> =
+        Arc::new(SqlxMcpToolsetRepository::new(db_pool.clone()));
+    let mcp_client_factory: Arc<dyn crate::features::mcp::domain::McpClientFactory> = Arc::new(
+        RmcpClientFactory::new(http_client.clone(), std::time::Duration::from_secs(30)),
+    );
+    let mcp_session_manager: Arc<dyn crate::features::mcp::domain::McpSessionManager> =
+        Arc::new(crate::features::mcp::infra::PooledMcpSessionManager::new(
+            mcp_client_factory.clone(),
+            std::time::Duration::from_secs(300), // 5 min TTL
+        ));
+    let mcp_service = Arc::new(McpService::new(
+        mcp_server_repo,
+        mcp_toolset_repo,
+        mcp_session_manager.clone(),
+    ));
+
+    // Spawn MCP health monitor
+    let mcp_health_monitor = crate::features::mcp::infra::McpHealthMonitor::new(
+        db_pool.clone(),
+        mcp_session_manager,
+        std::time::Duration::from_secs(30),
+    );
+    let health_shutdown = shutdown.clone();
+    tokio::spawn(mcp_health_monitor.run(health_shutdown));
+    tracing::info!("MCP service initialized successfully");
+
     Ok(AppState {
         db_pool,
         config,
@@ -319,6 +356,7 @@ pub async fn init_app_state(
         project_repository,
         team_hierarchy_resolver,
         team_permission_service,
+        mcp_service,
     })
 }
 
@@ -326,7 +364,7 @@ pub async fn init_app_state(
 ///
 /// # Errors
 /// Returns an error if the duration string is invalid
-fn parse_duration(s: &str) -> crate::Result<std::time::Duration> {
+pub fn parse_duration(s: &str) -> crate::Result<std::time::Duration> {
     let s = s.trim();
     if s.is_empty() {
         return Err(crate::Error::Config("Empty duration string".to_string()));

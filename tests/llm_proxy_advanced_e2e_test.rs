@@ -733,5 +733,6 @@ fn create_test_config() -> thalamus::shared::config::types::Config {
             opaque_server_setup: "test_opaque_setup".to_string(),
         },
         plugins: None,
+        mcp_servers: std::collections::HashMap::new(),
     }
 }

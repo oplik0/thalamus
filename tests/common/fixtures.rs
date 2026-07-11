@@ -277,12 +277,26 @@ impl TestApiKeyBuilder {
             }
         };
 
-        let key_value = format!("thalamus_test_{}", uuid::Uuid::new_v4());
-        let key_hash = sha256_hash(&key_value);
-        let key_prefix = &key_value[..8.min(key_value.len())];
-        let key_id = format!(
-            "thal_{}",
-            uuid::Uuid::new_v4().to_string()[..12].to_string()
+        // Generate key in production format: thl_{public}_{secret}
+        // Use hex encoding to avoid underscores in base64 URL-safe that would
+        // break the rfind('_') split in validate_key.
+        let mut secret_bytes = vec![0u8; 32];
+        let mut public_bytes = vec![0u8; 16];
+        use rand::RngCore;
+        rand::thread_rng().fill_bytes(&mut secret_bytes);
+        rand::thread_rng().fill_bytes(&mut public_bytes);
+
+        let secret_part = hex::encode(&secret_bytes);
+        let public_part = hex::encode(&mut public_bytes);
+
+        let key_value = format!("thl_{public_part}_{secret_part}");
+        let key_id = public_part.clone();
+        let key_prefix = &key_value[..12.min(key_value.len())];
+
+        // Hash with Argon2 using the test api_key_secret (must match test config).
+        let key_hash = argon2_hash(
+            &secret_part,
+            "test_secret_key_must_be_at_least_32_bytes_long",
         );
 
         let expires_at = self
@@ -768,9 +782,24 @@ pub mod response_parsers {
 }
 
 // Helper functions
-fn sha256_hash(input: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(input.as_bytes());
-    hex::encode(hasher.finalize())
+
+/// Hash a key secret using Argon2id with the given secret (must match production).
+/// This mirrors the production `store_key` hashing in `key_storage.rs`.
+fn argon2_hash(secret: &str, api_key_secret: &str) -> String {
+    use argon2::password_hash::{SaltString, rand_core::OsRng};
+    use argon2::{Argon2, Params, PasswordHasher};
+
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::new_with_secret(
+        api_key_secret.as_bytes(),
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        Params::new(1024, 2, 1, Some(64)).unwrap(),
+    )
+    .expect("Failed to create Argon2 instance");
+
+    argon2
+        .hash_password(secret.as_bytes(), &salt)
+        .expect("Failed to hash key secret")
+        .to_string()
 }
