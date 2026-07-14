@@ -10,6 +10,9 @@ use sqlx::PgPool;
 
 use thalamus::features::backends::infra::{AdaptingBackendClient, InMemoryBackendRegistry};
 use thalamus::features::llm_proxy::domain::ProxyService;
+use thalamus::features::mcp::infra::{
+    McpService, RmcpClientFactory, SqlxMcpServerRepository, SqlxMcpToolsetRepository,
+};
 use thalamus::features::plugin::guardrail_bridge::GuardrailService;
 use thalamus::features::routing::infra::RouterService;
 use thalamus::shared::config::types::Config;
@@ -57,7 +60,7 @@ pub async fn init_test_state(pool: PgPool) -> thalamus::bootstrap::AppState {
         .expect("Failed to create HTTP client for tests");
 
     let backend_client = Arc::new(AdaptingBackendClient::new(
-        http_client,
+        http_client.clone(),
         backend_registry.clone(),
         adapters,
     ));
@@ -100,6 +103,26 @@ pub async fn init_test_state(pool: PgPool) -> thalamus::bootstrap::AppState {
             )),
         );
 
+    // Initialize MCP service for tests
+    let mcp_server_repo: Arc<dyn thalamus::features::mcp::domain::McpServerRepository> =
+        Arc::new(SqlxMcpServerRepository::new(pool.clone()));
+    let mcp_toolset_repo: Arc<dyn thalamus::features::mcp::domain::McpToolsetRepository> =
+        Arc::new(SqlxMcpToolsetRepository::new(pool.clone()));
+    let mcp_client_factory: Arc<dyn thalamus::features::mcp::domain::McpClientFactory> = Arc::new(
+        RmcpClientFactory::new(http_client.clone(), std::time::Duration::from_secs(30)),
+    );
+    let mcp_session_manager: Arc<dyn thalamus::features::mcp::domain::McpSessionManager> = Arc::new(
+        thalamus::features::mcp::infra::PooledMcpSessionManager::new(
+            mcp_client_factory.clone(),
+            std::time::Duration::from_secs(300),
+        ),
+    );
+    let mcp_service = Arc::new(McpService::new(
+        mcp_server_repo,
+        mcp_toolset_repo,
+        mcp_session_manager,
+    ));
+
     thalamus::bootstrap::AppState {
         db_pool: pool,
         config: Arc::new(config),
@@ -116,6 +139,7 @@ pub async fn init_test_state(pool: PgPool) -> thalamus::bootstrap::AppState {
         project_repository,
         team_hierarchy_resolver,
         team_permission_service,
+        mcp_service,
     }
 }
 
@@ -172,7 +196,7 @@ pub async fn init_test_state_with_backends(
         .expect("Failed to create HTTP client for tests");
 
     let backend_client = Arc::new(AdaptingBackendClient::new(
-        http_client,
+        http_client.clone(),
         backend_registry.clone(),
         adapters,
     ));
@@ -215,6 +239,26 @@ pub async fn init_test_state_with_backends(
             )),
         );
 
+    // Initialize MCP service for tests
+    let mcp_server_repo: Arc<dyn thalamus::features::mcp::domain::McpServerRepository> =
+        Arc::new(SqlxMcpServerRepository::new(pool.clone()));
+    let mcp_toolset_repo: Arc<dyn thalamus::features::mcp::domain::McpToolsetRepository> =
+        Arc::new(SqlxMcpToolsetRepository::new(pool.clone()));
+    let mcp_client_factory: Arc<dyn thalamus::features::mcp::domain::McpClientFactory> = Arc::new(
+        RmcpClientFactory::new(http_client.clone(), std::time::Duration::from_secs(30)),
+    );
+    let mcp_session_manager: Arc<dyn thalamus::features::mcp::domain::McpSessionManager> = Arc::new(
+        thalamus::features::mcp::infra::PooledMcpSessionManager::new(
+            mcp_client_factory.clone(),
+            std::time::Duration::from_secs(300),
+        ),
+    );
+    let mcp_service = Arc::new(McpService::new(
+        mcp_server_repo,
+        mcp_toolset_repo,
+        mcp_session_manager,
+    ));
+
     thalamus::bootstrap::AppState {
         db_pool: pool,
         config: Arc::new(config),
@@ -231,6 +275,7 @@ pub async fn init_test_state_with_backends(
         project_repository,
         team_hierarchy_resolver,
         team_permission_service,
+        mcp_service,
     }
 }
 
@@ -263,7 +308,7 @@ pub async fn init_test_state_with_config(
         .expect("Failed to create HTTP client for tests");
 
     let backend_client = Arc::new(AdaptingBackendClient::new(
-        http_client,
+        http_client.clone(),
         backend_registry.clone(),
         adapters,
     ));
@@ -306,6 +351,26 @@ pub async fn init_test_state_with_config(
             )),
         );
 
+    // Initialize MCP service for tests
+    let mcp_server_repo: Arc<dyn thalamus::features::mcp::domain::McpServerRepository> =
+        Arc::new(SqlxMcpServerRepository::new(pool.clone()));
+    let mcp_toolset_repo: Arc<dyn thalamus::features::mcp::domain::McpToolsetRepository> =
+        Arc::new(SqlxMcpToolsetRepository::new(pool.clone()));
+    let mcp_client_factory: Arc<dyn thalamus::features::mcp::domain::McpClientFactory> = Arc::new(
+        RmcpClientFactory::new(http_client.clone(), std::time::Duration::from_secs(30)),
+    );
+    let mcp_session_manager: Arc<dyn thalamus::features::mcp::domain::McpSessionManager> = Arc::new(
+        thalamus::features::mcp::infra::PooledMcpSessionManager::new(
+            mcp_client_factory.clone(),
+            std::time::Duration::from_secs(300),
+        ),
+    );
+    let mcp_service = Arc::new(McpService::new(
+        mcp_server_repo,
+        mcp_toolset_repo,
+        mcp_session_manager,
+    ));
+
     thalamus::bootstrap::AppState {
         db_pool: pool,
         config: Arc::new(config),
@@ -322,6 +387,7 @@ pub async fn init_test_state_with_config(
         project_repository,
         team_hierarchy_resolver,
         team_permission_service,
+        mcp_service,
     }
 }
 
@@ -396,6 +462,7 @@ fn create_test_config() -> Config {
             opaque_server_setup: "dev".to_string(),
         },
         plugins: None,
+        mcp_servers: HashMap::new(),
     }
 }
 

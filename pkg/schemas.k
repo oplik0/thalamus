@@ -211,6 +211,33 @@ schema SecurityConfig:
         len(api_key_secret) > 0, "api_key_secret cannot be empty"
         len(paseto_secret_key) == 32, "paseto_secret_key must be exactly 32 bytes"
 
+schema McpAuthConfig:
+    """Authentication configuration for an MCP server"""
+    type: "none" | "bearer_token" | "api_key" | "headers" = "none"
+    token?: str
+    header?: str
+    headers?: {str: str}
+
+schema McpServerConfig:
+    """Static MCP server configuration"""
+    alias: str
+    transport: "http" | "sse" | "stdio"
+    url?: str
+    command?: str
+    args?: [str]
+    env?: {str: str}
+    auth?: McpAuthConfig = McpAuthConfig {}
+    static_headers: {str: str} = {}
+    extra_headers: [str] = []
+    timeout: str = "30s"
+    description?: str
+    allowed_scopes: [str] = []
+    team_id?: str
+
+    check:
+        transport in ["http", "sse"] or url == None, "url is only used for http/sse transports"
+        transport != "stdio" or command != None, "command is required for stdio transport"
+
 # Root configuration schema
 schema ThalamusConfig:
     """Root configuration for Thalamus LLM Router"""
@@ -223,6 +250,7 @@ schema ThalamusConfig:
     cache?: CacheConfig
     rate_limiting?: RateLimitConfig
     oauth_providers: [OAuthProviderConfig] = []
+    mcp_servers: {str: McpServerConfig} = {}
 
     check:
         len(backends) > 0, "At least one backend must be configured"
