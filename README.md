@@ -21,6 +21,9 @@ cd thalamus
 # Install all tools (rust, node, sqlx-cli, bacon, etc.)
 mise install
 
+# Check local tool readiness and see the quick-start commands
+mise run setup
+
 # Start PostgreSQL and Valkey
 mise run services:up
 
@@ -31,13 +34,27 @@ mise run db:migrate
 mise run run
 ```
 
-For development with automatic rebuild on file changes:
+For development with automatic backend reload and the web UI dev server:
 
 ```bash
 mise run dev
 ```
 
-This uses [bacon](https://github.com/Canop/bacon) to watch for changes and restart the server.
+This starts the UI dev server in the background and uses [bacon](https://github.com/Canop/bacon) to watch backend changes and restart the server.
+
+After starting a fresh instance, open the UI and create the first admin account. If there are no OAuth providers configured and no password users exist, the UI redirects to `/login/setup`. The setup endpoint creates the first admin user, default team, and OPAQUE password:
+
+```bash
+curl -X POST http://localhost:3000/v1/auth/setup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin",
+    "email": "admin@example.com",
+    "password": "SuperSecret1!"
+  }'
+```
+
+The response includes a PASETO token. Use it as `Authorization: Bearer <token>` to create API keys or manage the instance. After setup, sign in with the username and password you created.
 
 ## Commands
 
@@ -48,11 +65,15 @@ All commands are run via `mise run <task>`. Run `mise tasks` to see all availabl
 | `mise run build` | Build in debug mode |
 | `mise run build:release` | Build in release mode (LTO, stripped) |
 | `mise run run` | Run the server |
-| `mise run dev` | Run with auto-reload via bacon |
+| `mise run dev` | Run backend auto-reload and the UI dev server |
+| `mise run dev:server` | Run backend auto-reload only |
+| `mise run ui:dev` | Run the UI dev server only |
 | `mise run test` | Run tests with cargo-nextest |
 | `mise run test:verbose` | Run tests with immediate output |
 | `mise run test:ci` | Run tests in CI mode (fail-fast) |
 | `mise run test:cargo` | Run tests with standard `cargo test` |
+| `mise run test:coverage` | Run tests with an HTML coverage report |
+| `mise run test:watch` | Re-run tests on file changes |
 | `mise run check` | Type-check without building |
 | `mise run lint` | Run clippy with all warnings denied |
 | `mise run fmt` | Format code with rustfmt |
@@ -74,6 +95,20 @@ Docker Compose manages two services:
 - **Valkey** -- `127.0.0.1:6379` (Redis-compatible)
 
 Connection strings are set automatically on shell entry via `DATABASE_URL`, `TEST_DATABASE_URL`, and `REDIS_URL` environment variables.
+
+## Authentication
+
+Thalamus supports API keys, PASETO session tokens, username/password login through OPAQUE, and optional OAuth providers.
+
+For the default local setup, leave `oauth_providers` unset in `config.k`. A fresh database then reports setup is required:
+
+```bash
+curl http://localhost:3000/v1/auth/setup-status
+```
+
+Create the first admin account with `POST /v1/auth/setup`, or use the setup screen in the UI. Normal username/password login then uses the OPAQUE flow exposed by `/v1/auth/login/start` and `/v1/auth/login/finish`; the UI handles those requests for you.
+
+If you enable an OAuth provider, first-run setup is disabled and authentication is expected to start through that provider instead.
 
 ## Project Structure
 

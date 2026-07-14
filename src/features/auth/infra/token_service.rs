@@ -28,7 +28,7 @@ pub fn create_token(claims: &TokenClaims, state: &AppState) -> Result<String> {
     }
 
     // Custom claims
-    paseto_claims.add_additional("dom", serde_json::to_value(&claims.dom)?)?;
+    paseto_claims.add_additional("dom", serde_json::to_value(claims.dom)?)?;
 
     if let Some(roles) = &claims.roles {
         paseto_claims.add_additional("roles", serde_json::to_value(roles)?)?;
@@ -47,11 +47,11 @@ pub fn create_token(claims: &TokenClaims, state: &AppState) -> Result<String> {
         ));
     }
     let symmetric_key = SymmetricKey::<V4>::from(key_bytes)
-        .map_err(|e| Error::Internal(format!("Failed to create symmetric key: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to create symmetric key: {e}")))?;
 
     // Create the token
     let token = local::encrypt(&symmetric_key, &paseto_claims, None, None)
-        .map_err(|e| Error::Internal(format!("Failed to create token: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to create token: {e}")))?;
 
     Ok(token)
 }
@@ -67,7 +67,7 @@ pub async fn validate_token(token: &str, state: &AppState) -> Result<TokenClaims
         ));
     }
     let symmetric_key = SymmetricKey::<V4>::from(key_bytes)
-        .map_err(|e| Error::Internal(format!("Failed to create symmetric key: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to create symmetric key: {e}")))?;
 
     // Decrypt and validate the token
     // Validate the token
@@ -75,7 +75,7 @@ pub async fn validate_token(token: &str, state: &AppState) -> Result<TokenClaims
     // Default rules validate expiration and not-before if present
 
     let untrusted_token = UntrustedToken::<Local, V4>::try_from(token)
-        .map_err(|e| Error::Authentication(format!("Invalid token format: {}", e)))?;
+        .map_err(|e| Error::Authentication(format!("Invalid token format: {e}")))?;
 
     let trusted_token = local::decrypt(
         &symmetric_key,
@@ -84,7 +84,7 @@ pub async fn validate_token(token: &str, state: &AppState) -> Result<TokenClaims
         None,
         None,
     )
-    .map_err(|e| Error::Authentication(format!("Token validation failed: {}", e)))?;
+    .map_err(|e| Error::Authentication(format!("Token validation failed: {e}")))?;
 
     let claims = trusted_token
         .payload_claims()

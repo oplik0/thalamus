@@ -1,8 +1,8 @@
 "use client";
 
 import { Redirect, Stack } from "expo-router";
+import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { useAuth } from "@/contexts/auth-context";
-import { ActivityIndicator, View, StyleSheet } from "react-native";
 
 interface AuthGuardProps {
 	/** The child components to render if authenticated */
@@ -86,7 +86,11 @@ export function IfAuthenticated({ children }: { children: React.ReactNode }) {
  * Conditional wrapper that renders children if NOT authenticated
  * Use this for showing login prompts or alternative content
  */
-export function IfNotAuthenticated({ children }: { children: React.ReactNode }) {
+export function IfNotAuthenticated({
+	children,
+}: {
+	children: React.ReactNode;
+}) {
 	const { isAuthenticated } = useAuth();
 
 	if (isAuthenticated) {

@@ -10,14 +10,19 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v6
 
       - uses: jdx/mise-action@v2
 
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
       - uses: Swatinem/rust-cache@v2
       - uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Enable sccache
+        run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
 
       - name: Start services
         run: |
@@ -48,14 +53,19 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
     env:
       SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v6
 
       - uses: jdx/mise-action@v2
 
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
       - uses: Swatinem/rust-cache@v2
       - uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Enable sccache
+        run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
 
       - name: Start services
         run: |

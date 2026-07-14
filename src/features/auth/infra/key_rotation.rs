@@ -366,7 +366,7 @@ pub async fn list_keys_in_grace_period(
                 key_id: row.key_id,
                 name: row.name,
                 grace_period_ends_at: row.grace_period_ends_at.unwrap(),
-                remaining_minutes: remaining.map(|d| d.num_minutes()).unwrap_or(0),
+                remaining_minutes: remaining.map_or(0, |d| d.num_minutes()),
                 rotation_reason: row.rotation_reason,
                 created_at: row.created_at,
             }
@@ -399,6 +399,6 @@ mod tests {
             remaining_minutes: 30,
         };
         // Just verify it compiles and debug works
-        let _ = format!("{:?}", status);
+        let _ = format!("{status:?}");
     }
 }

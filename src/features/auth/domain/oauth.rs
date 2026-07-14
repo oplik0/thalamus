@@ -58,7 +58,7 @@ pub enum TeamMappingStrategy {
 }
 
 /// OAuth flow state for CSRF and PKCE protection
-/// This wraps oauth2's CsrfToken and PkceCodeVerifier
+/// This wraps oauth2's `CsrfToken` and `PkceCodeVerifier`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthFlowState {
     /// CSRF state token (sent to provider and used as state store key)
@@ -78,6 +78,7 @@ pub struct OAuthFlowState {
 
 impl OAuthFlowState {
     /// Check if the state has expired
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         Utc::now() > self.expires_at
     }

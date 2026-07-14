@@ -56,8 +56,7 @@ async fn create_team(
         let parent = state.team_repository.get_by_id(parent_id).await?;
         if parent.is_none() {
             return Err(Error::NotFound(format!(
-                "Parent team not found: {}",
-                parent_id
+                "Parent team not found: {parent_id}"
             )));
         }
     }
@@ -122,7 +121,7 @@ async fn get_team(
         .team_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {id}")))?;
 
     // Check if user is member (including ancestors)
     let is_member = state
@@ -152,7 +151,7 @@ async fn update_team(
         .team_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {id}")))?;
 
     // Check if user is admin
     let membership = state
@@ -162,8 +161,7 @@ async fn update_team(
 
     let is_admin = membership
         .as_ref()
-        .map(|m| m.role == TEAM_ROLE_ADMIN)
-        .unwrap_or(false);
+        .is_some_and(|m| m.role == TEAM_ROLE_ADMIN);
 
     if !is_admin {
         return Err(Error::Authorization(
@@ -192,7 +190,7 @@ async fn delete_team(
         .team_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {id}")))?;
 
     // Check if user is admin
     let membership = state
@@ -202,8 +200,7 @@ async fn delete_team(
 
     let is_admin = membership
         .as_ref()
-        .map(|m| m.role == TEAM_ROLE_ADMIN)
-        .unwrap_or(false);
+        .is_some_and(|m| m.role == TEAM_ROLE_ADMIN);
 
     if !is_admin {
         return Err(Error::Authorization(
@@ -270,7 +267,7 @@ async fn set_parent(
         .team_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {id}")))?;
 
     // Check if user is admin
     let membership = state
@@ -280,8 +277,7 @@ async fn set_parent(
 
     let is_admin = membership
         .as_ref()
-        .map(|m| m.role == TEAM_ROLE_ADMIN)
-        .unwrap_or(false);
+        .is_some_and(|m| m.role == TEAM_ROLE_ADMIN);
 
     if !is_admin {
         return Err(Error::Authorization(
@@ -303,8 +299,7 @@ async fn set_parent(
         let parent = state.team_repository.get_by_id(parent_id).await?;
         if parent.is_none() {
             return Err(Error::NotFound(format!(
-                "Parent team not found: {}",
-                parent_id
+                "Parent team not found: {parent_id}"
             )));
         }
 
@@ -338,7 +333,7 @@ async fn set_parent(
         .team_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {id}")))?;
 
     Ok(Json(team_to_response(updated_team)))
 }
@@ -355,7 +350,7 @@ async fn remove_parent(
         .team_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {id}")))?;
 
     // Check if user is admin
     let membership = state
@@ -365,8 +360,7 @@ async fn remove_parent(
 
     let is_admin = membership
         .as_ref()
-        .map(|m| m.role == TEAM_ROLE_ADMIN)
-        .unwrap_or(false);
+        .is_some_and(|m| m.role == TEAM_ROLE_ADMIN);
 
     if !is_admin {
         return Err(Error::Authorization(
@@ -387,7 +381,7 @@ async fn remove_parent(
         .team_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {id}")))?;
 
     Ok(Json(team_to_response(updated_team)))
 }
@@ -409,7 +403,7 @@ async fn add_member(
         .team_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {id}")))?;
 
     // Check if user is admin
     let membership = state
@@ -419,8 +413,7 @@ async fn add_member(
 
     let is_admin = membership
         .as_ref()
-        .map(|m| m.role == TEAM_ROLE_ADMIN)
-        .unwrap_or(false);
+        .is_some_and(|m| m.role == TEAM_ROLE_ADMIN);
 
     if !is_admin {
         return Err(Error::Authorization(
@@ -491,7 +484,7 @@ async fn list_members(
         .team_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {id}")))?;
 
     // Check if user is member (including ancestors)
     let is_member = state
@@ -524,7 +517,7 @@ async fn remove_member(
         .team_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {id}")))?;
 
     // Check if user is admin
     let membership = state
@@ -534,8 +527,7 @@ async fn remove_member(
 
     let is_admin = membership
         .as_ref()
-        .map(|m| m.role == TEAM_ROLE_ADMIN)
-        .unwrap_or(false);
+        .is_some_and(|m| m.role == TEAM_ROLE_ADMIN);
 
     if !is_admin {
         return Err(Error::Authorization(
@@ -548,8 +540,7 @@ async fn remove_member(
 
     if target.is_none() {
         return Err(Error::NotFound(format!(
-            "Member not found in team: {}",
-            user_id
+            "Member not found in team: {user_id}"
         )));
     }
 
@@ -585,7 +576,7 @@ async fn update_member_role(
         .team_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {id}")))?;
 
     // Check if user is admin
     let membership = state
@@ -595,8 +586,7 @@ async fn update_member_role(
 
     let is_admin = membership
         .as_ref()
-        .map(|m| m.role == TEAM_ROLE_ADMIN)
-        .unwrap_or(false);
+        .is_some_and(|m| m.role == TEAM_ROLE_ADMIN);
 
     if !is_admin {
         return Err(Error::Authorization(
@@ -657,7 +647,7 @@ async fn create_project(
         .team_repository
         .get_by_id(team_id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", team_id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {team_id}")))?;
 
     // Check if user is member
     let is_member = state
@@ -692,7 +682,7 @@ async fn list_projects(
         .team_repository
         .get_by_id(team_id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", team_id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {team_id}")))?;
 
     // Check if user is member
     let is_member = state
@@ -725,7 +715,7 @@ async fn get_project(
         .team_repository
         .get_by_id(team_id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", team_id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {team_id}")))?;
 
     // Check if user is member
     let is_member = state
@@ -743,7 +733,7 @@ async fn get_project(
         .project_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Project not found: {id}")))?;
 
     // Verify project belongs to team
     if project.team_id != team_id {
@@ -768,7 +758,7 @@ async fn update_project(
         .team_repository
         .get_by_id(team_id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", team_id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {team_id}")))?;
 
     // Check if user is admin
     let membership = state
@@ -778,8 +768,7 @@ async fn update_project(
 
     let is_admin = membership
         .as_ref()
-        .map(|m| m.role == TEAM_ROLE_ADMIN)
-        .unwrap_or(false);
+        .is_some_and(|m| m.role == TEAM_ROLE_ADMIN);
 
     if !is_admin {
         return Err(Error::Authorization(
@@ -791,7 +780,7 @@ async fn update_project(
         .project_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Project not found: {id}")))?;
 
     // Verify project belongs to team
     if project.team_id != team_id {
@@ -821,7 +810,7 @@ async fn delete_project(
         .team_repository
         .get_by_id(team_id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Team not found: {}", team_id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Team not found: {team_id}")))?;
 
     // Check if user is admin
     let membership = state
@@ -831,8 +820,7 @@ async fn delete_project(
 
     let is_admin = membership
         .as_ref()
-        .map(|m| m.role == TEAM_ROLE_ADMIN)
-        .unwrap_or(false);
+        .is_some_and(|m| m.role == TEAM_ROLE_ADMIN);
 
     if !is_admin {
         return Err(Error::Authorization(
@@ -844,7 +832,7 @@ async fn delete_project(
         .project_repository
         .get_by_id(id)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Project not found: {id}")))?;
 
     // Verify project belongs to team
     if project.team_id != team_id {

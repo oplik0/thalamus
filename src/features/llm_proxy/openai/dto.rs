@@ -138,7 +138,10 @@ impl From<ChatCompletionsRequest> for LlmRequest {
 
 impl From<ChatResponse> for ChatCompletionsResponse {
     fn from(value: ChatResponse) -> Self {
-        let content = value.output.iter().find_map(|item| item.text());
+        let content = value
+            .output
+            .iter()
+            .find_map(crate::shared::models::response::OutputItem::text);
 
         let tool_calls: Vec<ResponseToolCall> = value
             .output

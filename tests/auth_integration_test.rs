@@ -426,7 +426,6 @@ async fn test_expired_api_key(pool: PgPool) {
 }
 
 // TODO: Tests to implement once features are ready:
-// - test_opaque_registration_login_flow()
 // - test_token_revocation_blacklist()
 // - test_rate_limiting()
 // - test_casbin_authorization()

@@ -1,29 +1,29 @@
 import { apiClient } from "@/lib/api-client";
-import {
-  SigningKeyInfo,
-  SigningKeyDetailInfo,
-  CreateSigningKeyRequest,
-  CreateSigningKeyResponse,
+import type {
+	CreateSigningKeyRequest,
+	CreateSigningKeyResponse,
+	SigningKeyDetailInfo,
+	SigningKeyInfo,
 } from "@/lib/types";
 
 export async function listSigningKeys(): Promise<{ keys: SigningKeyInfo[] }> {
-  return apiClient.get<{ keys: SigningKeyInfo[] }>("/v1/signing-keys");
+	return apiClient.get<{ keys: SigningKeyInfo[] }>("/v1/signing-keys");
 }
 
 export async function getSigningKey(
-  keyId: string,
+	keyId: string,
 ): Promise<SigningKeyDetailInfo> {
-  return apiClient.get<SigningKeyDetailInfo>(
-    `/v1/signing-keys/${encodeURIComponent(keyId)}`,
-  );
+	return apiClient.get<SigningKeyDetailInfo>(
+		`/v1/signing-keys/${encodeURIComponent(keyId)}`,
+	);
 }
 
 export async function createSigningKey(
-  data: CreateSigningKeyRequest,
+	data: CreateSigningKeyRequest,
 ): Promise<CreateSigningKeyResponse> {
-  return apiClient.post<CreateSigningKeyResponse>("/v1/signing-keys", data);
+	return apiClient.post<CreateSigningKeyResponse>("/v1/signing-keys", data);
 }
 
 export async function revokeSigningKey(keyId: string): Promise<void> {
-  await apiClient.delete(`/v1/signing-keys/${encodeURIComponent(keyId)}`);
+	await apiClient.delete(`/v1/signing-keys/${encodeURIComponent(keyId)}`);
 }

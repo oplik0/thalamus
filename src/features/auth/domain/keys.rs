@@ -17,6 +17,7 @@ pub enum Prefix {
 pub const PREFIXES: [&str; 3] = ["thl", "thl_sk", "thalamus"];
 
 impl Prefix {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             Prefix::Standard => PREFIXES[0],
@@ -78,7 +79,7 @@ mod tests {
         let prefix = Prefix::Standard;
         let public_str = "public";
         let secret_str = "secret";
-        let full_key = format!("{}_{}_{}", prefix, public_str, secret_str);
+        let full_key = format!("{prefix}_{public_str}_{secret_str}");
 
         assert_eq!(full_key, "thl_public_secret");
         assert!(full_key.starts_with("thl"));
@@ -102,7 +103,7 @@ mod tests {
     #[test]
     fn test_prefix_clone() {
         let prefix = Prefix::Secret;
-        let cloned = prefix.clone();
+        let cloned = prefix;
         assert_eq!(prefix, cloned);
     }
 

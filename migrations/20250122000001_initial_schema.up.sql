@@ -209,19 +209,6 @@ CREATE TRIGGER update_users_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- Insert default team and admin user (for development)
-INSERT INTO teams (name, description, rate_limit_rpm, rate_limit_burst, logging_policy)
-VALUES ('default', 'Default team for development', 1000, 50, 'metadata');
-
-INSERT INTO users (username, email, is_service_account, is_active)
-VALUES ('admin', 'admin@thalamus.local', false, true);
-
--- Add admin to default team as admin
-INSERT INTO team_memberships (user_id, team_id, role)
-SELECT u.id, t.id, 'admin'
-FROM users u, teams t
-WHERE u.username = 'admin' AND t.name = 'default';
-
 -- Insert default Casbin policies
 -- Admin role can do everything
 INSERT INTO casbin_rule (ptype, v0, v1, v2, v3, v4, v5)
@@ -233,9 +220,3 @@ VALUES
     ('p', 'member', '*', '/health', 'GET', '', ''),
     ('p', 'readonly', '*', '/v1/models', 'GET', '', ''),
     ('p', 'readonly', '*', '/health', 'GET', '', '');
-
--- Assign admin role to admin user in default team
-INSERT INTO casbin_rule (ptype, v0, v1, v2, v3, v4, v5)
-SELECT 'g', u.username, 'admin', t.name, '', '', ''
-FROM users u, teams t
-WHERE u.username = 'admin' AND t.name = 'default';

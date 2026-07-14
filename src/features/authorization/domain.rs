@@ -9,8 +9,8 @@ use async_trait::async_trait;
 /// Authorization request context
 ///
 /// Represents a request to check authorization for.
-/// - `subject`: The user or service making the request (e.g., username, user_id)
-/// - `domain`: The team/organization context (e.g., team_id)
+/// - `subject`: The user or service making the request (e.g., username, `user_id`)
+/// - `domain`: The team/organization context (e.g., `team_id`)
 /// - `object`: The resource being accessed (e.g., API path)
 /// - `action`: The action being performed (e.g., HTTP method)
 #[derive(Debug, Clone)]

@@ -14,6 +14,7 @@ use super::tools::{ToolChoice, ToolDefinition};
 /// Top-level LLM request envelope
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "request_type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum LlmRequest {
     Chat(ChatRequest),
     Embedding(EmbeddingRequest),
@@ -64,13 +65,13 @@ pub enum InputItem {
 impl From<Message> for InputItem {
     fn from(msg: Message) -> Self {
         // Tool result messages map to FunctionCallOutput when they have a tool_call_id
-        if msg.role == Role::Tool {
-            if let Some(call_id) = msg.tool_call_id {
-                return Self::FunctionCallOutput {
-                    call_id,
-                    output: msg.content.text(),
-                };
-            }
+        if msg.role == Role::Tool
+            && let Some(call_id) = msg.tool_call_id
+        {
+            return Self::FunctionCallOutput {
+                call_id,
+                output: msg.content.text(),
+            };
         }
         Self::Message {
             role: msg.role,
@@ -298,12 +299,12 @@ pub struct ReasoningConfig {
     /// Anthropic thinking budget in tokens
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget_tokens: Option<u32>,
-    /// OpenAI reasoning summary mode
+    /// `OpenAI` reasoning summary mode
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<ReasoningSummary>,
 }
 
-/// Reasoning effort level (OpenAI)
+/// Reasoning effort level (`OpenAI`)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningEffort {
@@ -312,7 +313,7 @@ pub enum ReasoningEffort {
     High,
 }
 
-/// Reasoning summary mode (OpenAI)
+/// Reasoning summary mode (`OpenAI`)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningSummary {

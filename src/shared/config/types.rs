@@ -347,7 +347,7 @@ impl std::str::FromStr for PluginType {
             "guardrail" => Ok(Self::Guardrail),
             "health" => Ok(Self::Health),
             "observability" => Ok(Self::Observability),
-            _ => Err(format!("Unknown plugin type: {}", s)),
+            _ => Err(format!("Unknown plugin type: {s}")),
         }
     }
 }

@@ -90,8 +90,7 @@ impl CoveredComponent {
                 })
             }
             _ if s.starts_with('@') => Err(Error::Authentication(format!(
-                "Unknown derived component: {}",
-                s
+                "Unknown derived component: {s}"
             ))),
             _ => {
                 // Check for dictionary member syntax: field;key=...
@@ -120,9 +119,9 @@ impl CoveredComponent {
             Self::Path => "@path".to_string(),
             Self::Query => "@query".to_string(),
             Self::Status => "@status".to_string(),
-            Self::QueryParam { name } => format!("@query-param;name={}", name),
+            Self::QueryParam { name } => format!("@query-param;name={name}"),
             Self::Header(h) => h.to_lowercase(),
-            Self::DictionaryMember { field, key } => format!("{};key={}", field, key),
+            Self::DictionaryMember { field, key } => format!("{field};key={key}"),
         }
     }
 }
@@ -412,7 +411,7 @@ impl HttpSignatureVerifier {
             let sig_b64 = &sig_part[..end_colon];
             let sig_bytes = BASE64
                 .decode(sig_b64)
-                .map_err(|e| Error::Authentication(format!("Invalid base64 signature: {}", e)))?;
+                .map_err(|e| Error::Authentication(format!("Invalid base64 signature: {e}")))?;
 
             signatures.insert(name, sig_bytes);
         }
@@ -436,7 +435,7 @@ impl HttpSignatureVerifier {
 
         // Add signature params
         let sig_params = Self::build_signature_params(input);
-        parts.push(format!("\"@signature-params\": {}", sig_params));
+        parts.push(format!("\"@signature-params\": {sig_params}"));
 
         Ok(parts.join("\n"))
     }
@@ -450,28 +449,28 @@ impl HttpSignatureVerifier {
     ) -> Result<String> {
         match component {
             CoveredComponent::Method => Ok(format!("\"{}\"", method.as_str())),
-            CoveredComponent::TargetUri => Ok(format!("\"{}\"", uri)),
+            CoveredComponent::TargetUri => Ok(format!("\"{uri}\"")),
             CoveredComponent::Authority => {
                 let authority = uri
                     .authority()
                     .ok_or_else(|| Error::Authentication("URI has no authority".to_string()))?;
-                Ok(format!("\"{}\"", authority))
+                Ok(format!("\"{authority}\""))
             }
             CoveredComponent::Scheme => {
                 let scheme = uri
                     .scheme()
                     .ok_or_else(|| Error::Authentication("URI has no scheme".to_string()))?;
-                Ok(format!("\"{}\"", scheme))
+                Ok(format!("\"{scheme}\""))
             }
             CoveredComponent::Path => {
                 let path = uri.path();
-                Ok(format!("\"{}\"", path))
+                Ok(format!("\"{path}\""))
             }
             CoveredComponent::Query => {
                 let query = uri
                     .query()
                     .ok_or_else(|| Error::Authentication("URI has no query".to_string()))?;
-                Ok(format!("\"?{}\"", query))
+                Ok(format!("\"?{query}\""))
             }
             CoveredComponent::QueryParam { name } => {
                 let query = uri.query().unwrap_or("");
@@ -479,24 +478,23 @@ impl HttpSignatureVerifier {
                     .into_owned()
                     .collect();
                 let value = params.get(name).ok_or_else(|| {
-                    Error::Authentication(format!("Query parameter '{}' not found", name))
+                    Error::Authentication(format!("Query parameter '{name}' not found"))
                 })?;
-                Ok(format!("\"{}\"", value))
+                Ok(format!("\"{value}\""))
             }
             CoveredComponent::Header(name) => {
                 let header_name = name.to_lowercase();
                 let value = headers
                     .get(&header_name)
-                    .ok_or_else(|| Error::Authentication(format!("Header '{}' not found", name)))?
+                    .ok_or_else(|| Error::Authentication(format!("Header '{name}' not found")))?
                     .to_str()
                     .map_err(|_| {
-                        Error::Authentication(format!("Header '{}' has invalid value", name))
+                        Error::Authentication(format!("Header '{name}' has invalid value"))
                     })?;
-                Ok(format!("\"{}\"", value))
+                Ok(format!("\"{value}\""))
             }
             _ => Err(Error::Authentication(format!(
-                "Component {:?} not supported",
-                component
+                "Component {component:?} not supported"
             ))),
         }
     }
@@ -514,13 +512,13 @@ impl HttpSignatureVerifier {
         parts.push(format!("alg=\"{}\"", input.algorithm));
 
         if let Some(created) = input.created {
-            parts.push(format!("created={}", created));
+            parts.push(format!("created={created}"));
         }
         if let Some(expires) = input.expires {
-            parts.push(format!("expires={}", expires));
+            parts.push(format!("expires={expires}"));
         }
         if let Some(nonce) = &input.nonce {
-            parts.push(format!("nonce=\"{}\"", nonce));
+            parts.push(format!("nonce=\"{nonce}\""));
         }
 
         format!("({})", parts.join(" "))
@@ -560,7 +558,7 @@ impl HttpSignatureVerifier {
 
         let signature = signatures
             .get(&sig_name)
-            .ok_or_else(|| Error::Authentication(format!("Signature '{}' not found", sig_name)))?;
+            .ok_or_else(|| Error::Authentication(format!("Signature '{sig_name}' not found")))?;
 
         // Check timestamp constraints
         let now = Utc::now().timestamp();
@@ -578,10 +576,10 @@ impl HttpSignatureVerifier {
             }
         }
 
-        if let Some(expires) = input.expires {
-            if now > expires {
-                return Err(Error::Authentication("Signature expired".to_string()));
-            }
+        if let Some(expires) = input.expires
+            && now > expires
+        {
+            return Err(Error::Authentication("Signature expired".to_string()));
         }
 
         // Look up the signing key
@@ -594,10 +592,10 @@ impl HttpSignatureVerifier {
             ));
         }
 
-        if let Some(expires_at) = key_info.expires_at {
-            if expires_at < Utc::now() {
-                return Err(Error::Authentication("Signing key has expired".to_string()));
-            }
+        if let Some(expires_at) = key_info.expires_at
+            && expires_at < Utc::now()
+        {
+            return Err(Error::Authentication("Signing key has expired".to_string()));
         }
 
         // Build signature base
@@ -614,8 +612,7 @@ impl HttpSignatureVerifier {
             }
             alg => {
                 return Err(Error::Authentication(format!(
-                    "Unsupported algorithm: {}",
-                    alg
+                    "Unsupported algorithm: {alg}"
                 )));
             }
         };
@@ -719,10 +716,10 @@ fn verify_ed25519(message: &str, signature: &[u8], public_key_pem: &str) -> Resu
             .try_into()
             .map_err(|_| Error::Internal("Failed to convert public key bytes".to_string()))?,
     )
-    .map_err(|e| Error::Internal(format!("Invalid Ed25519 public key: {}", e)))?;
+    .map_err(|e| Error::Internal(format!("Invalid Ed25519 public key: {e}")))?;
 
     let sig = Signature::from_slice(signature)
-        .map_err(|e| Error::Authentication(format!("Invalid signature: {}", e)))?;
+        .map_err(|e| Error::Authentication(format!("Invalid signature: {e}")))?;
 
     Ok(verifying_key.verify(message.as_bytes(), &sig).is_ok())
 }
@@ -736,13 +733,13 @@ fn verify_rsa_pss_sha512(message: &str, signature: &[u8], public_key_pem: &str) 
 
     // Parse the public key
     let public_key = RsaPublicKey::from_public_key_pem(public_key_pem)
-        .map_err(|e| Error::Internal(format!("Invalid RSA public key: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Invalid RSA public key: {e}")))?;
 
     let verifying_key: VerifyingKey<Sha512> = VerifyingKey::new(public_key);
 
     // Convert signature bytes to Signature type
     let sig = Signature::try_from(signature)
-        .map_err(|e| Error::Authentication(format!("Invalid RSA signature: {}", e)))?;
+        .map_err(|e| Error::Authentication(format!("Invalid RSA signature: {e}")))?;
 
     let result = verifying_key.verify(message.as_bytes(), &sig);
 
@@ -756,10 +753,10 @@ fn verify_ecdsa_p256(message: &str, signature: &[u8], public_key_pem: &str) -> R
 
     // Parse the public key
     let verifying_key = VerifyingKey::from_public_key_pem(public_key_pem)
-        .map_err(|e| Error::Internal(format!("Invalid ECDSA public key: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Invalid ECDSA public key: {e}")))?;
 
     let sig = Signature::from_slice(signature)
-        .map_err(|e| Error::Authentication(format!("Invalid signature: {}", e)))?;
+        .map_err(|e| Error::Authentication(format!("Invalid signature: {e}")))?;
 
     Ok(verifying_key.verify(message.as_bytes(), &sig).is_ok())
 }
@@ -776,7 +773,7 @@ fn parse_pem_public_key(pem: &str, expected_type: &str) -> Result<Vec<u8>> {
 
         BASE64
             .decode(&base64_part)
-            .map_err(|e| Error::Internal(format!("Invalid PEM encoding: {}", e)))
+            .map_err(|e| Error::Internal(format!("Invalid PEM encoding: {e}")))
     } else if pem.contains("BEGIN") && pem.contains(expected_type) {
         // Algorithm-specific PEM
         let base64_part: String = pem
@@ -786,12 +783,12 @@ fn parse_pem_public_key(pem: &str, expected_type: &str) -> Result<Vec<u8>> {
 
         BASE64
             .decode(&base64_part)
-            .map_err(|e| Error::Internal(format!("Invalid PEM encoding: {}", e)))
+            .map_err(|e| Error::Internal(format!("Invalid PEM encoding: {e}")))
     } else {
         // Assume raw base64
         BASE64
             .decode(pem)
-            .map_err(|e| Error::Internal(format!("Invalid base64 key: {}", e)))
+            .map_err(|e| Error::Internal(format!("Invalid base64 key: {e}")))
     }
 }
 

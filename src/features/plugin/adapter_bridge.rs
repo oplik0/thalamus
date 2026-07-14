@@ -120,7 +120,7 @@ impl BackendAdapter for ExtismBackendAdapter {
 
         let mut builder = client.request(
             reqwest::Method::from_bytes(http_request.method.as_bytes())
-                .map_err(|e| Error::Backend(format!("Invalid HTTP method: {}", e)))?,
+                .map_err(|e| Error::Backend(format!("Invalid HTTP method: {e}")))?,
             &http_request.url,
         );
 
@@ -136,7 +136,7 @@ impl BackendAdapter for ExtismBackendAdapter {
 
     fn parse_response(&self, status: StatusCode, body: &[u8]) -> Result<ChatResponse> {
         let body_json: serde_json::Value = serde_json::from_slice(body)
-            .map_err(|e| Error::Backend(format!("Invalid JSON body: {}", e)))?;
+            .map_err(|e| Error::Backend(format!("Invalid JSON body: {e}")))?;
 
         let http_response = thalamus_plugin::types::HttpResponse {
             status: status.as_u16(),

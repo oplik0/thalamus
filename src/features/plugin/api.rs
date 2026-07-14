@@ -103,7 +103,7 @@ async fn get_plugin(
 
     let info = manager
         .plugin_info(&name)
-        .ok_or_else(|| Error::NotFound(format!("Plugin not found: {}", name)))?;
+        .ok_or_else(|| Error::NotFound(format!("Plugin not found: {name}")))?;
 
     Ok(Json(plugin_info_to_dto(info)))
 }
@@ -124,7 +124,7 @@ async fn load_plugin(
     let plugin_type = req
         .plugin_type
         .parse::<PluginType>()
-        .map_err(|e| Error::InvalidInput(e))?;
+        .map_err(Error::InvalidInput)?;
 
     let manifest = PluginManifest {
         name: req.name.clone(),

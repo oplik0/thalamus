@@ -2,12 +2,18 @@ import React from 'react';
 import type { VariantProps } from '@gluestack-ui/utils/nativewind-utils';
 
 import { vstackStyle } from './styles';
+import { pressToClick } from '../utils';
 
 type IVStackProps = React.ComponentPropsWithoutRef<'div'> &
-  VariantProps<typeof vstackStyle>;
+  VariantProps<typeof vstackStyle> & {
+    onPress?: () => void;
+  };
 
 const VStack = React.forwardRef<HTMLDivElement, IVStackProps>(
-  function VStack({ className, space, reversed, ...props }, ref) {
+  function VStack(
+    { className, space, reversed, onPress, onClick, ...props },
+    ref
+  ) {
     return (
       <div
         className={vstackStyle({
@@ -16,6 +22,7 @@ const VStack = React.forwardRef<HTMLDivElement, IVStackProps>(
           class: className,
         })}
         {...props}
+        onClick={pressToClick(onPress, onClick)}
         ref={ref}
       />
     );

@@ -129,6 +129,7 @@ pub struct RefreshTokenInfo {
 }
 
 /// Create a new refresh token
+#[allow(clippy::too_many_arguments)]
 pub async fn create_refresh_token(
     user_id: Uuid,
     team_id: Uuid,
@@ -624,11 +625,7 @@ mod base64 {
 // Helper module for hex encoding
 mod hex {
     pub fn encode<T: AsRef<[u8]>>(input: T) -> String {
-        input
-            .as_ref()
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect()
+        input.as_ref().iter().map(|b| format!("{b:02x}")).collect()
     }
 }
 

@@ -23,6 +23,7 @@ pub struct SqlxTeamRepository {
 }
 
 impl SqlxTeamRepository {
+    #[must_use]
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -38,11 +39,11 @@ impl TeamRepository for SqlxTeamRepository {
         parent_team_id: Option<Uuid>,
     ) -> Result<Team> {
         let team = sqlx::query_as::<_, Team>(
-            r#"
+            r"
             INSERT INTO teams (name, slug, description, parent_team_id)
             VALUES ($1, $2, $3, $4)
             RETURNING *
-            "#,
+            ",
         )
         .bind(&name)
         .bind(&slug)
@@ -50,14 +51,14 @@ impl TeamRepository for SqlxTeamRepository {
         .bind(parent_team_id)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         Ok(team)
     }
 
     async fn list_for_user(&self, user_id: Uuid) -> Result<Vec<Team>> {
         let teams = sqlx::query_as::<_, Team>(
-            r#"
+            r"
             SELECT t.*
             FROM teams t
             INNER JOIN team_memberships tm ON t.id = tm.team_id
@@ -65,27 +66,27 @@ impl TeamRepository for SqlxTeamRepository {
               AND tm.deleted_at IS NULL
               AND t.deleted_at IS NULL
             ORDER BY t.name
-            "#,
+            ",
         )
         .bind(user_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         Ok(teams)
     }
 
     async fn get_by_id(&self, id: Uuid) -> Result<Option<Team>> {
         let team = sqlx::query_as::<_, Team>(
-            r#"
+            r"
             SELECT * FROM teams
             WHERE id = $1 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         Ok(team)
     }
@@ -98,7 +99,7 @@ impl TeamRepository for SqlxTeamRepository {
         is_active: Option<bool>,
     ) -> Result<Team> {
         let team = sqlx::query_as::<_, Team>(
-            r#"
+            r"
             UPDATE teams
             SET
                 name = COALESCE($2, name),
@@ -107,7 +108,7 @@ impl TeamRepository for SqlxTeamRepository {
                 updated_at = NOW()
             WHERE id = $1 AND deleted_at IS NULL
             RETURNING *
-            "#,
+            ",
         )
         .bind(id)
         .bind(&name)
@@ -116,7 +117,7 @@ impl TeamRepository for SqlxTeamRepository {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| match e {
-            sqlx::Error::RowNotFound => Error::NotFound(format!("Team not found: {}", id)),
+            sqlx::Error::RowNotFound => Error::NotFound(format!("Team not found: {id}")),
             _ => Error::Database(e),
         })?;
 
@@ -125,16 +126,16 @@ impl TeamRepository for SqlxTeamRepository {
 
     async fn delete(&self, id: Uuid) -> Result<()> {
         sqlx::query(
-            r#"
+            r"
             UPDATE teams
             SET deleted_at = NOW(), is_active = false
             WHERE id = $1 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(id)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         Ok(())
     }
@@ -150,6 +151,7 @@ pub struct SqlxMembershipRepository {
 }
 
 impl SqlxMembershipRepository {
+    #[must_use]
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -164,35 +166,35 @@ impl MembershipRepository for SqlxMembershipRepository {
         role: String,
     ) -> Result<TeamMembership> {
         let membership = sqlx::query_as::<_, TeamMembership>(
-            r#"
+            r"
             INSERT INTO team_memberships (user_id, team_id, role)
             VALUES ($1, $2, $3)
             RETURNING *
-            "#,
+            ",
         )
         .bind(user_id)
         .bind(team_id)
         .bind(&role)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         Ok(membership)
     }
 
     async fn remove_member(&self, team_id: Uuid, user_id: Uuid) -> Result<()> {
         sqlx::query(
-            r#"
+            r"
             UPDATE team_memberships
             SET deleted_at = NOW()
             WHERE team_id = $1 AND user_id = $2 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(team_id)
         .bind(user_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         Ok(())
     }
@@ -204,12 +206,12 @@ impl MembershipRepository for SqlxMembershipRepository {
         role: String,
     ) -> Result<TeamMembership> {
         let membership = sqlx::query_as::<_, TeamMembership>(
-            r#"
+            r"
             UPDATE team_memberships
             SET role = $3
             WHERE team_id = $1 AND user_id = $2 AND deleted_at IS NULL
             RETURNING *
-            "#,
+            ",
         )
         .bind(team_id)
         .bind(user_id)
@@ -218,8 +220,7 @@ impl MembershipRepository for SqlxMembershipRepository {
         .await
         .map_err(|e| match e {
             sqlx::Error::RowNotFound => Error::NotFound(format!(
-                "Membership not found for team {} and user {}",
-                team_id, user_id
+                "Membership not found for team {team_id} and user {user_id}"
             )),
             _ => Error::Database(e),
         })?;
@@ -229,19 +230,19 @@ impl MembershipRepository for SqlxMembershipRepository {
 
     async fn list_members(&self, team_id: Uuid) -> Result<Vec<MemberInfo>> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT tm.id, tm.user_id, tm.team_id, tm.role, tm.created_at, tm.deleted_at,
                    u.username, u.email
             FROM team_memberships tm
             INNER JOIN users u ON tm.user_id = u.id
             WHERE tm.team_id = $1 AND tm.deleted_at IS NULL
             ORDER BY tm.created_at
-            "#,
+            ",
         )
         .bind(team_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         let members = rows
             .into_iter()
@@ -264,16 +265,16 @@ impl MembershipRepository for SqlxMembershipRepository {
 
     async fn get_member(&self, team_id: Uuid, user_id: Uuid) -> Result<Option<TeamMembership>> {
         let membership = sqlx::query_as::<_, TeamMembership>(
-            r#"
+            r"
             SELECT * FROM team_memberships
             WHERE team_id = $1 AND user_id = $2 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(team_id)
         .bind(user_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         Ok(membership)
     }
@@ -289,6 +290,7 @@ pub struct SqlxProjectRepository {
 }
 
 impl SqlxProjectRepository {
+    #[must_use]
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -304,11 +306,11 @@ impl ProjectRepository for SqlxProjectRepository {
         metadata: Option<serde_json::Value>,
     ) -> Result<Project> {
         let project = sqlx::query_as::<_, Project>(
-            r#"
+            r"
             INSERT INTO projects (team_id, name, description, metadata)
             VALUES ($1, $2, $3, $4)
             RETURNING *
-            "#,
+            ",
         )
         .bind(team_id)
         .bind(&name)
@@ -316,38 +318,38 @@ impl ProjectRepository for SqlxProjectRepository {
         .bind(&metadata)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         Ok(project)
     }
 
     async fn list_by_team(&self, team_id: Uuid) -> Result<Vec<Project>> {
         let projects = sqlx::query_as::<_, Project>(
-            r#"
+            r"
             SELECT * FROM projects
             WHERE team_id = $1 AND deleted_at IS NULL
             ORDER BY name
-            "#,
+            ",
         )
         .bind(team_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         Ok(projects)
     }
 
     async fn get_by_id(&self, id: Uuid) -> Result<Option<Project>> {
         let project = sqlx::query_as::<_, Project>(
-            r#"
+            r"
             SELECT * FROM projects
             WHERE id = $1 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         Ok(project)
     }
@@ -360,7 +362,7 @@ impl ProjectRepository for SqlxProjectRepository {
         metadata: Option<serde_json::Value>,
     ) -> Result<Project> {
         let project = sqlx::query_as::<_, Project>(
-            r#"
+            r"
             UPDATE projects
             SET
                 name = COALESCE($2, name),
@@ -369,7 +371,7 @@ impl ProjectRepository for SqlxProjectRepository {
                 updated_at = NOW()
             WHERE id = $1 AND deleted_at IS NULL
             RETURNING *
-            "#,
+            ",
         )
         .bind(id)
         .bind(&name)
@@ -378,7 +380,7 @@ impl ProjectRepository for SqlxProjectRepository {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| match e {
-            sqlx::Error::RowNotFound => Error::NotFound(format!("Project not found: {}", id)),
+            sqlx::Error::RowNotFound => Error::NotFound(format!("Project not found: {id}")),
             _ => Error::Database(e),
         })?;
 
@@ -387,16 +389,16 @@ impl ProjectRepository for SqlxProjectRepository {
 
     async fn delete(&self, id: Uuid) -> Result<()> {
         sqlx::query(
-            r#"
+            r"
             UPDATE projects
             SET deleted_at = NOW()
             WHERE id = $1 AND deleted_at IS NULL
-            "#,
+            ",
         )
         .bind(id)
         .execute(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         Ok(())
     }
@@ -412,6 +414,7 @@ pub struct SqlxTeamHierarchyResolver {
 }
 
 impl SqlxTeamHierarchyResolver {
+    #[must_use]
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -421,7 +424,7 @@ impl SqlxTeamHierarchyResolver {
 impl TeamHierarchyResolver for SqlxTeamHierarchyResolver {
     async fn get_ancestor_teams(&self, team_id: Uuid) -> Result<Vec<Uuid>> {
         let rows = sqlx::query_as::<_, (Uuid,)>(
-            r#"
+            r"
             WITH RECURSIVE ancestors AS (
                 SELECT parent_team_id
                 FROM teams
@@ -433,19 +436,19 @@ impl TeamHierarchyResolver for SqlxTeamHierarchyResolver {
                 WHERE t.deleted_at IS NULL
             )
             SELECT parent_team_id FROM ancestors WHERE parent_team_id IS NOT NULL
-            "#,
+            ",
         )
         .bind(team_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
     async fn get_descendant_teams(&self, team_id: Uuid) -> Result<Vec<Uuid>> {
         let rows = sqlx::query_as::<_, (Uuid,)>(
-            r#"
+            r"
             WITH RECURSIVE descendants AS (
                 SELECT id
                 FROM teams
@@ -457,12 +460,12 @@ impl TeamHierarchyResolver for SqlxTeamHierarchyResolver {
                 WHERE t.deleted_at IS NULL
             )
             SELECT id FROM descendants
-            "#,
+            ",
         )
         .bind(team_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
@@ -470,26 +473,26 @@ impl TeamHierarchyResolver for SqlxTeamHierarchyResolver {
     async fn is_member_including_ancestors(&self, user_id: Uuid, team_id: Uuid) -> Result<bool> {
         // Check direct membership
         let direct: Option<(bool,)> = sqlx::query_as(
-            r#"
+            r"
             SELECT EXISTS (
                 SELECT 1 FROM team_memberships
                 WHERE user_id = $1 AND team_id = $2 AND deleted_at IS NULL
             )
-            "#,
+            ",
         )
         .bind(user_id)
         .bind(team_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
-        if direct.map(|(b,)| b).unwrap_or(false) {
+        if direct.is_some_and(|(b,)| b) {
             return Ok(true);
         }
 
         // Check membership in any ancestor team
         let ancestor: Option<(bool,)> = sqlx::query_as(
-            r#"
+            r"
             WITH RECURSIVE ancestors AS (
                 SELECT parent_team_id
                 FROM teams
@@ -505,15 +508,15 @@ impl TeamHierarchyResolver for SqlxTeamHierarchyResolver {
                 INNER JOIN ancestors a ON tm.team_id = a.parent_team_id
                 WHERE tm.user_id = $1 AND tm.deleted_at IS NULL
             )
-            "#,
+            ",
         )
         .bind(user_id)
         .bind(team_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(e))?;
+        .map_err(Error::Database)?;
 
-        Ok(ancestor.map(|(b,)| b).unwrap_or(false))
+        Ok(ancestor.is_some_and(|(b,)| b))
     }
 }
 
@@ -527,6 +530,7 @@ pub struct CasbinTeamPermissionService {
 }
 
 impl CasbinTeamPermissionService {
+    #[must_use]
     pub fn new(authorizer: Arc<CasbinAuthorizer>) -> Self {
         Self { authorizer }
     }

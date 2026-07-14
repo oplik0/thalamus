@@ -139,6 +139,19 @@ impl BackendRegistry for InMemoryBackendRegistry {
         }
     }
 
+    fn try_acquire(&self, id: &EndpointId) -> bool {
+        let Some(state) = self.endpoints.get(id) else {
+            return false;
+        };
+
+        let active = state.active_requests.fetch_add(1, Ordering::Relaxed) + 1;
+        if active > state.config.capacity {
+            state.active_requests.fetch_sub(1, Ordering::Relaxed);
+            return false;
+        }
+        true
+    }
+
     fn release(&self, id: &EndpointId) {
         if let Some(state) = self.endpoints.get(id) {
             state
@@ -354,7 +367,7 @@ fn backoff_delay(current: Duration, max: Duration, exponential: bool) -> Duratio
     }
 
     let doubled = current.as_millis().saturating_mul(2);
-    let jitter = (rand::random::<u16>() as u128) % 25;
+    let jitter = u128::from(rand::random::<u16>()) % 25;
     let with_jitter = doubled.saturating_add(jitter);
     let capped = std::cmp::min(with_jitter, max.as_millis());
     Duration::from_millis(capped as u64)

@@ -44,6 +44,7 @@ impl Default for SecurityHeadersConfig {
 
 impl SecurityHeadersConfig {
     /// Create a permissive configuration for development
+    #[must_use]
     pub fn development() -> Self {
         Self {
             csp: "default-src * 'unsafe-inline' 'unsafe-eval';".to_string(),
@@ -53,6 +54,7 @@ impl SecurityHeadersConfig {
     }
 
     /// Create a strict configuration for production
+    #[must_use]
     pub fn production() -> Self {
         Self {
             csp: "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; media-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests;".to_string(),

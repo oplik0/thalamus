@@ -14,7 +14,7 @@ use std::{
 /// Configuration watcher for hot-reload support with profiles
 #[derive(Debug)]
 pub struct ConfigWatcher {
-    /// Current configuration (wrapped in RwLock for safe swapping on reload)
+    /// Current configuration (wrapped in `RwLock` for safe swapping on reload)
     config: Arc<RwLock<Arc<Config>>>,
     path: PathBuf,
     profile: String,
@@ -78,9 +78,10 @@ impl ConfigWatcher {
     #[must_use]
     pub fn profiles(&self) -> Vec<String> {
         // Reload profiles to get the list (they should already be loaded once)
-        super::loader::load_config_profiles(&self.path)
-            .map(|p| p.keys().cloned().collect())
-            .unwrap_or_else(|_| vec![self.profile.clone()])
+        super::loader::load_config_profiles(&self.path).map_or_else(
+            |_| vec![self.profile.clone()],
+            |p| p.keys().cloned().collect(),
+        )
     }
 
     /// Manually reload the configuration
@@ -169,9 +170,9 @@ impl ConfigWatcher {
                         }
                     }
                     // Periodically check if debounce period has passed
-                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                        if let Some(deadline) = debounce_deadline {
-                            if deadline.elapsed() >= debounce_duration {
+                    () = tokio::time::sleep(Duration::from_millis(100)) => {
+                        if let Some(deadline) = debounce_deadline
+                            && deadline.elapsed() >= debounce_duration {
                                 // Debounce period passed, reload configuration
                                 debounce_deadline = None;
                                 if let Err(e) = self.reload().await {
@@ -180,7 +181,6 @@ impl ConfigWatcher {
                                     tracing::info!("Configuration hot-reloaded successfully");
                                 }
                             }
-                        }
                     }
                 }
             }
@@ -213,7 +213,7 @@ mod tests {
         if let Ok(watcher) = result {
             let profiles = watcher.profiles();
             assert!(!profiles.is_empty());
-            println!("Available profiles: {:?}", profiles);
+            println!("Available profiles: {profiles:?}");
         }
     }
 }

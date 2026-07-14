@@ -55,13 +55,9 @@ export async function getRefreshToken(): Promise<string | null> {
  * Save the token expiration timestamp
  */
 export async function saveTokenExpiresAt(timestamp: number): Promise<void> {
-	await SecureStore.setItemAsync(
-		KEYS.TOKEN_EXPIRES_AT,
-		timestamp.toString(),
-		{
-			keychainService: "com.thalamus.admin",
-		},
-	);
+	await SecureStore.setItemAsync(KEYS.TOKEN_EXPIRES_AT, timestamp.toString(), {
+		keychainService: "com.thalamus.admin",
+	});
 }
 
 /**
@@ -78,7 +74,9 @@ export async function getTokenExpiresAt(): Promise<number | null> {
  * Check if the access token is expired or about to expire
  * @param bufferSeconds Additional buffer time (default 60 seconds)
  */
-export async function isTokenExpired(bufferSeconds: number = 60): Promise<boolean> {
+export async function isTokenExpired(
+	bufferSeconds: number = 60,
+): Promise<boolean> {
 	const expiresAt = await getTokenExpiresAt();
 	if (!expiresAt) return true;
 	return Date.now() >= expiresAt * 1000 - bufferSeconds * 1000;

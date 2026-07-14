@@ -75,6 +75,13 @@ pub async fn init_test_state(pool: PgPool) -> thalamus::bootstrap::AppState {
         backend_registry.clone(),
         GuardrailService::empty(),
     ));
+    let batch_repository: Arc<dyn thalamus::features::batch::domain::BatchRepository> = Arc::new(
+        thalamus::features::batch::infra::SqlxBatchRepository::new(pool.clone()),
+    );
+    let batch_service = Arc::new(thalamus::features::batch::BatchService::new(
+        batch_repository,
+        Arc::clone(&proxy),
+    ));
 
     // Initialize team repositories (needed for compilation)
     let team_repository = Arc::new(thalamus::features::teams::infra::SqlxTeamRepository::new(
@@ -125,6 +132,7 @@ pub async fn init_test_state(pool: PgPool) -> thalamus::bootstrap::AppState {
         oauth_service,
         backend_registry,
         proxy,
+        batch_service,
         plugin_manager: None,
         team_repository,
         membership_repository,
@@ -203,6 +211,13 @@ pub async fn init_test_state_with_backends(
         backend_registry.clone(),
         GuardrailService::empty(),
     ));
+    let batch_repository: Arc<dyn thalamus::features::batch::domain::BatchRepository> = Arc::new(
+        thalamus::features::batch::infra::SqlxBatchRepository::new(pool.clone()),
+    );
+    let batch_service = Arc::new(thalamus::features::batch::BatchService::new(
+        batch_repository,
+        Arc::clone(&proxy),
+    ));
 
     // Initialize team repositories (needed for compilation)
     let team_repository = Arc::new(thalamus::features::teams::infra::SqlxTeamRepository::new(
@@ -253,6 +268,7 @@ pub async fn init_test_state_with_backends(
         oauth_service,
         backend_registry,
         proxy,
+        batch_service,
         plugin_manager: None,
         team_repository,
         membership_repository,
@@ -307,6 +323,13 @@ pub async fn init_test_state_with_config(
         backend_registry.clone(),
         GuardrailService::empty(),
     ));
+    let batch_repository: Arc<dyn thalamus::features::batch::domain::BatchRepository> = Arc::new(
+        thalamus::features::batch::infra::SqlxBatchRepository::new(pool.clone()),
+    );
+    let batch_service = Arc::new(thalamus::features::batch::BatchService::new(
+        batch_repository,
+        Arc::clone(&proxy),
+    ));
 
     // Initialize team repositories (needed for compilation)
     let team_repository = Arc::new(thalamus::features::teams::infra::SqlxTeamRepository::new(
@@ -357,6 +380,7 @@ pub async fn init_test_state_with_config(
         oauth_service,
         backend_registry,
         proxy,
+        batch_service,
         plugin_manager: None,
         team_repository,
         membership_repository,
@@ -435,7 +459,7 @@ fn create_test_config() -> Config {
         security: SecurityConfig {
             api_key_secret: "test_secret_key_must_be_at_least_32_bytes_long".to_string(),
             paseto_secret_key: "exactly_32_bytes_for_paseto_key!".to_string(),
-            opaque_server_setup: "test_opaque_setup".to_string(),
+            opaque_server_setup: "dev".to_string(),
         },
         plugins: None,
         mcp_servers: HashMap::new(),

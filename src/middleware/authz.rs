@@ -67,16 +67,15 @@ pub async fn casbin_auth_middleware(
     };
 
     // Get the authorizer from state
-    let authorizer = match &state.authorizer {
-        Some(authorizer) => authorizer.clone(),
-        None => {
-            tracing::error!("Authorizer not initialized in AppState");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Authorization system not initialized",
-            )
-                .into_response();
-        }
+    let authorizer = if let Some(authorizer) = &state.authorizer {
+        authorizer.clone()
+    } else {
+        tracing::error!("Authorizer not initialized in AppState");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Authorization system not initialized",
+        )
+            .into_response();
     };
 
     // Build the authorization request
@@ -287,8 +286,7 @@ impl AuthzExt for Auth {
             Ok(())
         } else {
             Err(Error::Authorization(format!(
-                "Access denied: cannot {} {}",
-                action, object
+                "Access denied: cannot {action} {object}"
             )))
         }
     }

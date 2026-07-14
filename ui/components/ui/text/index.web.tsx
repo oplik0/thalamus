@@ -1,10 +1,12 @@
 import React from 'react';
 import type { VariantProps } from '@gluestack-ui/utils/nativewind-utils';
 import { textStyle } from './styles';
+import { pressToClick } from '../utils';
 
 type ITextProps = Omit<React.ComponentProps<'span'>, 'selectable'> &
   VariantProps<typeof textStyle> & {
     selectable?: boolean;
+    onPress?: () => void;
   };
 
 const Text = React.forwardRef<React.ComponentRef<'span'>, ITextProps>(
@@ -19,6 +21,8 @@ const Text = React.forwardRef<React.ComponentRef<'span'>, ITextProps>(
       sub,
       italic,
       highlight,
+      onPress,
+      onClick,
       selectable: _selectable, // Destructure to prevent passing to DOM
       ...props
     }: { className?: string } & ITextProps,
@@ -38,6 +42,7 @@ const Text = React.forwardRef<React.ComponentRef<'span'>, ITextProps>(
           class: className,
         })}
         {...props}
+        onClick={pressToClick(onPress, onClick)}
         ref={ref}
       />
     );

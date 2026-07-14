@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
-import { HealthResponse } from "@/lib/types";
+import type { HealthResponse } from "@/lib/types";
 
 export function useHealthCheck() {
-  return useQuery({
-    queryKey: ["health"],
-    queryFn: () => apiClient.get<HealthResponse>("/health"),
-    refetchInterval: 30_000,
-  });
+	return useQuery({
+		queryKey: ["health"],
+		queryFn: () => apiClient.get<HealthResponse>("/health"),
+		refetchInterval: 30_000,
+	});
 }

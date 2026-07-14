@@ -21,7 +21,7 @@ pub async fn require_admin(
     next: Next,
 ) -> Response {
     match authenticate_and_check_scope(&state, &request, &["admin"]).await {
-        Ok(_) => next.run(request).await,
+        Ok(()) => next.run(request).await,
         Err(response) => response,
     }
 }
@@ -36,7 +36,7 @@ pub async fn require_task_monitor(
     next: Next,
 ) -> Response {
     match authenticate_and_check_scope(&state, &request, &["admin", "tasks:monitor"]).await {
-        Ok(_) => next.run(request).await,
+        Ok(()) => next.run(request).await,
         Err(response) => response,
     }
 }
@@ -69,21 +69,17 @@ async fn authenticate_and_check_scope(
     let validated_key = validate_key(token, state).await.map_err(|e| {
         (
             StatusCode::UNAUTHORIZED,
-            format!("Authentication failed: {}", e),
+            format!("Authentication failed: {e}"),
         )
             .into_response()
     })?;
 
     // Check if the key has any of the required scopes
-    let has_required_scope = validated_key
-        .scopes
-        .as_ref()
-        .map(|scopes| {
-            required_scopes
-                .iter()
-                .any(|scope| scopes.contains(&scope.to_string()))
-        })
-        .unwrap_or(false);
+    let has_required_scope = validated_key.scopes.as_ref().is_some_and(|scopes| {
+        required_scopes
+            .iter()
+            .any(|scope| scopes.contains(&scope.to_string()))
+    });
 
     if !has_required_scope {
         return Err((

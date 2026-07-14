@@ -41,6 +41,7 @@ pub struct TokenClaims {
 
 impl TokenClaims {
     /// Create new token claims
+    #[must_use]
     pub fn new(
         user_id: Uuid,
         team_id: Uuid,
@@ -62,11 +63,13 @@ impl TokenClaims {
     }
 
     /// Check if the token is expired
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         Utc::now() > self.exp
     }
 
     /// Check if the token is valid (not expired, not before is satisfied)
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         let now = Utc::now();
 
@@ -74,10 +77,10 @@ impl TokenClaims {
             return false;
         }
 
-        if let Some(nbf) = self.nbf {
-            if now < nbf {
-                return false;
-            }
+        if let Some(nbf) = self.nbf
+            && now < nbf
+        {
+            return false;
         }
 
         true

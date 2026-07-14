@@ -2,7 +2,7 @@
 //!
 //! Unified response representations using an item-based output model
 //! that maps to all supported provider response formats. The item model
-//! is a superset: Chat Completions = single OutputItem::Message,
+//! is a superset: Chat Completions = single `OutputItem::Message`,
 //! Responses API = multiple item types.
 
 use serde::{Deserialize, Serialize};
@@ -121,7 +121,7 @@ pub struct Usage {
     pub completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_tokens: Option<u32>,
-    /// OpenAI reasoning tokens
+    /// `OpenAI` reasoning tokens
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_tokens: Option<u32>,
     /// Cache read tokens (Anthropic/OpenAI)

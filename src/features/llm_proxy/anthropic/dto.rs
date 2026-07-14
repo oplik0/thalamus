@@ -108,6 +108,7 @@ pub enum AnthropicStreamEvent {
 
 impl AnthropicStreamEvent {
     /// Returns the SSE `event:` header value for this event.
+    #[must_use]
     pub fn event_type(&self) -> &'static str {
         match self {
             Self::MessageStart { .. } => "message_start",
@@ -212,16 +213,17 @@ impl From<AnthropicMessagesRequest> for LlmRequest {
         let tool_choice = value.tool_choice.map(|tc| match tc.choice_type.as_str() {
             "auto" => ToolChoice::Auto,
             "any" => ToolChoice::Required,
-            "tool" => match tc.name {
-                Some(name) => ToolChoice::Function { name },
-                None => {
+            "tool" => {
+                if let Some(name) = tc.name {
+                    ToolChoice::Function { name }
+                } else {
                     tracing::warn!(
                         "Anthropic tool_choice type='tool' received with no tool name; \
-                         falling back to ToolChoice::Auto"
+                     falling back to ToolChoice::Auto"
                     );
                     ToolChoice::Auto
                 }
-            },
+            }
             _ => ToolChoice::Auto,
         });
 
@@ -268,8 +270,7 @@ impl From<ChatResponse> for AnthropicMessagesResponse {
                 OutputItem::Message { finish_reason, .. } => finish_reason.as_ref(),
                 _ => None,
             })
-            .map(finish_reason_to_anthropic)
-            .unwrap_or_else(|| "end_turn".to_string());
+            .map_or_else(|| "end_turn".to_string(), finish_reason_to_anthropic);
 
         Self {
             id: value
@@ -300,6 +301,7 @@ fn finish_reason_to_anthropic(reason: &FinishReason) -> String {
 /// Convert a unified `StreamEvent` to Anthropic SSE events.
 /// Returns a Vec because some events map to multiple SSE events
 /// (e.g., `ResponseDone` -> `MessageDelta` + `MessageStop`).
+#[must_use]
 pub fn stream_event_to_anthropic(value: StreamEvent) -> Vec<AnthropicStreamEvent> {
     match value {
         StreamEvent::ResponseCreated { id, model } => {

@@ -1,6 +1,6 @@
 //! OAuth provider implementations using the oauth2 crate
 //!
-//! This module provides OAuth2 client implementations using the oauth2 crate
+//! This module provides `OAuth2` client implementations using the oauth2 crate
 //! for GitHub, GitHub Enterprise, and OIDC providers.
 
 use std::sync::OnceLock;
@@ -23,7 +23,7 @@ struct OidcDiscoveryDocument {
     jwks_uri: Option<String>,
 }
 
-/// OIDC token response (includes id_token)
+/// OIDC token response (includes `id_token`)
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct OidcTokenResponse {
@@ -35,7 +35,7 @@ struct OidcTokenResponse {
     scope: Option<String>,
 }
 
-/// OIDC UserInfo response
+/// OIDC `UserInfo` response
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct OidcUserInfo {
@@ -115,9 +115,9 @@ impl GitHubOAuthProvider {
             client_secret,
             scopes,
             auth_url: AuthUrl::new("https://github.com/login/oauth/authorize".to_string())
-                .map_err(|e| Error::Config(format!("Invalid GitHub auth URL: {}", e)))?,
+                .map_err(|e| Error::Config(format!("Invalid GitHub auth URL: {e}")))?,
             token_url: TokenUrl::new("https://github.com/login/oauth/access_token".to_string())
-                .map_err(|e| Error::Config(format!("Invalid GitHub token URL: {}", e)))?,
+                .map_err(|e| Error::Config(format!("Invalid GitHub token URL: {e}")))?,
             api_base_url: "https://api.github.com".to_string(),
         })
     }
@@ -195,7 +195,7 @@ impl GitHubOAuthProvider {
 
         let response = client
             .get(format!("{}/user", self.api_base_url))
-            .header("Authorization", format!("Bearer {}", access_token))
+            .header("Authorization", format!("Bearer {access_token}"))
             .header("Accept", "application/vnd.github.v3+json")
             .header("User-Agent", "Thalamus-OAuth-App")
             .send()
@@ -232,7 +232,7 @@ impl GitHubOAuthProvider {
 
         let response = client
             .get(format!("{}/user/orgs", self.api_base_url))
-            .header("Authorization", format!("Bearer {}", access_token))
+            .header("Authorization", format!("Bearer {access_token}"))
             .header("Accept", "application/vnd.github.v3+json")
             .header("User-Agent", "Thalamus-OAuth-App")
             .send()
@@ -294,8 +294,8 @@ impl GitHubEnterpriseProvider {
         scopes: Vec<String>,
         base_url: String,
     ) -> crate::error::Result<Self> {
-        let auth_url = format!("{}/login/oauth/authorize", base_url);
-        let token_url = format!("{}/login/oauth/access_token", base_url);
+        let auth_url = format!("{base_url}/login/oauth/authorize");
+        let token_url = format!("{base_url}/login/oauth/access_token");
 
         Ok(Self {
             name,
@@ -303,12 +303,11 @@ impl GitHubEnterpriseProvider {
             client_secret,
             scopes,
             auth_url: AuthUrl::new(auth_url)
-                .map_err(|e| Error::Config(format!("Invalid GitHub Enterprise auth URL: {}", e)))?,
-            token_url: TokenUrl::new(token_url).map_err(|e| {
-                Error::Config(format!("Invalid GitHub Enterprise token URL: {}", e))
-            })?,
+                .map_err(|e| Error::Config(format!("Invalid GitHub Enterprise auth URL: {e}")))?,
+            token_url: TokenUrl::new(token_url)
+                .map_err(|e| Error::Config(format!("Invalid GitHub Enterprise token URL: {e}")))?,
             base_url: base_url.clone(),
-            api_base_url: format!("{}/api/v3", base_url),
+            api_base_url: format!("{base_url}/api/v3"),
         })
     }
 
@@ -385,7 +384,7 @@ impl GitHubEnterpriseProvider {
 
         let response = client
             .get(format!("{}/user", self.api_base_url))
-            .header("Authorization", format!("Bearer {}", access_token))
+            .header("Authorization", format!("Bearer {access_token}"))
             .header("Accept", "application/vnd.github.v3+json")
             .header("User-Agent", "Thalamus-OAuth-App")
             .send()
@@ -422,7 +421,7 @@ impl GitHubEnterpriseProvider {
 
         let response = client
             .get(format!("{}/user/orgs", self.api_base_url))
-            .header("Authorization", format!("Bearer {}", access_token))
+            .header("Authorization", format!("Bearer {access_token}"))
             .header("Accept", "application/vnd.github.v3+json")
             .header("User-Agent", "Thalamus-OAuth-App")
             .send()
@@ -466,7 +465,7 @@ struct GitHubOrg {
     login: String,
 }
 
-/// OIDC provider using OpenID Connect discovery and userinfo endpoint
+/// OIDC provider using `OpenID` Connect discovery and userinfo endpoint
 #[derive(Clone)]
 pub struct OidcProvider {
     pub name: String,
@@ -491,6 +490,7 @@ impl std::fmt::Debug for OidcProvider {
 }
 
 impl OidcProvider {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
         client_id: String,
@@ -527,14 +527,14 @@ impl OidcProvider {
             .get(&discovery_url)
             .send()
             .await
-            .map_err(|e| Error::Config(format!("OIDC discovery failed: {}", e)))?
+            .map_err(|e| Error::Config(format!("OIDC discovery failed: {e}")))?
             .error_for_status()
-            .map_err(|e| Error::Config(format!("OIDC discovery returned error: {}", e)))?;
+            .map_err(|e| Error::Config(format!("OIDC discovery returned error: {e}")))?;
 
         response
             .json()
             .await
-            .map_err(|e| Error::Config(format!("Failed to parse OIDC discovery: {}", e)))
+            .map_err(|e| Error::Config(format!("Failed to parse OIDC discovery: {e}")))
     }
 
     async fn ensure_discovered(&self) -> crate::error::Result<&(String, String, String)> {
@@ -575,8 +575,7 @@ impl OidcProvider {
         let auth_url = self
             .ensure_discovered()
             .await
-            .map(|e| e.0.clone())
-            .unwrap_or_else(|_| "https://error.invalid".to_string());
+            .map_or_else(|_| "https://error.invalid".to_string(), |e| e.0.clone());
         let final_redirect_uri = self.redirect_uri.as_deref().unwrap_or(redirect_uri);
         let scopes = self.scopes.join(" ");
         format!(
@@ -599,7 +598,7 @@ impl OidcProvider {
         let token_url = self
             .ensure_discovered()
             .await
-            .map_err(|e| OAuthError::TokenExchange(format!("OIDC discovery failed: {}", e)))?
+            .map_err(|e| OAuthError::TokenExchange(format!("OIDC discovery failed: {e}")))?
             .1
             .clone();
 
@@ -626,8 +625,7 @@ impl OidcProvider {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             return Err(OAuthError::TokenExchange(format!(
-                "OIDC token endpoint returned {}: {}",
-                status, body
+                "OIDC token endpoint returned {status}: {body}"
             )));
         }
 
@@ -651,7 +649,7 @@ impl OidcProvider {
         let userinfo_url = self
             .ensure_discovered()
             .await
-            .map_err(|e| OAuthError::UserInfoFetch(format!("OIDC discovery failed: {}", e)))?
+            .map_err(|e| OAuthError::UserInfoFetch(format!("OIDC discovery failed: {e}")))?
             .2
             .clone();
 
@@ -659,7 +657,7 @@ impl OidcProvider {
 
         let response = client
             .get(&userinfo_url)
-            .header("Authorization", format!("Bearer {}", access_token))
+            .header("Authorization", format!("Bearer {access_token}"))
             .send()
             .await
             .map_err(|e| OAuthError::UserInfoFetch(e.to_string()))?;
@@ -677,11 +675,10 @@ impl OidcProvider {
             .map_err(|e| OAuthError::UserInfoFetch(e.to_string()))?;
 
         let email = user_info.email.unwrap_or_else(|| {
-            user_info
-                .name
-                .as_ref()
-                .map(|n| n.to_lowercase())
-                .unwrap_or_else(|| format!("{}@unknown", user_info.sub))
+            user_info.name.as_ref().map_or_else(
+                || format!("{}@unknown", user_info.sub),
+                |n| n.to_lowercase(),
+            )
         });
 
         let username = user_info
@@ -690,7 +687,7 @@ impl OidcProvider {
             .or_else(|| {
                 let combined = [user_info.given_name.clone(), user_info.family_name.clone()]
                     .into_iter()
-                    .filter_map(|s| s)
+                    .flatten()
                     .collect::<Vec<_>>()
                     .join(" ");
                 if combined.is_empty() {

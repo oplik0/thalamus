@@ -1,6 +1,6 @@
 //! Casbin authorization infrastructure
 //!
-//! Implements the authorization domain traits using Casbin with SQLx adapter.
+//! Implements the authorization domain traits using Casbin with `SQLx` adapter.
 
 use crate::error::{Error, Result};
 use crate::features::authorization::domain::{AuthRequest, Authorizer, PolicyManager};
@@ -32,7 +32,7 @@ impl CasbinAuthorizer {
     /// Create a new Casbin authorizer from a database pool
     ///
     /// # Arguments
-    /// * `pool` - PostgreSQL connection pool for loading policies
+    /// * `pool` - `PostgreSQL` connection pool for loading policies
     ///
     /// # Errors
     /// Returns an error if the Casbin model cannot be loaded or the adapter fails
@@ -40,17 +40,17 @@ impl CasbinAuthorizer {
         // Load the Casbin model from the configuration file
         let model = DefaultModel::from_file("casbin_model.conf")
             .await
-            .map_err(|e| Error::Config(format!("Failed to load Casbin model: {}", e)))?;
+            .map_err(|e| Error::Config(format!("Failed to load Casbin model: {e}")))?;
 
         // Create the SQLx adapter using the existing pool
         let adapter = SqlxAdapter::new_with_pool(pool)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to create Casbin adapter: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to create Casbin adapter: {e}")))?;
 
         // Create the enforcer using CoreApi::new
         let enforcer = CoreApi::new(model, adapter)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to create Casbin enforcer: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to create Casbin enforcer: {e}")))?;
 
         tracing::info!("Casbin authorizer initialized successfully");
 
@@ -62,23 +62,22 @@ impl CasbinAuthorizer {
     /// Create a new Casbin authorizer with a custom model file path
     ///
     /// # Arguments
-    /// * `pool` - PostgreSQL connection pool for loading policies
+    /// * `pool` - `PostgreSQL` connection pool for loading policies
     /// * `model_path` - Path to the Casbin model configuration file
     pub async fn with_model(pool: PgPool, model_path: &str) -> Result<Self> {
         let model = DefaultModel::from_file(model_path).await.map_err(|e| {
             Error::Config(format!(
-                "Failed to load Casbin model from {}: {}",
-                model_path, e
+                "Failed to load Casbin model from {model_path}: {e}"
             ))
         })?;
 
         let adapter = SqlxAdapter::new_with_pool(pool)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to create Casbin adapter: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to create Casbin adapter: {e}")))?;
 
         let enforcer = CoreApi::new(model, adapter)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to create Casbin enforcer: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to create Casbin enforcer: {e}")))?;
 
         tracing::info!("Casbin authorizer initialized with model: {}", model_path);
 
@@ -95,7 +94,7 @@ impl CasbinAuthorizer {
         let mut enforcer = self.enforcer.write().await;
         CoreApi::load_policy(&mut *enforcer)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to reload policies: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to reload policies: {e}")))?;
         tracing::debug!("Casbin policies reloaded");
         Ok(())
     }
@@ -114,7 +113,7 @@ impl Authorizer for CasbinAuthorizer {
                 &request.action,
             ),
         )
-        .map_err(|e| Error::Authorization(format!("Authorization check failed: {}", e)))?;
+        .map_err(|e| Error::Authorization(format!("Authorization check failed: {e}")))?;
         Ok(allowed)
     }
 }
@@ -139,7 +138,7 @@ impl PolicyManager for CasbinAuthorizer {
             ],
         )
         .await
-        .map_err(|e| Error::Internal(format!("Failed to add policy: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to add policy: {e}")))?;
         Ok(added)
     }
 
@@ -161,7 +160,7 @@ impl PolicyManager for CasbinAuthorizer {
             ],
         )
         .await
-        .map_err(|e| Error::Internal(format!("Failed to remove policy: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to remove policy: {e}")))?;
         Ok(removed)
     }
 
@@ -172,7 +171,7 @@ impl PolicyManager for CasbinAuthorizer {
             vec![user.to_string(), role.to_string(), domain.to_string()],
         )
         .await
-        .map_err(|e| Error::Internal(format!("Failed to add role: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to add role: {e}")))?;
         Ok(added)
     }
 
@@ -183,7 +182,7 @@ impl PolicyManager for CasbinAuthorizer {
             vec![user.to_string(), role.to_string(), domain.to_string()],
         )
         .await
-        .map_err(|e| Error::Internal(format!("Failed to remove role: {}", e)))?;
+        .map_err(|e| Error::Internal(format!("Failed to remove role: {e}")))?;
         Ok(removed)
     }
 

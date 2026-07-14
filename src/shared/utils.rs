@@ -2,6 +2,7 @@ use std::time::Duration;
 
 /// Parse a human-readable duration string (e.g., "30s", "5m", "1h") into a `Duration`.
 /// Returns the default if the input is empty or unparseable.
+#[must_use]
 pub fn parse_duration_or_default(input: &str, default: Duration) -> Duration {
     let value = input.trim();
     if value.is_empty() {

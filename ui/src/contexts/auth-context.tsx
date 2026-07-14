@@ -1,18 +1,23 @@
 "use client";
 
-import React, {
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
 	createContext,
+	type ReactNode,
+	useCallback,
 	useContext,
 	useEffect,
 	useState,
-	useCallback,
-	ReactNode,
 } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { WhoamiResponse } from "@/lib/types";
-import { whoami, logout as logoutService, refreshToken } from "@/services/auth";
 import { clearToken, getToken } from "@/lib/auth";
-import { isAuthError } from "@/services/auth";
+import type { WhoamiResponse } from "@/lib/types";
+import {
+	isAuthError,
+	loginWithCredentials,
+	logout as logoutService,
+	refreshToken,
+	whoami,
+} from "@/services/auth";
 
 interface AuthContextType {
 	user: WhoamiResponse | null;
@@ -20,6 +25,7 @@ interface AuthContextType {
 	isLoading: boolean;
 	logout: () => Promise<void>;
 	refetchUser: () => Promise<void>;
+	loginWithCredentials: (username: string, password: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -52,14 +58,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			if (token) {
 				// Enable the query to fetch user data
 				try {
-					await queryClient.fetchQuery({ queryKey: ["whoami"], queryFn: whoami });
+					await queryClient.fetchQuery({
+						queryKey: ["whoami"],
+						queryFn: whoami,
+					});
 				} catch (error) {
 					// Token might be invalid/expired
 					if (isAuthError(error)) {
 						// Try to refresh the token
 						try {
 							await refreshToken();
-							await queryClient.fetchQuery({ queryKey: ["whoami"], queryFn: whoami });
+							await queryClient.fetchQuery({
+								queryKey: ["whoami"],
+								queryFn: whoami,
+							});
 						} catch {
 							// Refresh failed, clear tokens
 							await clearToken();
@@ -81,6 +93,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
 		await refetch();
 	}, [refetch]);
 
+	const handleLoginWithCredentials = useCallback(
+		async (username: string, password: string) => {
+			await loginWithCredentials(username, password);
+			await refetch();
+		},
+		[refetch],
+	);
+
 	// Combined loading state
 	const isAuthLoading = isLoading || isQueryLoading;
 
@@ -92,6 +112,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 				isLoading: isAuthLoading,
 				logout: handleLogout,
 				refetchUser: handleRefetchUser,
+				loginWithCredentials: handleLoginWithCredentials,
 			}}
 		>
 			{children}

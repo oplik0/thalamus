@@ -15,6 +15,7 @@ pub struct ApiKey {
     pub name: String,
     pub description: Option<String>,
     pub scopes: Option<Vec<String>>,
+    pub default_priority: Option<String>,
     pub is_active: bool,
     pub last_used_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
@@ -56,6 +57,7 @@ pub struct ValidatedApiKey {
     pub team_id: Uuid,
     pub project_id: Option<Uuid>,
     pub scopes: Option<Vec<String>>,
+    pub default_priority: Option<String>,
 }
 
 #[cfg(test)]
@@ -80,6 +82,7 @@ mod tests {
             name: "Test Key".to_string(),
             description: Some("A test key".to_string()),
             scopes: Some(vec!["read".to_string(), "write".to_string()]),
+            default_priority: None,
             is_active: true,
             last_used_at: None,
             expires_at: Some(now + chrono::Duration::days(30)),
@@ -159,6 +162,7 @@ mod tests {
             team_id,
             project_id: None,
             scopes: Some(vec!["admin".to_string()]),
+            default_priority: Some("realtime".to_string()),
         };
 
         assert_eq!(validated.id, id);
@@ -186,6 +190,7 @@ mod tests {
             name: "Test Key".to_string(),
             description: None,
             scopes: None,
+            default_priority: Some("batch".to_string()),
             is_active: true,
             last_used_at: None,
             expires_at: None,

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub enum ToolDefinition {
     /// A function tool the model can call
     Function { function: FunctionDefinition },
-    /// A server-side tool (e.g., Anthropic web_search, code_execution)
+    /// A server-side tool (e.g., Anthropic `web_search`, `code_execution`)
     ServerTool(ServerTool),
 }
 

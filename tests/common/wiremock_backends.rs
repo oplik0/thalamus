@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use serde_json::json;
-use wiremock::matchers::{body_json, header, method, path};
+use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, Request as WireRequest, ResponseTemplate};
 
 use crate::common::config_builder::BackendConfigBuilder;
@@ -76,7 +76,7 @@ impl MockLlmBackend {
         let models: Vec<String> = models.into_iter().map(|m| m.into()).collect();
         let request_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-        let mut backend = Self {
+        let backend = Self {
             server,
             name,
             models,
@@ -225,7 +225,7 @@ impl MockLlmBackend {
         // Build SSE body
         let mut sse_body = String::new();
         for chunk in chunks {
-            sse_body.push_str(&format!("data: {}\n\n", chunk.to_string()));
+            sse_body.push_str(&format!("data: {}\n\n", chunk));
         }
         sse_body.push_str("data: [DONE]\n\n");
 
@@ -371,7 +371,7 @@ impl MockLlmBackend {
             .unwrap_or_default();
 
         BackendConfigBuilder::new(&self.name)
-            .with_endpoint(&self.base_url(), self.capacity, self.models.clone())
+            .with_endpoint(self.base_url(), self.capacity, self.models.clone())
             .with_bearer_auth(auth_token)
             .with_health_check(true, "1s", "3s")
             .build()
@@ -380,7 +380,7 @@ impl MockLlmBackend {
     /// Generate a BackendConfig with custom configuration
     pub fn to_backend_config_builder(&self) -> BackendConfigBuilder {
         BackendConfigBuilder::new(&self.name).with_endpoint(
-            &self.base_url(),
+            self.base_url(),
             self.capacity,
             self.models.clone(),
         )

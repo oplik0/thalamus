@@ -4,5 +4,6 @@
 
 pub mod domain;
 pub mod infra;
+pub mod priority;
 pub mod queue;
 pub mod strategies;
