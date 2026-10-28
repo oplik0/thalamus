@@ -1,23 +1,53 @@
-# Illustrative only: supply real version pins, image digest, artifact revision,
-# gateway, DNS and a selector for only this service's live key ConfigMaps.
+# Illustrative only: replace the example identity, revision, limits, gateway and
+# artifact content hashes with values measured and verified for your deployment.
 name: example-service
-namespace: example-inference
+namespace: thalamus-inference
+access:
+  teams:
+    - "00000000-0000-4000-8000-000000000001"
 gateway:
-  name: example-gateway
-  namespace: example-gateway-system
+  name: inference-serving
+  namespace: thalamus-inference
   hostname: inference.example.invalid
   keySelector:
-    thalamus.example.invalid/service: example-service
+    thalamus.dev/gateway-keys: "true"
+  rateLimit: example-shared
+network:
+  # Replace these documentation-only CIDRs and selectors with administrator-
+  # verified API, DNS, Prometheus and model-download destinations. HF
+  # downloads may redirect to additional CDN and authentication endpoints.
+  gatewayPodSelector:
+    gateway.networking.k8s.io/gateway-name: inference-serving
+  dns:
+    namespaceSelector:
+      kubernetes.io/metadata.name: kube-system
+    podSelector:
+      k8s-app: kube-dns
+  prometheus:
+    namespaceSelector:
+      kubernetes.io/metadata.name: monitoring
+    podSelector:
+      app.kubernetes.io/name: prometheus
+  apiServer:
+    - cidr: 192.0.2.0/24
+      ports: [6443]
+  storageEgress:
+    - cidr: 198.51.100.0/24
+      ports: [443]
 versions:
-  kserve: replace-with-tested-version
-  agentgateway: replace-with-tested-version
-  inferenceExtension: replace-with-tested-version
-  vllm: replace-with-tested-version
+  kserve: v0.21.0
+  agentgateway: v1.7.0
+  inferenceExtension: v1.6.2
+  vllm: v0.23.0
 deployments:
   - name: example-deployment
     artifact: example-model
     hardware: example-gpu
-    image: vllm/vllm-openai:example-tag
+    image: vllm/vllm-openai:v0.23.0
+    # Replace with the SHA-256 of the canonical deployment, artifact and hardware.
+    revision: "0000000000000000000000000000000000000000000000000000000000000000"
+    role: stable
+    rolloutStrategy: RollingUpdate
     replicas: 1
     contextLength: 4096
     # Enable only with an engine/model/tokenizer image pinned by sha256 digest
@@ -33,6 +63,3 @@ deployments:
       prefixCaching: true
       kvOffloadGi: 0
       shmGi: 1
-agenticMode: disabled
-scalingMode: fixed
-trafficClasses: false

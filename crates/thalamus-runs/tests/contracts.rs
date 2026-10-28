@@ -20,7 +20,7 @@ fn request() -> RunRequest {
             duration_seconds: 60,
             warmup_seconds: 5,
             max_requests: 100,
-            model_budget_tokens: 0,
+            model_budget_tokens: 10_000,
             tool_budget_calls: 0,
         },
         evidence: EvidenceIdentity {
@@ -72,7 +72,7 @@ fn templates() -> Templates {
                 command: vec!["/runner".into()],
                 workloads: vec!["shared-prefix".into()],
                 service_account: "runner".into(),
-                key_secret: None,
+                key_secret: Some("key".into()),
             },
         )]),
         ResultUpload {
@@ -83,6 +83,34 @@ fn templates() -> Templates {
         },
     )
     .unwrap()
+}
+
+fn benchmark_config() -> serde_json::Value {
+    serde_json::json!({
+                "base_url": "https://gateway.example/v1",
+                "model": "coding-model",
+                "benchmark": {
+                    "tokenizer": {
+                        "repository": "example/tokenizer",
+                        "revision": "0123456789abcdef0123456789abcdef01234567"
+                    },
+                    "workloads": {
+                        "shared-prefix": {
+                            "load": {"type": "constant", "stages": [{"rate": 1, "duration": 20}]},
+                            "data": {
+                                "type": "shared_prefix",
+                                "num_groups": 2,
+                                "num_prompts_per_group": 2,
+                                "system_prompt_len": 16,
+                                "question_len": 8,
+                                "output_len": 8,
+                                "enable_multi_turn_chat": true
+                            },
+                            "goodput": {"ttft": 1.0, "itl": 0.1}
+                        }
+                    }
+                }
+    })
 }
 
 #[test]
@@ -119,7 +147,7 @@ fn fingerprint_includes_conditions_and_workload_and_bounds_are_enforced() {
 fn jobs_are_bounded_and_foreign_jobs_cannot_be_adopted() {
     let mut run = run();
     let templates = templates();
-    let mut job = build_job(&run, &templates).unwrap();
+    let mut job = build_job(&run, &templates, &benchmark_config()).unwrap();
     let spec = job.spec.as_ref().unwrap();
     assert_eq!(spec.ttl_seconds_after_finished, Some(3600));
     assert_eq!(spec.active_deadline_seconds, Some(360));
@@ -209,7 +237,37 @@ fn jobs_are_bounded_and_foreign_jobs_cannot_be_adopted() {
     assert!(verify_owned_job(&run, &job, "inference").is_err());
     run.request.workload.name = "unapproved".into();
     run.fingerprint = run.request.fingerprint().unwrap();
-    assert!(build_job(&run, &templates).is_err());
+    assert!(build_job(&run, &templates, &benchmark_config()).is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn preparation_requires_resolved_config_only_for_the_initial_spec(pool: sqlx::PgPool) {
+    let store = thalamus_runs::Store::new(pool);
+    let run = store
+        .create("team", "actor", "key", &request())
+        .await
+        .unwrap();
+    let templates = templates();
+    assert!(store
+        .prepare_job("team", "worker", run.id, &templates, None)
+        .await
+        .is_err());
+    let config = benchmark_config();
+    let original = store
+        .prepare_job("team", "worker", run.id, &templates, Some(&config))
+        .await
+        .unwrap();
+    let recovered = store
+        .prepare_job("team", "worker", run.id, &templates, None)
+        .await
+        .unwrap();
+    assert_eq!(original.spec, recovered.spec);
+    let different = serde_json::json!({});
+    let recovered = store
+        .prepare_job("team", "worker", run.id, &templates, Some(&different))
+        .await
+        .unwrap();
+    assert_eq!(original.spec, recovered.spec);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -356,7 +414,7 @@ async fn worker_pages_across_teams_and_ingestion_is_durable(pool: sqlx::PgPool) 
 }
 
 #[test]
-fn validation_job_uses_only_operator_service_deployment_config() {
+fn validation_job_uses_only_resolved_service_deployment_config() {
     let mut run = run();
     run.request.kind = RunKind::Validation;
     run.request.workload.model_budget_tokens = 1000;
@@ -381,15 +439,9 @@ fn validation_job_uses_only_operator_service_deployment_config() {
         upload,
     )
     .unwrap();
-    assert!(build_job(&run, &templates).is_err());
+    assert!(build_job(&run, &templates, &serde_json::json!({})).is_err());
     let config = serde_json::json!({"base_url":"https://candidate.example/v1", "model":"allowed", "responses":true, "anthropic":false});
-    let templates = templates
-        .with_validation_configs(BTreeMap::from([(
-            run.request.service.clone(),
-            BTreeMap::from([(run.request.deployment.clone(), config.clone())]),
-        )]))
-        .unwrap();
-    let job = build_job(&run, &templates).unwrap();
+    let job = build_job(&run, &templates, &config).unwrap();
     let env = job.spec.unwrap().template.spec.unwrap().containers[0]
         .env
         .clone()
@@ -407,11 +459,11 @@ fn validation_job_uses_only_operator_service_deployment_config() {
     );
     run.request.workload.model_budget_tokens = 0;
     run.fingerprint = run.request.fingerprint().unwrap();
-    assert!(build_job(&run, &templates).is_err());
+    assert!(build_job(&run, &templates, &config).is_err());
     run.request.workload.model_budget_tokens = 1000;
-    run.request.deployment = "unconfigured".into();
+    run.request.runner = "unconfigured".into();
     run.fingerprint = run.request.fingerprint().unwrap();
-    assert!(build_job(&run, &templates).is_err());
+    assert!(build_job(&run, &templates, &config).is_err());
 }
 
 #[sqlx::test(migrations = "./migrations")]

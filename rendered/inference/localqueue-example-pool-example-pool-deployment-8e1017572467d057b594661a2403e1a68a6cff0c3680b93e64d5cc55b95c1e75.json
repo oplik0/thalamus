@@ -1,0 +1,11 @@
+{
+  "apiVersion": "kueue.x-k8s.io/v1beta2",
+  "kind": "LocalQueue",
+  "metadata": {
+    "name": "example-pool-example-pool-deployment",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "clusterQueue": "example-pool-example-pool-deployment"
+  }
+}

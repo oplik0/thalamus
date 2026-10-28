@@ -1,0 +1,591 @@
+{
+  "$defs": {
+    "Access___main__": {
+      "properties": {
+        "teams": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "teams"
+      ],
+      "type": "object"
+    },
+    "AgenticWebSearch": {
+      "properties": {
+        "apiKeyKey": {
+          "default": "API_KEY",
+          "type": "string"
+        },
+        "apiKeySecret": {
+          "default": "",
+          "type": "string"
+        },
+        "cidrs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "host": {
+          "type": "string"
+        },
+        "path": {
+          "default": "",
+          "type": "string"
+        },
+        "port": {
+          "default": 443,
+          "format": "int64",
+          "type": "integer"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "scheme": {
+          "default": "https",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "host",
+        "scheme",
+        "port",
+        "path",
+        "cidrs",
+        "apiKeySecret",
+        "apiKeyKey"
+      ],
+      "type": "object"
+    },
+    "Deployment___main__": {
+      "properties": {
+        "artifact": {
+          "type": "string"
+        },
+        "contextLength": {
+          "default": 4096,
+          "format": "int64",
+          "type": "integer"
+        },
+        "features": {
+          "$ref": "#/$defs/Features___main__",
+          "default": "Features {}"
+        },
+        "hardware": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "maxNumBatchedTokens": {
+          "default": 4096,
+          "format": "int64",
+          "type": "integer"
+        },
+        "maxNumSeqs": {
+          "default": 64,
+          "format": "int64",
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "packagedModel": {
+          "default": "False",
+          "type": "boolean"
+        },
+        "poolMember": {
+          "type": "string"
+        },
+        "replicas": {
+          "default": 1,
+          "format": "int64",
+          "type": "integer"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "role": {
+          "default": "stable",
+          "type": "string"
+        },
+        "rolloutStrategy": {
+          "default": "RollingUpdate",
+          "type": "string"
+        },
+        "tensorParallelSize": {
+          "default": 1,
+          "format": "int64",
+          "type": "integer"
+        },
+        "weight": {
+          "default": 1,
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "artifact",
+        "hardware",
+        "image",
+        "revision",
+        "role",
+        "rolloutStrategy",
+        "replicas",
+        "contextLength",
+        "maxNumSeqs",
+        "maxNumBatchedTokens",
+        "tensorParallelSize",
+        "weight",
+        "packagedModel",
+        "features"
+      ],
+      "type": "object"
+    },
+    "Features___main__": {
+      "properties": {
+        "kvOffloadGi": {
+          "default": 0,
+          "format": "int64",
+          "type": "integer"
+        },
+        "prefixCaching": {
+          "default": "True",
+          "type": "boolean"
+        },
+        "reasoningParser": {
+          "default": "",
+          "type": "string"
+        },
+        "shmGi": {
+          "default": 1,
+          "format": "int64",
+          "type": "integer"
+        },
+        "toolParser": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "toolParser",
+        "reasoningParser",
+        "prefixCaching",
+        "kvOffloadGi",
+        "shmGi"
+      ],
+      "type": "object"
+    },
+    "Gateway___main__": {
+      "properties": {
+        "hostname": {
+          "type": "string"
+        },
+        "keySelector": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "rateLimit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "namespace",
+        "hostname",
+        "keySelector",
+        "rateLimit"
+      ],
+      "type": "object"
+    },
+    "Instance": {
+      "properties": {
+        "databaseCidrs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "databasePort": {
+          "default": 5432,
+          "format": "int64",
+          "type": "integer"
+        },
+        "databaseSecret": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "keySelector": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "team": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "team",
+        "hostname",
+        "databaseSecret",
+        "databaseCidrs",
+        "databasePort",
+        "keySelector"
+      ],
+      "type": "object"
+    },
+    "McpDestination": {
+      "properties": {
+        "cidr": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "ports": {
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "scheme": {
+          "default": "https",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "scheme",
+        "cidr",
+        "ports"
+      ],
+      "type": "object"
+    },
+    "NetworkDestination___main__": {
+      "properties": {
+        "cidr": {
+          "type": "string"
+        },
+        "ports": {
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "cidr",
+        "ports"
+      ],
+      "type": "object"
+    },
+    "NetworkPeer___main__": {
+      "properties": {
+        "namespaceSelector": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "podSelector": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "namespaceSelector",
+        "podSelector"
+      ],
+      "type": "object"
+    },
+    "Recipe": {
+      "properties": {
+        "dnsNamespaceLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "dnsPodLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "externalMcp": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/McpDestination"
+          },
+          "type": "array"
+        },
+        "gatewayNamespaceLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "gatewayPodLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "gatewayVersion": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "instances": {
+          "items": {
+            "$ref": "#/$defs/Instance"
+          },
+          "type": "array"
+        },
+        "internalCAConfigMap": {
+          "type": "string"
+        },
+        "internalGateway": {
+          "type": "string"
+        },
+        "internalGatewayNamespace": {
+          "type": "string"
+        },
+        "internalGatewayPodLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "internalGatewayService": {
+          "type": "string"
+        },
+        "internalGatewayTargetPort": {
+          "default": 443,
+          "format": "int64",
+          "type": "integer"
+        },
+        "internalHostname": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "publicGateway": {
+          "type": "string"
+        },
+        "publicGatewayNamespace": {
+          "type": "string"
+        },
+        "trafficClasses": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "upstreamCommit": {
+          "type": "string"
+        },
+        "webSearch": {
+          "$ref": "#/$defs/AgenticWebSearch"
+        }
+      },
+      "required": [
+        "name",
+        "namespace",
+        "mode",
+        "image",
+        "upstreamCommit",
+        "gatewayVersion",
+        "publicGateway",
+        "publicGatewayNamespace",
+        "internalGateway",
+        "internalGatewayNamespace",
+        "internalGatewayService",
+        "internalGatewayTargetPort",
+        "internalHostname",
+        "internalCAConfigMap",
+        "gatewayNamespaceLabels",
+        "gatewayPodLabels",
+        "dnsNamespaceLabels",
+        "dnsPodLabels",
+        "internalGatewayPodLabels",
+        "externalMcp",
+        "trafficClasses",
+        "instances"
+      ],
+      "type": "object"
+    },
+    "Service": {
+      "properties": {
+        "access": {
+          "$ref": "#/$defs/Access___main__"
+        },
+        "agentic": {
+          "$ref": "#/$defs/Recipe"
+        },
+        "deployments": {
+          "items": {
+            "$ref": "#/$defs/Deployment___main__"
+          },
+          "type": "array"
+        },
+        "gateway": {
+          "$ref": "#/$defs/Gateway___main__"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "network": {
+          "$ref": "#/$defs/ServingNetwork___main__"
+        },
+        "pool": {
+          "type": "string"
+        },
+        "trafficClasses": {
+          "$ref": "#/$defs/TrafficClasses___main__"
+        },
+        "versions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "namespace",
+        "access",
+        "gateway",
+        "network",
+        "deployments",
+        "versions"
+      ],
+      "type": "object"
+    },
+    "ServingNetwork___main__": {
+      "properties": {
+        "apiServer": {
+          "items": {
+            "$ref": "#/$defs/NetworkDestination___main__"
+          },
+          "type": "array"
+        },
+        "dns": {
+          "$ref": "#/$defs/NetworkPeer___main__"
+        },
+        "gatewayPodSelector": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "prometheus": {
+          "$ref": "#/$defs/NetworkPeer___main__"
+        },
+        "storageEgress": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/NetworkDestination___main__"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "gatewayPodSelector",
+        "dns",
+        "prometheus",
+        "apiServer",
+        "storageEgress"
+      ],
+      "type": "object"
+    },
+    "TrafficClass": {
+      "properties": {
+        "enginePriority": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "maxBytes": {
+          "type": "string"
+        },
+        "maxRequests": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "priority": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "priority",
+        "enginePriority",
+        "maxRequests",
+        "maxBytes"
+      ],
+      "type": "object"
+    },
+    "TrafficClasses___main__": {
+      "properties": {
+        "classes": {
+          "items": {
+            "$ref": "#/$defs/TrafficClass"
+          },
+          "type": "array"
+        },
+        "ttl": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "classes",
+        "ttl"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/Service",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

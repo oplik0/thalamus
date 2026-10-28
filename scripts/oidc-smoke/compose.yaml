@@ -1,0 +1,102 @@
+# Default mode uses an isolated, disposable network with no published ports.
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: thalamus
+      POSTGRES_DB: thalamus
+      POSTGRES_PASSWORD: ${SMOKE_DB_PASSWORD:?}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U thalamus -d thalamus"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.2.5
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_HOSTNAME: ${SMOKE_IDP_ORIGIN:?}
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_BOOTSTRAP_ADMIN_USERNAME: smoke-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${SMOKE_ADMIN_PASSWORD:?}
+    volumes:
+      - ${SMOKE_DIR:?}/realm.json:/opt/keycloak/data/import/thalamus-realm.json:ro
+
+  proxy:
+    image: nginx:1.27-alpine
+    volumes:
+      - ${SMOKE_DIR:?}/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${SMOKE_DIR:?}/server.crt:/etc/nginx/server.crt:ro
+      - ${SMOKE_DIR:?}/server.key:/etc/nginx/server.key:ro
+    networks:
+      default:
+        aliases: ["${SMOKE_IDP_HOST:?}", "${SMOKE_APP_HOST:?}"]
+
+  server:
+    build:
+      context: ../..
+      dockerfile: scripts/oidc-smoke/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://thalamus:${SMOKE_DB_PASSWORD:?}@postgres:5432/thalamus
+      THALAMUS_BIND: 0.0.0.0:8080
+      THALAMUS_PUBLIC_ORIGIN: ${SMOKE_APP_ORIGIN:?}
+      THALAMUS_CATALOG_DIR: /fixture-repo/catalog
+      THALAMUS_PROMETHEUS_URL: https://prometheus.invalid
+      THALAMUS_OIDC_ISSUER: ${SMOKE_IDP_ORIGIN:?}/realms/thalamus
+      THALAMUS_OIDC_CLIENT_ID: thalamus-browser
+      THALAMUS_OIDC_CLIENT_SECRET: ${SMOKE_BROWSER_SECRET:?}
+      THALAMUS_OIDC_CA_FILE: /certs/ca.pem
+      THALAMUS_SESSION_SIGNING_KEY: ${SMOKE_SESSION_KEY:?}
+      THALAMUS_GROUP_MAPPING: '{"team_admin_groups":{"/smoke-admin":"3b3d3f25-f437-4f1a-bff5-36f6fac3714c"}}'
+      THALAMUS_API_INTROSPECTION_ENDPOINT: ${SMOKE_IDP_ORIGIN:?}/realms/thalamus/protocol/openid-connect/token/introspect
+      THALAMUS_API_CLIENT_ID: api-client
+      THALAMUS_API_CLIENT_SECRET: ${SMOKE_API_SECRET:?}
+      THALAMUS_API_AUDIENCE: ${SMOKE_APP_ORIGIN:?}/api
+      THALAMUS_MCP_INTROSPECTION_ENDPOINT: ${SMOKE_IDP_ORIGIN:?}/realms/thalamus/protocol/openid-connect/token/introspect
+      THALAMUS_MCP_CLIENT_ID: mcp-client
+      THALAMUS_MCP_CLIENT_SECRET: ${SMOKE_MCP_SECRET:?}
+      THALAMUS_ACCESS_REPOSITORY: /fixture-repo
+      THALAMUS_ACCESS_CATALOG_PATH: catalog
+      THALAMUS_ACCESS_COMMIT: ${SMOKE_CATALOG_COMMIT:?}
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: /fixture-repo
+      NO_PROXY: ${SMOKE_IDP_HOST:?},${SMOKE_APP_HOST:?},localhost,127.0.0.1
+      no_proxy: ${SMOKE_IDP_HOST:?},${SMOKE_APP_HOST:?},localhost,127.0.0.1
+    volumes:
+      - ${SMOKE_DIR:?}/ca.pem:/certs/ca.pem:ro
+      - ${SMOKE_DIR:?}/invalid.pem:/certs/invalid.pem:ro
+      - ${SMOKE_DIR:?}/repo:/fixture-repo:ro
+
+  collector-test:
+    build:
+      context: ../..
+      dockerfile: scripts/oidc-smoke/Dockerfile
+      target: identity-test
+    environment:
+      DATABASE_URL: postgresql://thalamus:${SMOKE_DB_PASSWORD:?}@postgres:5432/thalamus
+      THALAMUS_OIDC_ISSUER: ${SMOKE_IDP_ORIGIN:?}/realms/thalamus
+      THALAMUS_OIDC_CA_FILE: /certs/ca.pem
+      THALAMUS_GROUP_MAPPING: '{"team_admin_groups":{"/smoke-admin":"3b3d3f25-f437-4f1a-bff5-36f6fac3714c"}}'
+      THALAMUS_IDP_KEYCLOAK_CLIENT_ID: smoke-collector
+      THALAMUS_IDP_KEYCLOAK_CLIENT_SECRET: ${SMOKE_COLLECTOR_SECRET:?}
+      THALAMUS_SMOKE_OFFBOARD_SUBJECT: 54ac7e34-503a-446a-88b1-4884ea903114
+      NO_PROXY: ${SMOKE_IDP_HOST:?},${SMOKE_APP_HOST:?},localhost,127.0.0.1
+      no_proxy: ${SMOKE_IDP_HOST:?},${SMOKE_APP_HOST:?},localhost,127.0.0.1
+    volumes:
+      - ${SMOKE_DIR:?}/ca.pem:/certs/ca.pem:ro
+
+  client:
+    image: python:3.13-alpine
+    working_dir: /smoke
+    entrypoint: ["python", "/smoke/client.py"]
+    environment:
+      SMOKE_RETAIN_FAILURE: ${SMOKE_RETAIN_FAILURE:-0}
+    volumes:
+      - ./client.py:/smoke/client.py:ro
+      - ${SMOKE_DIR:?}:/fixture

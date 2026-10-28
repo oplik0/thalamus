@@ -6,6 +6,8 @@
 //! space-separated required scopes. The audience must be issued specifically for
 //! this API, not the separate MCP resource. Bearer subjects must already have been
 //! provisioned through browser OIDC login and retain only their current local roles.
+//! `THALAMUS_OIDC_CA_FILE` optionally adds a PEM CA bundle to the standard
+//! public trust roots for discovery, token exchange, JWKS and introspection.
 use axum::{
     extract::{Request, State},
     http::{header, HeaderMap, Method, StatusCode},
@@ -22,15 +24,25 @@ use utoipa::{OpenApi, ToSchema};
 use uuid::Uuid;
 
 mod auth;
+pub mod benchmark_results;
 pub mod capability_evidence;
 mod catalog;
 pub mod client_config;
 pub mod debug;
+pub mod debug_host;
+mod flux_mcp;
 pub mod inspection;
 mod mcp;
 mod projects;
+pub mod rollout;
+pub mod rollout_ci;
+pub(crate) mod run_promotion;
+pub mod runtime_observer;
+mod service_status;
 mod spec;
 pub mod usage;
+pub(crate) mod workflow_evidence;
+pub mod workflow_form;
 pub mod workflows;
 
 #[derive(Clone)]
@@ -48,6 +60,7 @@ pub struct Config {
     pub oidc_issuer: String,
     pub oidc_client_id: String,
     pub oidc_client_secret: String,
+    pub oidc_ca_pem: Option<Vec<u8>>,
     pub cookie_signing_key: Vec<u8>,
     pub ui_dir: PathBuf,
     pub upstream_url: Option<String>,
@@ -57,6 +70,8 @@ pub struct Config {
     pub groups: thalamus_identity::GroupMapping,
     pub workflow: Option<workflows::WorkflowConfig>,
     pub inspection: Option<inspection::InspectionConfig>,
+    pub runtime: Option<thalamus_runtime::RuntimeConfig>,
+    pub debug: Option<debug::DebugConfig>,
     pub policy_source: Option<Arc<thalamus_access::PolicySource>>,
     pub mcp: Option<McpConfig>,
     /// Optional, independently configured OIDC resource server for the HTTP API.
@@ -103,6 +118,16 @@ impl Config {
             Err(_) => Groups::default(),
         };
         let issuer = required("THALAMUS_OIDC_ISSUER")?;
+        let oidc_ca_pem = match std::env::var_os("THALAMUS_OIDC_CA_FILE") {
+            Some(path) if path.is_empty() => {
+                return Err("THALAMUS_OIDC_CA_FILE must not be empty".into());
+            }
+            Some(path) => Some(
+                std::fs::read(&path)
+                    .map_err(|e| format!("cannot read THALAMUS_OIDC_CA_FILE: {e}"))?,
+            ),
+            None => None,
+        };
         let mcp = match std::env::var("THALAMUS_MCP_INTROSPECTION_ENDPOINT") {
             Ok(endpoint) => {
                 let resource = format!("{public_origin}/mcp");
@@ -121,6 +146,7 @@ impl Config {
                         issuer: issuer.clone(),
                         audience: resource,
                         required_scopes: scopes.split_whitespace().map(str::to_owned).collect(),
+                        ca_pem: oidc_ca_pem.clone(),
                     },
                 )
                 .map_err(|_| "invalid MCP introspection configuration".to_owned())?;
@@ -164,6 +190,7 @@ impl Config {
                             issuer: issuer.clone(),
                             audience: required("THALAMUS_API_AUDIENCE")?,
                             required_scopes: scopes.split_whitespace().map(str::to_owned).collect(),
+                            ca_pem: oidc_ca_pem.clone(),
                         },
                     )
                     .map_err(|_| "invalid API introspection configuration".to_owned())?,
@@ -209,6 +236,7 @@ impl Config {
             oidc_issuer: issuer,
             oidc_client_id: required("THALAMUS_OIDC_CLIENT_ID")?,
             oidc_client_secret: required("THALAMUS_OIDC_CLIENT_SECRET")?,
+            oidc_ca_pem,
             cookie_signing_key: key,
             ui_dir: std::env::var("THALAMUS_UI_DIR")
                 .unwrap_or_else(|_| "ui/build".into())
@@ -230,6 +258,25 @@ impl Config {
             },
             workflow: workflows::WorkflowConfig::from_env()?,
             inspection: inspection::InspectionConfig::from_env()?,
+            runtime: std::env::var("THALAMUS_RUNTIME_CONFIG")
+                .map(|value| {
+                    serde_json::from_str(&value)
+                        .map_err(|error| format!("invalid THALAMUS_RUNTIME_CONFIG: {error}"))
+                })
+                .map_or_else(
+                    |error| match error {
+                        std::env::VarError::NotPresent => Ok(None),
+                        _ => Err("invalid THALAMUS_RUNTIME_CONFIG".into()),
+                    },
+                    |parsed| parsed.map(Some),
+                )?,
+            debug: {
+                let debug = debug::DebugConfig::from_env()?;
+                if debug.is_some() && mcp.is_none() {
+                    return Err("debug requires MCP authentication configuration".into());
+                }
+                debug
+            },
             policy_source,
             mcp,
             api_verifier,
@@ -243,6 +290,10 @@ pub struct AppState {
     pub identity: thalamus_identity::IdentityService,
     pub capability_evidence: Option<Arc<dyn client_config::CapabilityEvidenceProvider>>,
     pub policy_source: Option<Arc<thalamus_access::PolicySource>>,
+    pub runtime_observer: Option<Arc<thalamus_runtime::LiveObserver>>,
+    pub benchmark_artifacts: Option<thalamus_runs::Artifacts>,
+    pub debug_kube: Option<kube::Client>,
+    pub debug_proxy: Option<Arc<debug_host::ServerDebugProxy>>,
 }
 
 #[derive(Debug)]
@@ -484,6 +535,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .merge(inspection::router())
         .merge(usage::router())
         .merge(debug::router())
+        .merge(benchmark_results::router())
+        .merge(rollout::router())
+        .merge(workflow_form::router())
         .fallback(not_found);
     let index = state.config.ui_dir.join("index.html");
     let static_files = tower_http::services::ServeDir::new(&state.config.ui_dir)
@@ -496,6 +550,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .fallback_service(static_files)
         .layer(middleware::from_fn_with_state(state.clone(), origin_guard))
         .with_state(state.clone());
+    let browser = browser
+        .merge(rollout::webhook_router().with_state(state.clone()))
+        .merge(rollout_ci::router().with_state(state.clone()))
+        .merge(flux_mcp::router().with_state(state.clone()));
     match &state.config.mcp {
         Some(config) => browser.merge(thalamus_mcp::router(
             config.transport.clone(),
@@ -520,6 +578,10 @@ pub async fn migrate(db: &PgPool) -> Result<(), sqlx::Error> {
         ("identity-0002", thalamus_identity::WORKER_KEYS_MIGRATION),
         ("identity-0003", thalamus_identity::BUDGET_CAPS_MIGRATION),
         (
+            "identity-0004",
+            thalamus_identity::IDENTITY_BINDING_MIGRATION,
+        ),
+        (
             "runs-0001",
             include_str!("../../thalamus-runs/migrations/0001_runs.sql"),
         ),
@@ -532,14 +594,30 @@ pub async fn migrate(db: &PgPool) -> Result<(), sqlx::Error> {
             include_str!("../../thalamus-runs/migrations/0003_run_project.sql"),
         ),
         (
+            "runtime-0001",
+            include_str!("../../thalamus-runtime/migrations/0001_run_evidence.sql"),
+        ),
+        (
             "changes-0001",
             include_str!("../../thalamus-changes/migrations/0001_changes.sql"),
+        ),
+        (
+            "changes-0002",
+            include_str!("../../thalamus-changes/migrations/0002_rollouts.sql"),
+        ),
+        (
+            "changes-0003",
+            include_str!("../../thalamus-changes/migrations/0003_merge_timestamps.sql"),
         ),
         (
             "usage-0001",
             include_str!("../../thalamus-usage/migrations/0001_usage.sql"),
         ),
         ("debug-0001", thalamus_debug::MIGRATION),
+        (
+            "debug-0002",
+            include_str!("../../thalamus-debug/migrations/0002_debug_lifecycle.sql"),
+        ),
     ] {
         let checksum = format!("{:x}", Sha256::digest(script.as_bytes()));
         let previous: Option<String> =

@@ -1,0 +1,154 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "annotations": {
+      "thalamus.ai/deployment": "example-pool-deployment",
+      "thalamus.ai/model-manifest": "example-pool-deployment-manifest.55555555555555555555555555555555.55555555555555555555555555555555",
+      "thalamus.ai/revision": "5555555555555555555555555555555555555555555555555555555555555555",
+      "thalamus.ai/serving-kind": "raw"
+    },
+    "name": "example-pool-deployment-filler",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "replicas": 1,
+    "selector": {
+      "matchLabels": {
+        "thalamus.ai/deployment": "example-pool-deployment",
+        "thalamus.ai/pool-role": "filler"
+      }
+    },
+    "strategy": {
+      "type": "RollingUpdate"
+    },
+    "template": {
+      "metadata": {
+        "annotations": {
+          "thalamus.ai/deployment": "example-pool-deployment",
+          "thalamus.ai/model-manifest": "example-pool-deployment-manifest.55555555555555555555555555555555.55555555555555555555555555555555",
+          "thalamus.ai/revision": "5555555555555555555555555555555555555555555555555555555555555555",
+          "thalamus.ai/serving-kind": "raw"
+        },
+        "labels": {
+          "kueue.x-k8s.io/queue-name": "example-pool-example-pool-deployment-filler",
+          "llm-d.ai/engine-type": "vllm",
+          "thalamus.ai/deployment": "example-pool-deployment",
+          "thalamus.ai/pool-role": "filler"
+        }
+      },
+      "spec": {
+        "automountServiceAccountToken": false,
+        "containers": [
+          {
+            "args": [
+              "--served-model-name",
+              "example-pool-service",
+              "--max-model-len",
+              "4096",
+              "--max-num-seqs",
+              "64",
+              "--max-num-batched-tokens",
+              "4096",
+              "--tensor-parallel-size",
+              "1",
+              "--tokenizer",
+              "/opt/thalamus/model",
+              "--enable-prefix-caching",
+              "--scheduling-policy",
+              "priority"
+            ],
+            "command": [
+              "vllm",
+              "serve",
+              "/opt/thalamus/model"
+            ],
+            "env": [
+              {
+                "name": "HOME",
+                "value": "/tmp"
+              },
+              {
+                "name": "HF_HOME",
+                "value": "/tmp/huggingface"
+              },
+              {
+                "name": "HF_HUB_OFFLINE",
+                "value": "1"
+              },
+              {
+                "name": "TRANSFORMERS_OFFLINE",
+                "value": "1"
+              }
+            ],
+            "image": "example.invalid/engine-with-model@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "name": "main",
+            "ports": [
+              {
+                "containerPort": 8000,
+                "name": "http",
+                "protocol": "TCP"
+              }
+            ],
+            "readinessProbe": {
+              "httpGet": {
+                "path": "/health",
+                "port": 8000
+              },
+              "periodSeconds": 10,
+              "timeoutSeconds": 5
+            },
+            "resources": {
+              "limits": {
+                "cpu": "4",
+                "memory": "16Gi",
+                "nvidia.com/gpu": "1"
+              },
+              "requests": {
+                "cpu": "4",
+                "memory": "16Gi",
+                "nvidia.com/gpu": "1"
+              }
+            },
+            "securityContext": {
+              "allowPrivilegeEscalation": false,
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "readOnlyRootFilesystem": true
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/dev/shm",
+                "name": "shm"
+              },
+              {
+                "mountPath": "/tmp",
+                "name": "tmp"
+              }
+            ]
+          }
+        ],
+        "nodeSelector": {
+          "accelerator": "example-gpu"
+        },
+        "priorityClassName": "example-pool-filler",
+        "volumes": [
+          {
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "1Gi"
+            },
+            "name": "shm"
+          },
+          {
+            "emptyDir": {},
+            "name": "tmp"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -145,6 +145,10 @@ pub struct ChangeRequest {
     pub mergeability: Mergeability,
     pub base_sha: String,
     pub merge_commit: Option<String>,
+    /// Actual forge-reported merge time (RFC 3339), if available. This is not
+    /// the time at which the controller observed the merge.
+    #[serde(default)]
+    pub merged_at: Option<String>,
     pub source_repository: Option<RepoRef>,
     pub author: String,
     pub labels: Vec<String>,
@@ -222,18 +226,114 @@ pub struct Review {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BranchPolicy {
     pub branch: String,
+    /// Null means GitHub returned 404 for classic protection, which is not proof
+    /// that the branch is protected or that the caller has complete visibility.
+    /// Applicable active rulesets must independently establish the policy.
     pub protection: serde_json::Value,
     pub rules: Vec<serde_json::Value>,
     /// All repository and inherited ruleset details, not just those applying to this branch.
     /// Missing bypass visibility or an inaccessible detail makes retrieval fail.
     pub rulesets: Vec<serde_json::Value>,
 }
-/// Evidence for an authenticated GitHub user. Installation tokens do not identify
-/// a user through this API and must not be treated as non-bypassing.
+/// An operator-pinned required context and the GitHub App that produces it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RequiredCheck {
+    pub context: String,
+    pub app_id: u64,
+    /// For a commit status, the separately pinned bot *user* ID. GitHub status
+    /// responses do not report the App ID; branch protection pins the App.
+    /// Omit for check runs, whose response directly reports the App ID.
+    #[serde(default)]
+    pub status_creator_id: Option<u64>,
+}
+
+/// Operator-owned inputs for a fresh, guarded merge decision.
+///
+/// `trust_administrators` acknowledges that administrators can change policy, retarget
+/// pull requests, or modify trusted CI. `trust_merge_group_ci` asserts that the pinned
+/// checks execute the intended validation for GitHub's `merge_group` event. Neither
+/// assertion can be established by reading a branch policy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PolicyActor {
-    pub user: serde_json::Value,
-    pub repository_permission: serde_json::Value,
+pub struct GuardedQueueRequest {
+    pub repository: RepoRef,
+    pub number: u64,
+    pub target_branch: String,
+    pub head_sha: String,
+    pub base_sha: String,
+    pub required_checks: Vec<RequiredCheck>,
+    pub required_approvers: Vec<String>,
+    pub trust_administrators: bool,
+    pub trust_merge_group_ci: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueEntry {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GuardedMergeResult {
+    Merged { sha: String },
+    Enqueued(QueueEntry),
+}
+
+/// A policy-enforced merge or merge-queue request. Inputs must come from trusted
+/// operator configuration and the durable, freshly rendered approval record.
+///
+/// GitHub only conditions its request on the head SHA. The target, base, policy,
+/// approval, and wall clock can change between a read and the upstream action.
+/// Strict required checks and reviews are enforced by GitHub; a required queue
+/// rechecks merge-group CI against the current base, but its eventual merge can
+/// occur after a rollout window. Revocation/dequeue is also subject to races.
+#[async_trait]
+pub trait GuardedQueue: Send + Sync {
+    /// Validate a published PR and its non-bypass policy before an update that
+    /// will invalidate reviews/checks. This is an observation, not a lock.
+    async fn verify_update_policy(&self, _: &GuardedQueueRequest) -> Result<()> {
+        Err(Error::Unsupported(
+            "guarded pull request updates are not supported".into(),
+        ))
+    }
+    /// Merge synchronously under the same guard, refusing an upstream merge queue.
+    /// This prevents scheduling a delayed queue operation; the synchronous API
+    /// still does not atomically guard target, base, policy, or wall clock.
+    async fn merge_guarded_direct(&self, _: &GuardedQueueRequest) -> Result<GuardedMergeResult> {
+        Err(Error::Unsupported(
+            "direct guarded merges are not supported".into(),
+        ))
+    }
+    async fn merge_guarded(&self, request: &GuardedQueueRequest) -> Result<GuardedMergeResult>;
+    async fn dequeue(&self, repository: &RepoRef, number: u64) -> Result<()>;
+}
+
+#[cfg(feature = "gitlab")]
+#[async_trait]
+impl GuardedQueue for gitlab::Gitlab {
+    async fn merge_guarded(&self, _: &GuardedQueueRequest) -> Result<GuardedMergeResult> {
+        Err(Error::Unsupported(
+            "GitLab guarded merges are not supported".into(),
+        ))
+    }
+    async fn dequeue(&self, _: &RepoRef, _: u64) -> Result<()> {
+        Err(Error::Unsupported(
+            "GitLab guarded merges are not supported".into(),
+        ))
+    }
+}
+
+#[cfg(feature = "forgejo")]
+#[async_trait]
+impl GuardedQueue for forgejo::Forgejo {
+    async fn merge_guarded(&self, _: &GuardedQueueRequest) -> Result<GuardedMergeResult> {
+        Err(Error::Unsupported(
+            "Forgejo guarded merges are not supported".into(),
+        ))
+    }
+    async fn dequeue(&self, _: &RepoRef, _: u64) -> Result<()> {
+        Err(Error::Unsupported(
+            "Forgejo guarded merges are not supported".into(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -337,7 +437,6 @@ pub trait Comments: Send + Sync {
 #[async_trait]
 pub trait BranchPolicies: Send + Sync {
     async fn branch_policy(&self, branch: &str) -> Result<BranchPolicy>;
-    async fn policy_actor(&self) -> Result<PolicyActor>;
 }
 
 pub trait Webhooks: Send + Sync {
@@ -501,14 +600,54 @@ impl BranchPolicies for Forge {
             Self::Forgejo(g) => g.branch_policy(branch).await,
         }
     }
-    async fn policy_actor(&self) -> Result<PolicyActor> {
+}
+
+#[cfg(any(feature = "github", feature = "gitlab", feature = "forgejo"))]
+#[async_trait]
+impl GuardedQueue for Forge {
+    async fn verify_update_policy(&self, request: &GuardedQueueRequest) -> Result<()> {
         match self {
             #[cfg(feature = "github")]
-            Self::Github(g) => g.policy_actor().await,
+            Self::Github(g) => g.verify_update_policy(request).await,
             #[cfg(feature = "gitlab")]
-            Self::Gitlab(g) => g.policy_actor().await,
+            Self::Gitlab(g) => g.verify_update_policy(request).await,
             #[cfg(feature = "forgejo")]
-            Self::Forgejo(g) => g.policy_actor().await,
+            Self::Forgejo(g) => g.verify_update_policy(request).await,
+        }
+    }
+    async fn merge_guarded_direct(
+        &self,
+        request: &GuardedQueueRequest,
+    ) -> Result<GuardedMergeResult> {
+        match self {
+            #[cfg(feature = "github")]
+            Self::Github(g) => g.merge_guarded_direct(request).await,
+            #[cfg(feature = "gitlab")]
+            Self::Gitlab(g) => g.merge_guarded_direct(request).await,
+            #[cfg(feature = "forgejo")]
+            Self::Forgejo(g) => g.merge_guarded_direct(request).await,
+        }
+    }
+
+    async fn merge_guarded(&self, request: &GuardedQueueRequest) -> Result<GuardedMergeResult> {
+        match self {
+            #[cfg(feature = "github")]
+            Self::Github(g) => g.merge_guarded(request).await,
+            #[cfg(feature = "gitlab")]
+            Self::Gitlab(g) => g.merge_guarded(request).await,
+            #[cfg(feature = "forgejo")]
+            Self::Forgejo(g) => g.merge_guarded(request).await,
+        }
+    }
+
+    async fn dequeue(&self, repository: &RepoRef, number: u64) -> Result<()> {
+        match self {
+            #[cfg(feature = "github")]
+            Self::Github(g) => g.dequeue(repository, number).await,
+            #[cfg(feature = "gitlab")]
+            Self::Gitlab(g) => g.dequeue(repository, number).await,
+            #[cfg(feature = "forgejo")]
+            Self::Forgejo(g) => g.dequeue(repository, number).await,
         }
     }
 }

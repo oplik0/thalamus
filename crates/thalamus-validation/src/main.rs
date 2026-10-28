@@ -1,5 +1,5 @@
 use reqwest::{Url, blocking::Client, redirect::Policy};
-use std::{env, process::ExitCode};
+use std::{env, io::Read, path::Path, process::ExitCode};
 use thalamus_validation::{Config, run};
 
 fn main() -> ExitCode {
@@ -35,12 +35,8 @@ fn execute() -> Result<bool, String> {
     let key = env::var("THALAMUS_API_KEY").map_err(|_| "missing THALAMUS_API_KEY")?;
     let summary = run(&config, request, id, &key)?;
     let output = serde_json::to_vec(&summary).map_err(|e| e.to_string())?;
-    let client = Client::builder()
-        .redirect(Policy::none())
-        .https_only(true)
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|_| "cannot initialize result uploader")?;
+    let ca_path = env::var_os("THALAMUS_S3_CA_FILE");
+    let client = result_uploader(ca_path.as_deref().map(Path::new))?;
     let upload_url = read_upload_url(
         std::path::Path::new("/var/run/thalamus/result-upload/url"),
         &summary.run_id,
@@ -59,6 +55,43 @@ fn execute() -> Result<bool, String> {
         String::from_utf8(output).map_err(|_| "invalid summary encoding")?
     );
     Ok(summary.passed)
+}
+
+fn result_uploader(ca_path: Option<&Path>) -> Result<Client, String> {
+    const MAX_CA_BYTES: u64 = 1024 * 1024;
+    let mut builder = Client::builder()
+        .redirect(Policy::none())
+        .https_only(true)
+        .timeout(std::time::Duration::from_secs(60));
+    if let Some(path) = ca_path {
+        if path.as_os_str().is_empty() {
+            return Err("invalid S3 CA file".into());
+        }
+        match std::fs::File::open(path) {
+            Ok(file) => {
+                let mut pem = Vec::new();
+                file.take(MAX_CA_BYTES + 1)
+                    .read_to_end(&mut pem)
+                    .map_err(|_| "cannot read S3 CA file")?;
+                if pem.is_empty() || pem.len() > MAX_CA_BYTES as usize {
+                    return Err("invalid S3 CA bundle".into());
+                }
+                let certificates = reqwest::Certificate::from_pem_bundle(&pem)
+                    .map_err(|_| "invalid S3 CA bundle")?;
+                if certificates.is_empty() {
+                    return Err("invalid S3 CA bundle".into());
+                }
+                for certificate in certificates {
+                    builder = builder.add_root_certificate(certificate);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("cannot read S3 CA file".into()),
+        }
+    }
+    builder
+        .build()
+        .map_err(|_| "cannot initialize result uploader".into())
 }
 
 fn read_upload_url(path: &std::path::Path, id: &str) -> Result<Url, String> {
@@ -85,7 +118,48 @@ fn validate_upload_url(value: &str, id: &str) -> Result<Url, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_upload_url, validate_upload_url};
+    use super::{read_upload_url, result_uploader, validate_upload_url};
+
+    const TEST_CA: &str = "-----BEGIN CERTIFICATE-----\n\
+MIICGzCCAaGgAwIBAgIQQdKd0XLq7qeAwSxs6S+HUjAKBggqhkjOPQQDAzBPMQsw\n\
+CQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2gg\n\
+R3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBYMjAeFw0yMDA5MDQwMDAwMDBaFw00\n\
+MDA5MTcxNjAwMDBaME8xCzAJBgNVBAYTAlVTMSkwJwYDVQQKEyBJbnRlcm5ldCBT\n\
+ZWN1cml0eSBSZXNlYXJjaCBHcm91cDEVMBMGA1UEAxMMSVNSRyBSb290IFgyMHYw\n\
+EAYHKoZIzj0CAQYFK4EEACIDYgAEzZvVn4CDCuwJSvMWSj5cz3es3mcFDR0HttwW\n\
++1qLFNvicWDEukWVEYmO6gbf9yoWHKS5xcUy4APgHoIYOIvXRdgKam7mAHf7AlF9\n\
+ItgKbppbd9/w+kHsOdx1ymgHDB/qo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0T\n\
+AQH/BAUwAwEB/zAdBgNVHQ4EFgQUfEKWrt5LSDv6kviejM9ti6lyN5UwCgYIKoZI\n\
+zj0EAwMDaAAwZQIwe3lORlCEwkSHRhtFcP9Ymd70/aTSVaYgLXTWNLxBo1BfASdW\n\
+tL4ndQavEi51mI38AjEAi/V3bNTIZargCyzuFJ0nN6T5U6VR5CmD1/iQMVtCnwr1\n\
+/q4AaOeMSQ+2b1tbFfLn\n\
+-----END CERTIFICATE-----\n";
+
+    #[test]
+    fn uploader_handles_optional_and_invalid_ca_files() {
+        let path = std::env::temp_dir().join(format!("thalamus-upload-ca-{}", std::process::id()));
+        assert!(result_uploader(None).is_ok());
+        assert!(result_uploader(Some(&path)).is_ok());
+        std::fs::write(&path, "invalid secret certificate").unwrap();
+        assert_eq!(
+            result_uploader(Some(&path)).err().unwrap(),
+            "invalid S3 CA bundle"
+        );
+        std::fs::write(&path, vec![b'x'; 1024 * 1024 + 1]).unwrap();
+        assert_eq!(
+            result_uploader(Some(&path)).err().unwrap(),
+            "invalid S3 CA bundle"
+        );
+        std::fs::write(&path, format!("{TEST_CA}{TEST_CA}")).unwrap();
+        assert!(result_uploader(Some(&path)).is_ok());
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            result_uploader(Some(std::env::temp_dir().as_path()))
+                .err()
+                .unwrap(),
+            "cannot read S3 CA file"
+        );
+    }
 
     #[test]
     fn upload_url_is_https_and_bound_to_exact_run_object() {

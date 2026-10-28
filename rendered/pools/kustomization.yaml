@@ -1,0 +1,11 @@
+{
+  "apiVersion": "kustomize.config.k8s.io/v1beta1",
+  "kind": "Kustomization",
+  "resources": [
+    "clusterqueue-example-pool-example-pool-deployment-e0b28b29ed8ccc263d968209276773a09bcc78dd9368097c89bfe5ebd9708052.json",
+    "clusterqueue-example-pool-filler-77a06933ee4ab8a82c1b7cedff2570ac5e7fd2e841cbe8d38946cbd77483ccb8.json",
+    "priorityclass-example-pool-filler-d966da963500130053f786540ada4db01cce806ef1dabc9cd64e74b39b169905.json",
+    "priorityclass-example-pool-normal-27048990658ad36a53ae85d5c0f83b7b309f42b4556dbe9f936d8730a51fcc82.json",
+    "resourceflavor-example-pool-example-gpu-23ee9425681ec3f176753f1621a6ab59ba32cba9037fb8a8cb4982dfcc422152.json"
+  ]
+}

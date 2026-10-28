@@ -1,0 +1,39 @@
+{
+  "apiVersion": "kueue.x-k8s.io/v1beta2",
+  "kind": "ClusterQueue",
+  "metadata": {
+    "name": "example-pool-example-pool-deployment"
+  },
+  "spec": {
+    "cohortName": "example-pool",
+    "namespaceSelector": {
+      "matchLabels": {
+        "kubernetes.io/metadata.name": "thalamus-inference"
+      }
+    },
+    "preemption": {
+      "borrowWithinCohort": {
+        "policy": "LowerPriority"
+      },
+      "reclaimWithinCohort": "Any"
+    },
+    "resourceGroups": [
+      {
+        "coveredResources": [
+          "nvidia.com/gpu"
+        ],
+        "flavors": [
+          {
+            "name": "example-pool-example-gpu",
+            "resources": [
+              {
+                "name": "nvidia.com/gpu",
+                "nominalQuota": "2"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

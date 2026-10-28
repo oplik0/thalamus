@@ -7,15 +7,16 @@ use chrono::{DateTime, Duration, Utc};
 use hmac::{Hmac, Mac};
 use openidconnect::{
     core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
-    reqwest::async_http_client,
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+    AuthorizationCode, ClientId, ClientSecret, CsrfToken, HttpRequest, HttpResponse, IssuerUrl,
+    Nonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
+
+pub mod keycloak;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -42,9 +43,13 @@ pub const INITIAL_MIGRATION: &str = include_str!("../migrations/0001_identity.sq
 pub const WORKER_KEYS_MIGRATION: &str = include_str!("../migrations/0002_worker_keys.sql");
 /// Apply after `WORKER_KEYS_MIGRATION`.
 pub const BUDGET_CAPS_MIGRATION: &str = include_str!("../migrations/0003_budget_caps.sql");
+/// Apply after `BUDGET_CAPS_MIGRATION`.
+pub const IDENTITY_BINDING_MIGRATION: &str =
+    include_str!("../migrations/0004_identity_binding.sql");
 
 /// Exact group names and existing team IDs. Team-admin membership takes precedence.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Deserialize)]
+#[serde(default)]
 pub struct GroupMapping {
     pub platform_admin_group: Option<String>,
     pub team_admin_groups: HashMap<String, Uuid>,
@@ -56,6 +61,8 @@ pub struct Config {
     pub client_id: String,
     pub client_secret: Option<String>,
     pub redirect_uri: String,
+    /// Optional PEM CA bundle added to the built-in public roots.
+    pub ca_pem: Option<Vec<u8>>,
     pub session_signing_key: Vec<u8>,
     pub session_lifetime: Duration,
     pub groups: GroupMapping,
@@ -64,6 +71,7 @@ pub struct Config {
 pub struct IdentityService {
     db: PgPool,
     client: CoreClient,
+    http_client: reqwest::Client,
     issuer: String,
     signing_key: Vec<u8>,
     session_lifetime: Duration,
@@ -92,6 +100,12 @@ impl<'a> AuthorizedIdentity<'a> {
     pub async fn audit(&mut self, agent: Option<&str>, action: &str, target: &str) -> Result<()> {
         audit(&mut self.tx, Some(self.actor), agent, action, target).await
     }
+    /// Issue only after the caller has checked the committed service policy.
+    /// The guard retains the identity lock and uncommitted audit until the
+    /// caller rechecks that policy and commits.
+    pub async fn issue_key(&mut self, input: NewKey, agent: Option<&str>) -> Result<IssuedKey> {
+        issue_key_locked(&mut self.tx, self.actor, input, agent).await
+    }
     pub async fn commit(self) -> Result<()> {
         self.tx.commit().await?;
         Ok(())
@@ -110,6 +124,7 @@ pub enum KeyKind {
     Personal,
     Project,
     Job,
+    Debug,
 }
 impl KeyKind {
     fn as_str(&self) -> &'static str {
@@ -117,6 +132,7 @@ impl KeyKind {
             Self::Personal => "personal",
             Self::Project => "project",
             Self::Job => "job",
+            Self::Debug => "debug",
         }
     }
 }
@@ -160,6 +176,16 @@ pub struct ProjectionKey {
     pub metadata: KeyMetadata,
     pub digest: Vec<u8>,
     pub cost_centre: Option<String>,
+    pub class: String,
+    pub project_budget: Option<i64>,
+    pub team_budget: Option<i64>,
+    pub budget_window: Option<String>,
+    pub run_id: Option<Uuid>,
+    pub deployment: Option<String>,
+    pub run_kind: Option<String>,
+    pub request_budget: Option<i64>,
+    pub debug_session_id: Option<Uuid>,
+    pub debug_model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -176,6 +202,7 @@ pub struct Project {
     pub name: String,
     pub cost_centre: Option<String>,
     pub budget: Option<f64>,
+    pub traffic_class: String,
 }
 
 async fn audit(
@@ -239,6 +266,14 @@ fn role_mapping(mapping: &GroupMapping, groups: &[String]) -> (bool, HashMap<Uui
     (admin, teams)
 }
 
+async fn lock_issuer(tx: &mut Transaction<'_, Postgres>, issuer: &str) -> Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("thalamus/idp/{issuer}"))
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 // Every authorization-changing operation locks the user row first. The unique
 // issuer/subject upsert also serializes first login against a disable tombstone.
 async fn apply_login_snapshot(
@@ -249,6 +284,33 @@ async fn apply_login_snapshot(
     admin: bool,
     teams: HashMap<Uuid, &'static str>,
 ) -> Result<Uuid> {
+    // PostgreSQL stores timestamps at microsecond precision. Compare at that
+    // same precision so sub-microsecond differences cannot cross the fence.
+    let issued_at =
+        DateTime::from_timestamp_micros(issued_at.timestamp_micros()).ok_or(Error::Unauthorized)?;
+    lock_issuer(tx, issuer).await?;
+    let snapshot_time: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT observed_at FROM identity_idp_projection WHERE issuer=$1")
+            .bind(issuer)
+            .fetch_optional(&mut **tx)
+            .await?;
+    if let Some(observed) = snapshot_time.filter(|observed| issued_at <= *observed) {
+        // ID-token iat has second precision. A token from the same second as a
+        // newer authoritative observation may authenticate the subject, but
+        // must never restore its older groups. Require a live user whose roles
+        // were applied at or after that observation, and leave them unchanged.
+        if observed <= Utc::now() - Duration::minutes(10) {
+            return Err(Error::Unauthorized);
+        }
+        let row = sqlx::query("SELECT id,disabled,groups_issued_at FROM identity_users WHERE issuer=$1 AND subject=$2 FOR UPDATE")
+            .bind(issuer).bind(subject).fetch_optional(&mut **tx).await?
+            .ok_or(Error::Unauthorized)?;
+        let previous: Option<DateTime<Utc>> = row.try_get("groups_issued_at")?;
+        if row.try_get::<bool, _>("disabled")? || previous.is_none_or(|time| time < observed) {
+            return Err(Error::Unauthorized);
+        }
+        return Ok(row.try_get("id")?);
+    }
     sqlx::query("INSERT INTO identity_users(id,issuer,subject) VALUES ($1,$2,$3) ON CONFLICT (issuer,subject) DO NOTHING")
         .bind(Uuid::new_v4()).bind(issuer).bind(subject).execute(&mut **tx).await?;
     let row = sqlx::query("SELECT id,disabled,groups_issued_at FROM identity_users WHERE issuer=$1 AND subject=$2 FOR UPDATE")
@@ -294,7 +356,7 @@ async fn lock_session(
     // the session after the lock, since a concurrent logout may have removed it.
     let user: Uuid = sqlx::query_scalar("SELECT u.id FROM identity_users u JOIN identity_sessions s ON s.user_id=u.id WHERE s.id=$1 FOR UPDATE OF u")
         .bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::Unauthorized)?;
-    let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id WHERE s.id=$1 AND s.user_id=$2 AND s.expires_at>now() AND NOT u.disabled)")
+    let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id WHERE s.id=$1 AND s.user_id=$2 AND s.expires_at>now() AND NOT u.disabled AND NOT EXISTS (SELECT 1 FROM identity_idp_projection p WHERE p.issuer=u.issuer AND p.observed_at<=clock_timestamp()-interval '10 minutes'))")
         .bind(id).bind(user).fetch_one(&mut **tx).await?;
     if !valid {
         return Err(Error::Unauthorized);
@@ -308,8 +370,21 @@ async fn authorize_locked(
     team: Uuid,
     admin_required: bool,
 ) -> Result<()> {
-    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity_users u LEFT JOIN identity_memberships m ON m.user_id=u.id AND m.team_id=$2 WHERE u.id=$1 AND NOT u.disabled AND (u.platform_admin OR (m.role IS NOT NULL AND (NOT $3 OR m.role='team_admin'))))")
+    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity_users u LEFT JOIN identity_memberships m ON m.user_id=u.id AND m.team_id=$2 WHERE u.id=$1 AND NOT u.disabled AND NOT EXISTS (SELECT 1 FROM identity_idp_projection p WHERE p.issuer=u.issuer AND p.observed_at<=clock_timestamp()-interval '10 minutes') AND (u.platform_admin OR (m.role IS NOT NULL AND (NOT $3 OR m.role='team_admin'))))")
         .bind(user).bind(team).bind(admin_required).fetch_one(&mut **tx).await?;
+    if allowed {
+        Ok(())
+    } else {
+        Err(Error::Forbidden)
+    }
+}
+
+async fn require_platform_admin_locked(
+    tx: &mut Transaction<'_, Postgres>,
+    user: Uuid,
+) -> Result<()> {
+    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity_users u WHERE u.id=$1 AND NOT u.disabled AND u.platform_admin AND NOT EXISTS (SELECT 1 FROM identity_idp_projection p WHERE p.issuer=u.issuer AND p.observed_at<=clock_timestamp()-interval '10 minutes'))")
+        .bind(user).fetch_one(&mut **tx).await?;
     if allowed {
         Ok(())
     } else {
@@ -342,11 +417,89 @@ async fn check_budget_cap(
     Ok(())
 }
 
+fn valid_traffic_class(class: &str) -> bool {
+    !class.is_empty()
+        && class.len() <= 63
+        && class
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && class
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+async fn check_class_cap(
+    tx: &mut Transaction<'_, Postgres>,
+    team: Uuid,
+    class: &str,
+) -> Result<()> {
+    if !valid_traffic_class(class) {
+        return Err(Error::Invalid("invalid traffic class"));
+    }
+    // Acquires the same snapshot lock used by cap replacement.
+    check_budget_cap(tx, team, 0).await?;
+    let allowed: bool = sqlx::query_scalar(
+        "SELECT $2 = ANY(allowed_classes) FROM identity_budget_caps WHERE team_id=$1",
+    )
+    .bind(team)
+    .bind(class)
+    .fetch_one(&mut **tx)
+    .await?;
+    if !allowed {
+        return Err(Error::Forbidden);
+    }
+    Ok(())
+}
+
+async fn issue_key_locked(
+    tx: &mut Transaction<'_, Postgres>,
+    user: Uuid,
+    input: NewKey,
+    agent: Option<&str>,
+) -> Result<IssuedKey> {
+    authorize_locked(tx, user, input.team_id, false).await?;
+    if input.expires_at.is_some_and(|expiry| expiry <= Utc::now()) {
+        return Err(Error::Invalid("expiry must be in the future"));
+    }
+    if input.name.trim().is_empty()
+        || input.name.len() > 255
+        || input.name.chars().any(char::is_control)
+    {
+        return Err(Error::Invalid("invalid key name"));
+    }
+    if matches!(input.kind, KeyKind::Job | KeyKind::Debug) {
+        return Err(Error::Forbidden);
+    }
+    if input.kind != KeyKind::Personal && input.project_id.is_none() {
+        return Err(Error::Invalid("project required"));
+    }
+    if input.budget.is_some_and(|v| v < 0)
+        || input.allowed_services.iter().any(|s| s.trim().is_empty())
+    {
+        return Err(Error::Invalid("invalid key metadata"));
+    }
+    if let Some(budget) = input.budget {
+        check_budget_cap(tx, input.team_id, budget).await?;
+    }
+    let mut random = [0u8; 32];
+    OsRng.fill_bytes(&mut random);
+    let secret = format!("thl_{}", URL_SAFE_NO_PAD.encode(random));
+    let digest = Sha256::digest(secret.as_bytes());
+    let id = Uuid::new_v4();
+    let row = sqlx::query("INSERT INTO identity_keys(id,digest,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,name) VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at,name")
+        .bind(id).bind(digest.as_slice()).bind(user).bind(input.team_id).bind(input.project_id).bind(input.kind.as_str()).bind(&input.allowed_services).bind(input.budget).bind(input.expires_at).bind(&input.name).fetch_one(&mut **tx).await?;
+    let key = key_metadata(row)?;
+    audit(tx, Some(user), agent, "key.issue", &id.to_string()).await?;
+    Ok(IssuedKey { key, secret })
+}
+
 async fn disable_subject(
     tx: &mut Transaction<'_, Postgres>,
     issuer: &str,
     subject: &str,
 ) -> Result<()> {
+    lock_issuer(tx, issuer).await?;
     let user: Option<Uuid> = sqlx::query_scalar("INSERT INTO identity_users(id,issuer,subject,disabled) VALUES ($1,$2,$3,true) ON CONFLICT (issuer,subject) DO UPDATE SET disabled=true,platform_admin=false WHERE NOT identity_users.disabled RETURNING id")
         .bind(Uuid::new_v4()).bind(issuer).bind(subject).fetch_optional(&mut **tx).await?;
     if let Some(user) = user {
@@ -369,6 +522,49 @@ async fn disable_subject(
     Ok(())
 }
 
+fn oidc_http_client(ca_pem: Option<&[u8]>) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+    if let Some(pem) = ca_pem {
+        let certificates = reqwest::Certificate::from_pem_bundle(pem)
+            .map_err(|_| Error::Invalid("invalid OIDC CA PEM bundle"))?;
+        if certificates.is_empty() {
+            return Err(Error::Invalid("invalid OIDC CA PEM bundle"));
+        }
+        for certificate in certificates {
+            builder = builder.add_root_certificate(certificate);
+        }
+    }
+    builder
+        .build()
+        .map_err(|e| Error::Oidc(format!("cannot construct OIDC HTTPS client: {e}")))
+}
+
+// The same client is used for discovery, JWKS, and the authorization-code exchange.
+async fn oidc_request(
+    client: &reqwest::Client,
+    request: HttpRequest,
+) -> std::result::Result<HttpResponse, openidconnect::reqwest::AsyncHttpClientError> {
+    use openidconnect::reqwest::Error as HttpError;
+    if request.url.scheme() != "https" {
+        return Err(HttpError::Other("OIDC endpoints must use HTTPS".into()));
+    }
+    let response = client
+        .request(request.method, request.url)
+        .headers(request.headers)
+        .body(request.body)
+        .send()
+        .await
+        .map_err(HttpError::Reqwest)?;
+    let status_code = response.status();
+    let headers = response.headers().clone();
+    let body = response.bytes().await.map_err(HttpError::Reqwest)?.to_vec();
+    Ok(HttpResponse {
+        status_code,
+        headers,
+        body,
+    })
+}
+
 impl IdentityService {
     /// Discover the configured trusted provider. Use the same signing key on all replicas.
     pub async fn discover(db: PgPool, config: Config) -> Result<Self> {
@@ -385,9 +581,12 @@ impl IdentityService {
         if !config.issuer.starts_with("https://") || !config.redirect_uri.starts_with("https://") {
             return Err(Error::Invalid("issuer and redirect URI must use HTTPS"));
         }
-        let metadata = CoreProviderMetadata::discover_async(issuer, async_http_client)
-            .await
-            .map_err(|e| Error::Oidc(e.to_string()))?;
+        let http_client = oidc_http_client(config.ca_pem.as_deref())?;
+        let metadata = CoreProviderMetadata::discover_async(issuer, |request| {
+            oidc_request(&http_client, request)
+        })
+        .await
+        .map_err(|e| Error::Oidc(e.to_string()))?;
         let redirect =
             RedirectUrl::new(config.redirect_uri).map_err(|e| Error::Oidc(e.to_string()))?;
         let client = CoreClient::from_provider_metadata(
@@ -399,6 +598,7 @@ impl IdentityService {
         Ok(Self {
             db,
             client,
+            http_client,
             issuer: config.issuer,
             signing_key: config.session_signing_key,
             session_lifetime: config.session_lifetime,
@@ -447,7 +647,7 @@ impl IdentityService {
             .client
             .exchange_code(AuthorizationCode::new(code.to_owned()))
             .set_pkce_verifier(verifier)
-            .request_async(async_http_client)
+            .request_async(|request| oidc_request(&self.http_client, request))
             .await
             .map_err(|e| Error::Oidc(e.to_string()))?;
         let token = response.id_token().ok_or(Error::Unauthorized)?;
@@ -494,7 +694,7 @@ impl IdentityService {
 
     pub async fn authenticate(&self, session: &str) -> Result<Uuid> {
         let id = verify(&self.signing_key, session)?;
-        sqlx::query_scalar("SELECT s.user_id FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id WHERE s.id=$1 AND s.expires_at>now() AND NOT u.disabled")
+        sqlx::query_scalar("SELECT s.user_id FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id WHERE s.id=$1 AND s.expires_at>now() AND NOT u.disabled AND NOT EXISTS (SELECT 1 FROM identity_idp_projection p WHERE p.issuer=u.issuer AND p.observed_at<=clock_timestamp()-interval '10 minutes')")
             .bind(id).fetch_optional(&self.db).await?.ok_or(Error::Unauthorized)
     }
 
@@ -512,7 +712,7 @@ impl IdentityService {
     }
 
     async fn authorize(&self, user: Uuid, team: Uuid, admin_required: bool) -> Result<()> {
-        let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity_users u LEFT JOIN identity_memberships m ON m.user_id=u.id AND m.team_id=$2 WHERE u.id=$1 AND NOT u.disabled AND (u.platform_admin OR (m.role IS NOT NULL AND (NOT $3 OR m.role='team_admin'))))")
+        let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity_users u LEFT JOIN identity_memberships m ON m.user_id=u.id AND m.team_id=$2 WHERE u.id=$1 AND NOT u.disabled AND NOT EXISTS (SELECT 1 FROM identity_idp_projection p WHERE p.issuer=u.issuer AND p.observed_at<=clock_timestamp()-interval '10 minutes') AND (u.platform_admin OR (m.role IS NOT NULL AND (NOT $3 OR m.role='team_admin'))))")
             .bind(user).bind(team).bind(admin_required).fetch_one(&self.db).await?;
         if allowed {
             Ok(())
@@ -534,7 +734,7 @@ impl IdentityService {
                 if issuer != self.issuer || subject.is_empty() {
                     return Err(Error::Unauthorized);
                 }
-                sqlx::query_scalar("SELECT id FROM identity_users WHERE issuer=$1 AND subject=$2 AND NOT disabled FOR UPDATE")
+                sqlx::query_scalar("SELECT id FROM identity_users u WHERE issuer=$1 AND subject=$2 AND NOT disabled AND NOT EXISTS (SELECT 1 FROM identity_idp_projection p WHERE p.issuer=u.issuer AND p.observed_at<=clock_timestamp()-interval '10 minutes') FOR UPDATE")
                     .bind(issuer).bind(subject).fetch_optional(&mut **tx).await?.ok_or(Error::Unauthorized)
             }
         }
@@ -685,6 +885,14 @@ impl IdentityService {
         if name.trim().is_empty() {
             return Err(Error::Invalid("empty project name"));
         }
+        if cost_centre.is_some_and(|value| {
+            value.is_empty()
+                || value.len() > 128
+                || value.trim() != value
+                || value.chars().any(char::is_control)
+        }) {
+            return Err(Error::Invalid("invalid cost centre"));
+        }
         if let Some(value) = budget {
             if !value.is_finite()
                 || value < 0.0
@@ -731,7 +939,7 @@ impl IdentityService {
         let mut tx = self.db.begin().await?;
         let user = self.lock_principal(&mut tx, principal).await?;
         authorize_locked(&mut tx, user, team, false).await?;
-        let rows = sqlx::query("SELECT id,team_id,name,cost_centre,budget FROM identity_projects WHERE team_id=$1 ORDER BY name").bind(team).fetch_all(&mut *tx).await?;
+        let rows = sqlx::query("SELECT id,team_id,name,cost_centre,budget,traffic_class FROM identity_projects WHERE team_id=$1 ORDER BY name").bind(team).fetch_all(&mut *tx).await?;
         let projects = rows
             .into_iter()
             .map(|r| {
@@ -741,11 +949,80 @@ impl IdentityService {
                     name: r.try_get("name")?,
                     cost_centre: r.try_get("cost_centre")?,
                     budget: r.try_get("budget")?,
+                    traffic_class: r.try_get("traffic_class")?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
         tx.commit().await?;
         Ok(projects)
+    }
+
+    /// Only platform administrators may assign a class, and only from the
+    /// current reviewed cap for the project's team.
+    pub async fn set_project_traffic_class_principal(
+        &self,
+        principal: VerifiedPrincipal<'_>,
+        team: Uuid,
+        project: Uuid,
+        class: &str,
+        agent: Option<&str>,
+    ) -> Result<()> {
+        let mut tx = self.db.begin().await?;
+        let user = self.lock_principal(&mut tx, principal).await?;
+        require_platform_admin_locked(&mut tx, user).await?;
+        check_class_cap(&mut tx, team, class).await?;
+        let changed =
+            sqlx::query("UPDATE identity_projects SET traffic_class=$3 WHERE id=$1 AND team_id=$2")
+                .bind(project)
+                .bind(team)
+                .bind(class)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+        if changed == 0 {
+            return Err(Error::NotFound);
+        }
+        audit(
+            &mut tx,
+            Some(user),
+            agent,
+            "project.class",
+            &project.to_string(),
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// List only the reviewed classes assignable to this project. This uses the
+    /// same platform-admin and freshness checks as the mutation.
+    pub async fn allowed_project_traffic_classes_principal(
+        &self,
+        principal: VerifiedPrincipal<'_>,
+        team: Uuid,
+        project: Uuid,
+    ) -> Result<Vec<String>> {
+        let mut tx = self.db.begin().await?;
+        let user = self.lock_principal(&mut tx, principal).await?;
+        require_platform_admin_locked(&mut tx, user).await?;
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM identity_projects WHERE id=$1 AND team_id=$2)",
+        )
+        .bind(project)
+        .bind(team)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !exists {
+            return Err(Error::NotFound);
+        }
+        check_budget_cap(&mut tx, team, 0).await?;
+        let classes: Vec<String> =
+            sqlx::query_scalar("SELECT allowed_classes FROM identity_budget_caps WHERE team_id=$1")
+                .bind(team)
+                .fetch_one(&mut *tx)
+                .await?;
+        tx.commit().await?;
+        Ok(classes)
     }
 
     pub async fn issue_key(
@@ -766,41 +1043,9 @@ impl IdentityService {
     ) -> Result<IssuedKey> {
         let mut tx = self.db.begin().await?;
         let user = self.lock_principal(&mut tx, principal).await?;
-        authorize_locked(&mut tx, user, input.team_id, false).await?;
-        if input.expires_at.is_some_and(|expiry| expiry <= Utc::now()) {
-            return Err(Error::Invalid("expiry must be in the future"));
-        }
-        if input.name.trim().is_empty()
-            || input.name.len() > 255
-            || input.name.chars().any(char::is_control)
-        {
-            return Err(Error::Invalid("invalid key name"));
-        }
-        if input.kind == KeyKind::Job {
-            return Err(Error::Forbidden);
-        }
-        if input.kind != KeyKind::Personal && input.project_id.is_none() {
-            return Err(Error::Invalid("project required"));
-        }
-        if input.budget.is_some_and(|v| v < 0)
-            || input.allowed_services.iter().any(|s| s.trim().is_empty())
-        {
-            return Err(Error::Invalid("invalid key metadata"));
-        }
-        if let Some(budget) = input.budget {
-            check_budget_cap(&mut tx, input.team_id, budget).await?;
-        }
-        let mut random = [0u8; 32];
-        OsRng.fill_bytes(&mut random);
-        let secret = format!("thl_{}", URL_SAFE_NO_PAD.encode(random));
-        let digest = Sha256::digest(secret.as_bytes());
-        let id = Uuid::new_v4();
-        let row = sqlx::query("INSERT INTO identity_keys(id,digest,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,name) VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at,name")
-            .bind(id).bind(digest.as_slice()).bind(user).bind(input.team_id).bind(input.project_id).bind(input.kind.as_str()).bind(&input.allowed_services).bind(input.budget).bind(input.expires_at).bind(&input.name).fetch_one(&mut *tx).await?;
-        let key = key_metadata(row)?;
-        audit(&mut tx, Some(user), agent, "key.issue", &id.to_string()).await?;
+        let issued = issue_key_locked(&mut tx, user, input, agent).await?;
         tx.commit().await?;
-        Ok(IssuedKey { key, secret })
+        Ok(issued)
     }
 
     pub async fn list_keys(&self, session: &str, team: Uuid) -> Result<Vec<KeyMetadata>> {
@@ -902,12 +1147,34 @@ pub struct BudgetCap {
     pub max_tokens: i64,
     pub unit: String,
     pub window: String,
+    /// Classes this team may select, from the reviewed Git snapshot.
+    pub allowed_classes: Vec<String>,
+}
+
+/// A complete authoritative observation from the configured trusted IdP.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct IdpSnapshot {
+    pub issuer: String,
+    pub observed_at: DateTime<Utc>,
+    pub subjects: Vec<IdpSubjectSnapshot>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct IdpSubjectSnapshot {
+    pub subject: String,
+    pub active: bool,
+    pub groups: Vec<String>,
 }
 
 /// Scope and secret for a worker-managed run key.
 #[derive(Clone, Copy)]
 pub struct RunKeyRequest<'a> {
     pub run_id: Uuid,
+    pub deployment: &'a str,
+    pub run_kind: &'a str,
+    pub request_budget: Option<i64>,
     pub user_id: Uuid,
     pub team_id: Uuid,
     pub project_id: Uuid,
@@ -917,9 +1184,287 @@ pub struct RunKeyRequest<'a> {
     pub budget: i64,
 }
 
+fn valid_run_budgets(run_kind: &str, tokens: i64, requests: Option<i64>) -> bool {
+    match run_kind {
+        "validation" => (1..=1_000_000).contains(&tokens) && requests.is_none(),
+        "benchmark" => {
+            (0..=1_000_000).contains(&tokens)
+                && requests.is_some_and(|n| (1..=1_000_000).contains(&n))
+        }
+        _ => false,
+    }
+}
+
+/// Trusted worker input, resolved from the durable debug session and its Secret.
+#[derive(Clone, Copy)]
+pub struct DebugKeyRequest<'a> {
+    pub session_id: Uuid,
+    pub user_id: Uuid,
+    pub team_id: Uuid,
+    pub project_id: Uuid,
+    pub service: &'a str,
+    pub model: &'a str,
+    pub expires_at: DateTime<Utc>,
+    pub secret: &'a str,
+    pub budget: i64,
+}
+
+/// Privileged cleanup/recovery lookup, including revoked and expired records.
+#[derive(Debug)]
+pub struct DebugKeyRegistration {
+    pub metadata: KeyMetadata,
+    pub digest: Vec<u8>,
+    pub session_id: Uuid,
+    pub service: String,
+    pub model: String,
+}
+
+fn debug_digest(request: DebugKeyRequest<'_>) -> Result<[u8; 32]> {
+    if request.session_id.is_nil()
+        || request.user_id.is_nil()
+        || request.team_id.is_nil()
+        || request.project_id.is_nil()
+        || request.service.is_empty()
+        || request.service.len() > 256
+        || !request.service.bytes().all(|b| (b'!'..=b'~').contains(&b))
+        || request.model.is_empty()
+        || request.model.len() > 256
+        || !request.model.bytes().all(|b| (b'!'..=b'~').contains(&b))
+        || request.budget <= 0
+        || request.expires_at <= Utc::now()
+    {
+        return Err(Error::Invalid("invalid debug key scope"));
+    }
+    let encoded = request
+        .secret
+        .strip_prefix("thl_")
+        .ok_or(Error::Invalid("invalid debug secret"))?;
+    let bytes = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| Error::Invalid("invalid debug secret"))?;
+    if bytes.len() != 32 || URL_SAFE_NO_PAD.encode(&bytes) != encoded {
+        return Err(Error::Invalid("invalid debug secret"));
+    }
+    Ok(Sha256::digest(request.secret.as_bytes()).into())
+}
+
+async fn lock_debug_scope(
+    tx: &mut Transaction<'_, Postgres>,
+    request: DebugKeyRequest<'_>,
+) -> Result<()> {
+    // The same user-then-session ordering is used by the debug store and
+    // offboarding, so terminal transitions cannot race a registration.
+    let owner: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM identity_users WHERE id=$1 FOR UPDATE")
+            .bind(request.user_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+    if owner.is_none() {
+        return Err(Error::Forbidden);
+    }
+    authorize_locked(tx, request.user_id, request.team_id, false).await?;
+    let session: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM thalamus_debug_sessions WHERE id=$1 AND user_id=$2 AND team_id=$3 AND project_id=$4 AND service_id=$5 AND model=$6 AND model_budget=$7 AND state IN ('pending','running') AND deadline>clock_timestamp() AND $8::timestamptz<=deadline AND $8::timestamptz>clock_timestamp() FOR UPDATE",
+    )
+    .bind(request.session_id).bind(request.user_id).bind(request.team_id)
+    .bind(request.project_id).bind(request.service).bind(request.model)
+    .bind(request.budget).bind(request.expires_at)
+    .fetch_optional(&mut **tx).await?;
+    if session.is_none() {
+        return Err(Error::Invalid("debug session scope mismatch or inactive"));
+    }
+    check_budget_cap(tx, request.team_id, request.budget).await
+}
+
 impl WorkerIdentity {
     pub fn new(db: PgPool) -> Self {
         Self { db }
+    }
+
+    /// Declare that this issuer requires a fresh IdP snapshot. Until the first
+    /// successful synchronization the stale sentinel denies its credentials.
+    /// This is idempotent and never overwrites an existing observation.
+    pub async fn enable_idp_sync(&self, issuer: &str) -> Result<()> {
+        let url =
+            reqwest::Url::parse(issuer).map_err(|_| Error::Invalid("invalid identity issuer"))?;
+        if url.scheme() != "https"
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || issuer.chars().any(char::is_whitespace)
+        {
+            return Err(Error::Invalid("invalid identity issuer"));
+        }
+        let mut tx = self.db.begin().await?;
+        lock_issuer(&mut tx, issuer).await?;
+        sqlx::query("INSERT INTO identity_idp_projection(issuer,observed_at,digest) VALUES ($1,'epoch'::timestamptz,decode(repeat('00',32),'hex')) ON CONFLICT (issuer) DO NOTHING")
+            .bind(issuer).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Apply a complete, trusted IdP snapshot. The transport must authenticate
+    /// the source and guarantee completeness; request handlers must never call
+    /// this with caller-supplied identities or groups.
+    pub async fn sync_idp_snapshot(
+        &self,
+        expected_issuer: &str,
+        mapping: &GroupMapping,
+        snapshot: &IdpSnapshot,
+    ) -> Result<()> {
+        let observed = DateTime::from_timestamp_micros(snapshot.observed_at.timestamp_micros())
+            .ok_or(Error::Invalid("invalid identity snapshot time"))?;
+        let now = Utc::now();
+        if expected_issuer.is_empty()
+            || snapshot.issuer != expected_issuer
+            || !expected_issuer.starts_with("https://")
+            || observed > now
+            || observed <= now - Duration::minutes(10)
+        {
+            return Err(Error::Invalid("identity snapshot issuer or time invalid"));
+        }
+        let valid_group = |group: &str| {
+            !group.is_empty() && group.len() <= 1024 && !group.chars().any(char::is_control)
+        };
+        if mapping
+            .platform_admin_group
+            .as_deref()
+            .is_some_and(|g| !valid_group(g))
+            || mapping
+                .team_admin_groups
+                .iter()
+                .chain(mapping.member_groups.iter())
+                .any(|(group, team)| !valid_group(group) || team.is_nil())
+        {
+            return Err(Error::Invalid("invalid identity group mapping"));
+        }
+        let encoded = serde_json::to_vec(snapshot)
+            .map_err(|_| Error::Invalid("invalid identity snapshot"))?;
+        if encoded.len() > 8 * 1024 * 1024 || snapshot.subjects.len() > 100_000 {
+            return Err(Error::Invalid("identity snapshot too large"));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for subject in &snapshot.subjects {
+            if subject.subject.is_empty()
+                || subject.subject.len() > 255
+                || subject.subject.chars().any(char::is_control)
+                || !seen.insert(subject.subject.as_str())
+                || subject.groups.len() > 10_000
+            {
+                return Err(Error::Invalid("invalid or duplicate identity subject"));
+            }
+            let mut groups = std::collections::HashSet::new();
+            if subject.groups.iter().any(|group| {
+                group.is_empty()
+                    || group.len() > 1024
+                    || group.chars().any(char::is_control)
+                    || !groups.insert(group)
+            }) {
+                return Err(Error::Invalid("invalid or duplicate identity group"));
+            }
+        }
+        let mut fingerprint = Sha256::new();
+        fingerprint.update(&encoded);
+        if let Some(group) = &mapping.platform_admin_group {
+            fingerprint.update((group.len() as u64).to_be_bytes());
+            fingerprint.update(group.as_bytes());
+        } else {
+            fingerprint.update(0u64.to_be_bytes());
+        }
+        for groups in [&mapping.team_admin_groups, &mapping.member_groups] {
+            let ordered: std::collections::BTreeMap<_, _> = groups.iter().collect();
+            fingerprint.update((ordered.len() as u64).to_be_bytes());
+            for (group, team) in ordered {
+                fingerprint.update((group.len() as u64).to_be_bytes());
+                fingerprint.update(group.as_bytes());
+                fingerprint.update(team.as_bytes());
+            }
+        }
+        let digest = fingerprint.finalize();
+        let mut tx = self.db.begin().await?;
+        lock_issuer(&mut tx, expected_issuer).await?;
+        let previous = sqlx::query(
+            "SELECT observed_at,digest FROM identity_idp_projection WHERE issuer=$1 FOR UPDATE",
+        )
+        .bind(expected_issuer)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(row) = previous {
+            let previous_time: DateTime<Utc> = row.try_get("observed_at")?;
+            let previous_digest: Vec<u8> = row.try_get("digest")?;
+            if observed < previous_time
+                || (observed == previous_time && previous_digest.as_slice() != digest.as_slice())
+            {
+                return Err(Error::Invalid("identity snapshot replay or conflict"));
+            }
+            if observed == previous_time {
+                tx.commit().await?;
+                return Ok(());
+            }
+        }
+        let active: Vec<String> = snapshot
+            .subjects
+            .iter()
+            .filter(|s| s.active)
+            .map(|s| s.subject.clone())
+            .collect();
+        for subject in &snapshot.subjects {
+            let row = sqlx::query("SELECT disabled,groups_issued_at FROM identity_users WHERE issuer=$1 AND subject=$2 FOR UPDATE")
+                .bind(expected_issuer).bind(&subject.subject).fetch_optional(&mut *tx).await?;
+            let Some(row) = row else {
+                if subject.active {
+                    let (admin, teams) = role_mapping(mapping, &subject.groups);
+                    apply_login_snapshot(
+                        &mut tx,
+                        expected_issuer,
+                        &subject.subject,
+                        observed,
+                        admin,
+                        teams,
+                    )
+                    .await?;
+                }
+                continue;
+            };
+            let disabled: bool = row.try_get("disabled")?;
+            let issued_at: Option<DateTime<Utc>> = row.try_get("groups_issued_at")?;
+            if disabled || issued_at.is_some_and(|time| time > observed) {
+                continue;
+            }
+            if !subject.active {
+                disable_subject(&mut tx, expected_issuer, &subject.subject).await?;
+            } else {
+                let (admin, teams) = role_mapping(mapping, &subject.groups);
+                apply_login_snapshot(
+                    &mut tx,
+                    expected_issuer,
+                    &subject.subject,
+                    observed,
+                    admin,
+                    teams,
+                )
+                .await?;
+            }
+        }
+        let missing: Vec<String> = sqlx::query_scalar("SELECT subject FROM identity_users WHERE issuer=$1 AND NOT disabled AND (groups_issued_at IS NULL OR groups_issued_at<=$2) AND NOT (subject=ANY($3)) ORDER BY subject")
+            .bind(expected_issuer).bind(observed).bind(&active).fetch_all(&mut *tx).await?;
+        for subject in missing {
+            disable_subject(&mut tx, expected_issuer, &subject).await?;
+        }
+        sqlx::query("INSERT INTO identity_idp_projection(issuer,observed_at,digest) VALUES ($1,$2,$3) ON CONFLICT (issuer) DO UPDATE SET observed_at=EXCLUDED.observed_at,digest=EXCLUDED.digest")
+            .bind(expected_issuer).bind(observed).bind(digest.as_slice()).execute(&mut *tx).await?;
+        audit(
+            &mut tx,
+            None,
+            Some("thalamus-worker"),
+            "identity.snapshot",
+            expected_issuer,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
     }
     /// Atomically replace the projection with a fully verified Git snapshot.
     /// Refresh only after the source commit and clean tracked file are verified.
@@ -934,9 +1479,17 @@ impl WorkerIdentity {
         let mut seen = std::collections::HashSet::new();
         if caps.iter().any(|cap| {
             cap.max_tokens < 0
+                || cap.max_tokens > i64::from(u32::MAX)
                 || cap.unit != "tokens"
                 || !matches!(cap.window.as_str(), "day" | "month")
                 || !seen.insert(cap.team_id)
+                || !cap.allowed_classes.iter().any(|class| class == "standard")
+                || {
+                    let mut classes = std::collections::HashSet::new();
+                    cap.allowed_classes
+                        .iter()
+                        .any(|class| !valid_traffic_class(class) || !classes.insert(class))
+                }
         }) {
             return Err(Error::Invalid("invalid budget caps"));
         }
@@ -947,8 +1500,8 @@ impl WorkerIdentity {
             .execute(&mut *tx)
             .await?;
         for cap in caps {
-            sqlx::query("INSERT INTO identity_budget_caps(team_id,max_tokens,unit,budget_window) VALUES ($1,$2,$3,$4)")
-                .bind(cap.team_id).bind(cap.max_tokens).bind(&cap.unit).bind(&cap.window).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO identity_budget_caps(team_id,max_tokens,unit,budget_window,allowed_classes) VALUES ($1,$2,$3,$4,$5)")
+                .bind(cap.team_id).bind(cap.max_tokens).bind(&cap.unit).bind(&cap.window).bind(&cap.allowed_classes).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(())
@@ -959,11 +1512,101 @@ impl WorkerIdentity {
         active_projection(&self.db).await
     }
 
+    /// Register a Secret already owned by this debug session. A retry is
+    /// accepted only when the entire live binding and digest match.
+    pub async fn register_debug_key(&self, request: DebugKeyRequest<'_>) -> Result<KeyMetadata> {
+        let digest = debug_digest(request)?;
+        let mut tx = self.db.begin().await?;
+        lock_debug_scope(&mut tx, request).await?;
+        let id = Uuid::new_v4();
+        let name = format!("debug-{}", request.session_id);
+        let row = sqlx::query("INSERT INTO identity_keys(id,digest,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,name,debug_session_id,debug_model,debug_target_service) VALUES ($1,$2,$3,$3,$4,$5,'debug',$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (debug_session_id) DO NOTHING RETURNING *")
+            .bind(id).bind(digest.as_slice()).bind(request.user_id).bind(request.team_id)
+            .bind(request.project_id).bind(vec![request.model]).bind(request.budget)
+            .bind(request.expires_at).bind(name).bind(request.session_id)
+            .bind(request.model).bind(request.service).fetch_optional(&mut *tx).await?;
+        let key = if let Some(row) = row {
+            sqlx::query("INSERT INTO identity_audit(actor_id,agent,action,target,details) VALUES ($1,'thalamus-worker','key.issue',$2,jsonb_build_object('debug_session_id',$3::text))")
+                .bind(request.user_id).bind(id.to_string()).bind(request.session_id.to_string())
+                .execute(&mut *tx).await?;
+            key_metadata(row)?
+        } else {
+            matching_debug_key(&mut tx, request, &digest).await?
+        };
+        tx.commit().await?;
+        Ok(key)
+    }
+
+    /// Verify an existing registration without ever creating one.
+    pub async fn verify_debug_key(&self, request: DebugKeyRequest<'_>) -> Result<KeyMetadata> {
+        let digest = debug_digest(request)?;
+        let mut tx = self.db.begin().await?;
+        lock_debug_scope(&mut tx, request).await?;
+        let key = matching_debug_key(&mut tx, request, &digest).await?;
+        tx.commit().await?;
+        Ok(key)
+    }
+
+    /// Find even expired or revoked registrations for trusted cleanup.
+    pub async fn debug_key(&self, session_id: Uuid) -> Result<Option<DebugKeyRegistration>> {
+        let row =
+            sqlx::query("SELECT * FROM identity_keys WHERE kind='debug' AND debug_session_id=$1")
+                .bind(session_id)
+                .fetch_optional(&self.db)
+                .await?;
+        row.map(|row| {
+            Ok(DebugKeyRegistration {
+                digest: row.try_get("digest")?,
+                session_id: row.try_get("debug_session_id")?,
+                service: row.try_get("debug_target_service")?,
+                model: row.try_get("debug_model")?,
+                metadata: key_metadata(row)?,
+            })
+        })
+        .transpose()
+    }
+
+    /// Check the same authoritative conditions used by gateway projection.
+    pub async fn active_debug_key(&self, session_id: Uuid) -> Result<Option<KeyMetadata>> {
+        let key = query_active_projection(&self.db, Some(session_id))
+            .await?
+            .into_iter()
+            .next()
+            .map(|key| key.metadata);
+        if key.is_none() {
+            let stale: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity_keys k JOIN identity_users u ON u.id=k.user_id JOIN identity_idp_projection p ON p.issuer=u.issuer WHERE k.kind='debug' AND k.debug_session_id=$1 AND p.observed_at<=clock_timestamp()-interval '10 minutes')")
+                .bind(session_id).fetch_one(&self.db).await?;
+            if stale {
+                return Err(Error::Invalid("identity snapshot unavailable or stale"));
+            }
+        }
+        Ok(key)
+    }
+
+    /// Missing and already-revoked keys are successful cleanup retries.
+    pub async fn revoke_debug_key(&self, session_id: Uuid) -> Result<()> {
+        let mut tx = self.db.begin().await?;
+        let row = sqlx::query("UPDATE identity_keys SET revoked_at=clock_timestamp() WHERE kind='debug' AND debug_session_id=$1 AND revoked_at IS NULL RETURNING id,user_id")
+            .bind(session_id).fetch_optional(&mut *tx).await?;
+        if let Some(row) = row {
+            let id: Uuid = row.try_get("id")?;
+            let user: Uuid = row.try_get("user_id")?;
+            sqlx::query("INSERT INTO identity_audit(actor_id,agent,action,target,details) VALUES ($1,'thalamus-worker','key.revoke',$2,jsonb_build_object('debug_session_id',$3::text))")
+                .bind(user).bind(id.to_string()).bind(session_id.to_string())
+                .execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Register the secret already durably stored by the worker. Only its
     /// canonical SHA-256 digest is persisted, and retries must match exactly.
     pub async fn register_run_key(&self, request: RunKeyRequest<'_>) -> Result<KeyMetadata> {
         let RunKeyRequest {
             run_id,
+            deployment,
+            run_kind,
+            request_budget,
             user_id,
             team_id,
             project_id,
@@ -976,14 +1619,18 @@ impl WorkerIdentity {
         if expires_at <= now || expires_at > now + Duration::hours(24) {
             return Err(Error::Invalid("run key expiry must be within 24 hours"));
         }
-        if !(1..=1_000_000).contains(&budget) {
-            return Err(Error::Invalid("invalid run token budget"));
+        if !valid_run_budgets(run_kind, budget, request_budget) {
+            return Err(Error::Invalid("invalid run budgets"));
         }
-        if service.trim().is_empty()
+        if run_id.is_nil()
+            || deployment.trim().is_empty()
+            || deployment.len() > 1024
+            || deployment.chars().any(char::is_control)
+            || service.trim().is_empty()
             || service.len() > 1024
             || service.chars().any(char::is_control)
         {
-            return Err(Error::Invalid("invalid run service"));
+            return Err(Error::Invalid("invalid run scope"));
         }
         let encoded = secret
             .strip_prefix("thl_")
@@ -1019,9 +1666,9 @@ impl WorkerIdentity {
         let digest = Sha256::digest(secret.as_bytes());
         let id = Uuid::new_v4();
         let name = format!("run-{run_id}");
-        let row = sqlx::query("INSERT INTO identity_keys(id,digest,user_id,creator_id,team_id,project_id,kind,allowed_services,expires_at,name,run_id,budget) VALUES ($1,$2,$3,$3,$4,$5,'job',$6,$7,$8,$9,$10) ON CONFLICT (run_id) DO NOTHING RETURNING id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at,name")
+        let row = sqlx::query("INSERT INTO identity_keys(id,digest,user_id,creator_id,team_id,project_id,kind,allowed_services,expires_at,name,run_id,budget,deployment,run_kind,request_budget) VALUES ($1,$2,$3,$3,$4,$5,'job',$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT (run_id) DO NOTHING RETURNING id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at,name")
             .bind(id).bind(digest.as_slice()).bind(user_id).bind(team_id).bind(project_id)
-            .bind(vec![service]).bind(expires_at).bind(name).bind(run_id).bind(budget)
+            .bind(vec![service]).bind(expires_at).bind(name).bind(run_id).bind(budget).bind(deployment).bind(run_kind).bind(request_budget)
             .fetch_optional(&mut *tx).await?;
         let key = if let Some(row) = row {
             let key = key_metadata(row)?;
@@ -1029,9 +1676,9 @@ impl WorkerIdentity {
                 .bind(user_id).bind(id.to_string()).bind(run_id.to_string()).execute(&mut *tx).await?;
             key
         } else {
-            let row = sqlx::query("SELECT id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at,name FROM identity_keys WHERE run_id=$1 AND user_id=$2 AND creator_id=$2 AND team_id=$3 AND project_id=$4 AND kind='job' AND allowed_services=$5 AND expires_at=$6 AND digest=$7 AND budget=$8 AND revoked_at IS NULL FOR UPDATE")
+            let row = sqlx::query("SELECT id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at,name FROM identity_keys WHERE run_id=$1 AND user_id=$2 AND creator_id=$2 AND team_id=$3 AND project_id=$4 AND kind='job' AND allowed_services=$5 AND expires_at=$6 AND digest=$7 AND budget=$8 AND deployment=$9 AND run_kind=$10 AND request_budget IS NOT DISTINCT FROM $11 AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE")
                 .bind(run_id).bind(user_id).bind(team_id).bind(project_id).bind(vec![service])
-                .bind(expires_at).bind(digest.as_slice()).bind(budget).fetch_optional(&mut *tx).await?
+                .bind(expires_at).bind(digest.as_slice()).bind(budget).bind(deployment).bind(run_kind).bind(request_budget).fetch_optional(&mut *tx).await?
                 .ok_or(Error::Invalid("run key registration conflict"))?;
             key_metadata(row)?
         };
@@ -1045,6 +1692,9 @@ impl WorkerIdentity {
     pub async fn replace_expired_run_key(&self, request: RunKeyRequest<'_>) -> Result<KeyMetadata> {
         let RunKeyRequest {
             run_id,
+            deployment,
+            run_kind,
+            request_budget,
             user_id,
             team_id,
             project_id,
@@ -1057,7 +1707,11 @@ impl WorkerIdentity {
         if expires_at <= now || expires_at > now + Duration::hours(24) {
             return Err(Error::Invalid("run key expiry must be within 24 hours"));
         }
-        if !(1..=1_000_000).contains(&budget)
+        if !valid_run_budgets(run_kind, budget, request_budget)
+            || run_id.is_nil()
+            || deployment.trim().is_empty()
+            || deployment.len() > 1024
+            || deployment.chars().any(char::is_control)
             || service.trim().is_empty()
             || service.len() > 1024
             || service.chars().any(char::is_control)
@@ -1085,9 +1739,9 @@ impl WorkerIdentity {
         authorize_locked(&mut tx, user_id, team_id, false).await?;
         check_budget_cap(&mut tx, team_id, budget).await?;
         let digest = Sha256::digest(secret.as_bytes());
-        let row = sqlx::query("UPDATE identity_keys SET digest=$1,expires_at=$2 WHERE run_id=$3 AND user_id=$4 AND creator_id=$4 AND team_id=$5 AND project_id=$6 AND kind='job' AND allowed_services=$7 AND budget=$8 AND revoked_at IS NULL AND expires_at <= clock_timestamp() RETURNING id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at,name")
+        let row = sqlx::query("UPDATE identity_keys SET digest=$1,expires_at=$2 WHERE run_id=$3 AND user_id=$4 AND creator_id=$4 AND team_id=$5 AND project_id=$6 AND kind='job' AND allowed_services=$7 AND budget=$8 AND deployment=$9 AND run_kind=$10 AND request_budget IS NOT DISTINCT FROM $11 AND revoked_at IS NULL AND expires_at <= clock_timestamp() RETURNING id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at,name")
             .bind(digest.as_slice()).bind(expires_at).bind(run_id).bind(user_id).bind(team_id)
-            .bind(project_id).bind(vec![service]).bind(budget).fetch_optional(&mut *tx).await?
+            .bind(project_id).bind(vec![service]).bind(budget).bind(deployment).bind(run_kind).bind(request_budget).fetch_optional(&mut *tx).await?
             .ok_or(Error::Invalid("run key cannot be replaced"))?;
         let key = key_metadata(row)?;
         sqlx::query("INSERT INTO identity_audit(actor_id,agent,action,target,details) VALUES ($1,'thalamus-worker','key.rotate',$2,jsonb_build_object('run_id',$3::text))")
@@ -1122,14 +1776,62 @@ impl WorkerIdentity {
     }
 }
 
+async fn matching_debug_key(
+    tx: &mut Transaction<'_, Postgres>,
+    request: DebugKeyRequest<'_>,
+    digest: &[u8; 32],
+) -> Result<KeyMetadata> {
+    let row = sqlx::query("SELECT * FROM identity_keys WHERE kind='debug' AND debug_session_id=$1 AND user_id=$2 AND creator_id=$2 AND team_id=$3 AND project_id=$4 AND debug_target_service=$5 AND debug_model=$6 AND allowed_services=$7 AND budget=$8 AND expires_at=$9 AND digest=$10 AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE")
+        .bind(request.session_id).bind(request.user_id).bind(request.team_id)
+        .bind(request.project_id).bind(request.service).bind(request.model)
+        .bind(vec![request.model]).bind(request.budget).bind(request.expires_at)
+        .bind(digest.as_slice()).fetch_optional(&mut **tx).await?
+        .ok_or(Error::Invalid("debug key registration conflict"))?;
+    key_metadata(row)
+}
+
 async fn active_projection(db: &PgPool) -> Result<Vec<ProjectionKey>> {
-    let rows = sqlx::query("SELECT k.id,k.user_id,k.creator_id,k.team_id,k.project_id,k.kind,k.allowed_services,k.budget,k.expires_at,k.revoked_at,k.created_at,k.name,k.digest,p.cost_centre FROM identity_keys k JOIN identity_users u ON u.id=k.user_id LEFT JOIN identity_projects p ON p.id=k.project_id AND p.team_id=k.team_id WHERE k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>now()) AND NOT u.disabled AND (u.platform_admin OR EXISTS (SELECT 1 FROM identity_memberships m WHERE m.user_id=u.id AND m.team_id=k.team_id)) ORDER BY k.id").fetch_all(db).await?;
+    query_active_projection(db, None).await
+}
+
+async fn query_active_projection(
+    db: &PgPool,
+    debug_session: Option<Uuid>,
+) -> Result<Vec<ProjectionKey>> {
+    // Identity can run before the separate debug migration. In that case no
+    // debug key can be registered or projected; ordinary keys remain usable.
+    let has_debug: bool =
+        sqlx::query_scalar("SELECT to_regclass('thalamus_debug_sessions') IS NOT NULL")
+            .fetch_one(db)
+            .await?;
+    let debug_filter = if has_debug {
+        " AND (k.kind <> 'debug' OR EXISTS (SELECT 1 FROM thalamus_debug_sessions s WHERE s.id=k.debug_session_id AND s.user_id=k.user_id AND s.team_id=k.team_id AND s.project_id=k.project_id AND s.service_id=k.debug_target_service AND s.model=k.debug_model AND s.model_budget=k.budget AND s.state IN ('pending','running') AND s.deadline>clock_timestamp() AND k.expires_at<=s.deadline))"
+    } else {
+        " AND k.kind <> 'debug'"
+    };
+    let sql = format!("SELECT k.*,p.cost_centre,COALESCE(p.traffic_class,'standard') AS traffic_class,CASE WHEN p.budget BETWEEN 0 AND 9007199254740991 AND p.budget=trunc(p.budget) THEN p.budget::bigint ELSE NULL END AS project_budget,c.max_tokens AS team_budget,c.budget_window,CASE WHEN ip.issuer IS NULL THEN k.expires_at WHEN k.expires_at IS NULL THEN ip.observed_at+interval '10 minutes' ELSE LEAST(k.expires_at,ip.observed_at+interval '10 minutes') END AS projected_expiry FROM identity_keys k JOIN identity_users u ON u.id=k.user_id LEFT JOIN identity_projects p ON p.id=k.project_id AND p.team_id=k.team_id LEFT JOIN identity_budget_caps c ON c.team_id=k.team_id LEFT JOIN identity_idp_projection ip ON ip.issuer=u.issuer WHERE k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) AND NOT u.disabled AND (ip.issuer IS NULL OR ip.observed_at>clock_timestamp()-interval '10 minutes') AND (u.platform_admin OR EXISTS (SELECT 1 FROM identity_memberships m WHERE m.user_id=u.id AND m.team_id=k.team_id)) AND (p.budget IS NULL OR (p.budget BETWEEN 0 AND 9007199254740991 AND p.budget=trunc(p.budget))) AND (p.traffic_class IS NULL OR p.traffic_class='standard' OR p.traffic_class=ANY(c.allowed_classes)) AND ($1::uuid IS NULL OR k.debug_session_id=$1){debug_filter} ORDER BY k.id");
+    let rows = sqlx::query(&sql).bind(debug_session).fetch_all(db).await?;
     rows.into_iter()
         .map(|r| {
             Ok(ProjectionKey {
                 digest: r.try_get("digest")?,
                 cost_centre: r.try_get("cost_centre")?,
-                metadata: key_metadata(r)?,
+                class: r.try_get("traffic_class")?,
+                project_budget: r.try_get("project_budget")?,
+                team_budget: r.try_get("team_budget")?,
+                budget_window: r.try_get("budget_window")?,
+                run_id: r.try_get("run_id")?,
+                deployment: r.try_get("deployment")?,
+                run_kind: r.try_get("run_kind")?,
+                request_budget: r.try_get("request_budget")?,
+                debug_session_id: r.try_get("debug_session_id")?,
+                debug_model: r.try_get("debug_model")?,
+                metadata: {
+                    let expiry = r.try_get("projected_expiry")?;
+                    let mut metadata = key_metadata(r)?;
+                    metadata.expires_at = expiry;
+                    metadata
+                },
             })
         })
         .collect()
@@ -1155,12 +1857,97 @@ fn key_metadata(r: sqlx::postgres::PgRow) -> Result<KeyMetadata> {
 mod tests {
     use super::*;
     #[test]
+    fn oidc_trust_rejects_an_empty_or_invalid_pem_bundle() {
+        assert!(oidc_http_client(None).is_ok());
+        for pem in [&b""[..], &b"not a certificate"[..]] {
+            assert!(matches!(
+                oidc_http_client(Some(pem)),
+                Err(Error::Invalid(_))
+            ));
+        }
+    }
+
+    #[test]
     fn session_signature_rejects_tampering_and_wrong_key() {
         let id = Uuid::new_v4();
         let token = sign(&[1; 32], id);
         assert_eq!(verify(&[1; 32], &token).unwrap(), id);
         assert!(verify(&[2; 32], &token).is_err());
         assert!(verify(&[1; 32], &format!("{}x", token)).is_err());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn personal_keys_are_projectless_and_cannot_be_issued_as_job_or_debug(pool: PgPool) {
+        let user = Uuid::new_v4();
+        let team = Uuid::new_v4();
+        let other_team = Uuid::new_v4();
+        sqlx::query("INSERT INTO identity_users(id,issuer,subject) VALUES ($1,'issuer','subject')")
+            .bind(user)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO identity_teams(id,name) VALUES ($1,'one'),($2,'two')")
+            .bind(team)
+            .bind(other_team)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO identity_memberships(user_id,team_id,role) VALUES ($1,$2,'member')",
+        )
+        .bind(user)
+        .bind(team)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let input = NewKey {
+            name: "personal".into(),
+            team_id: team,
+            project_id: None,
+            kind: KeyKind::Personal,
+            allowed_services: vec!["model".into()],
+            budget: None,
+            expires_at: None,
+        };
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM identity_users WHERE id=$1 FOR UPDATE")
+            .bind(user)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let issued = issue_key_locked(&mut tx, user, input.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!(issued.key.project_id, None);
+        assert_eq!(issued.key.kind, "personal");
+        tx.commit().await.unwrap();
+        let projection = active_projection(&pool).await.unwrap();
+        assert_eq!(projection.len(), 1);
+        assert_eq!(projection[0].metadata.id, issued.key.id);
+        assert_eq!(projection[0].metadata.project_id, None);
+        assert_eq!(projection[0].class, "standard");
+        for kind in [KeyKind::Job, KeyKind::Debug] {
+            let mut tx = pool.begin().await.unwrap();
+            let forged = NewKey {
+                kind,
+                ..input.clone()
+            };
+            assert!(matches!(
+                issue_key_locked(&mut tx, user, forged, None).await,
+                Err(Error::Forbidden)
+            ));
+            tx.rollback().await.unwrap();
+        }
+        let mut tx = pool.begin().await.unwrap();
+        let cross_team = NewKey {
+            team_id: other_team,
+            ..input
+        };
+        assert!(matches!(
+            issue_key_locked(&mut tx, user, cross_team, None).await,
+            Err(Error::Forbidden)
+        ));
+        tx.rollback().await.unwrap();
     }
     #[test]
     fn group_mapping_prefers_team_admin() {
@@ -1186,6 +1973,175 @@ mod tests {
             token_payload(&format!("a.{payload}.c")).unwrap()["active"],
             false
         );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn snapshot_provisions_subject_and_old_login_cannot_restore_old_roles(pool: PgPool) {
+        let team = Uuid::new_v4();
+        sqlx::query("INSERT INTO identity_teams(id,name) VALUES ($1,'team')")
+            .bind(team)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut mapping = GroupMapping::default();
+        mapping.member_groups.insert("/members".into(), team);
+        let observed =
+            DateTime::from_timestamp_micros((Utc::now() - Duration::seconds(1)).timestamp_micros())
+                .unwrap()
+                + Duration::nanoseconds(400);
+        let snapshot = IdpSnapshot {
+            issuer: "https://id.example".into(),
+            observed_at: observed,
+            subjects: vec![IdpSubjectSnapshot {
+                subject: "new-user".into(),
+                active: true,
+                groups: vec!["/members".into()],
+            }],
+        };
+        WorkerIdentity::new(pool.clone())
+            .sync_idp_snapshot(&snapshot.issuer, &mapping, &snapshot)
+            .await
+            .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let user = apply_login_snapshot(
+            &mut tx,
+            &snapshot.issuer,
+            "new-user",
+            observed - Duration::seconds(1),
+            true,
+            HashMap::from([(team, "team_admin")]),
+        )
+        .await
+        .unwrap();
+        let same_microsecond = apply_login_snapshot(
+            &mut tx,
+            &snapshot.issuer,
+            "new-user",
+            observed + Duration::nanoseconds(500),
+            true,
+            HashMap::from([(team, "team_admin")]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(same_microsecond, user);
+        tx.commit().await.unwrap();
+        let admin: bool =
+            sqlx::query_scalar("SELECT platform_admin FROM identity_users WHERE id=$1")
+                .bind(user)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let role: String = sqlx::query_scalar(
+            "SELECT role FROM identity_memberships WHERE user_id=$1 AND team_id=$2",
+        )
+        .bind(user)
+        .bind(team)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!admin);
+        assert_eq!(role, "member");
+        let mut tx = pool.begin().await.unwrap();
+        assert!(matches!(
+            apply_login_snapshot(
+                &mut tx,
+                &snapshot.issuer,
+                "absent-user",
+                observed,
+                true,
+                HashMap::new()
+            )
+            .await,
+            Err(Error::Unauthorized)
+        ));
+        assert!(matches!(
+            apply_login_snapshot(
+                &mut tx,
+                &snapshot.issuer,
+                "another-absent-user",
+                observed + Duration::nanoseconds(500),
+                true,
+                HashMap::new()
+            )
+            .await,
+            Err(Error::Unauthorized)
+        ));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn class_assignment_requires_platform_admin_and_reviewed_cap(pool: PgPool) {
+        let team = Uuid::new_v4();
+        let team_admin = Uuid::new_v4();
+        let platform_admin = Uuid::new_v4();
+        sqlx::query("INSERT INTO identity_teams(id,name) VALUES ($1,'team')")
+            .bind(team)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO identity_users(id,issuer,subject,platform_admin) VALUES ($1,'issuer','team-admin',false),($2,'issuer','platform-admin',true)")
+            .bind(team_admin).bind(platform_admin).execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO identity_memberships(user_id,team_id,role) VALUES ($1,$2,'team_admin')",
+        )
+        .bind(team_admin)
+        .bind(team)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let worker = WorkerIdentity::new(pool.clone());
+        worker
+            .sync_budget_caps(
+                &"a".repeat(40),
+                &[BudgetCap {
+                    team_id: team,
+                    max_tokens: 100,
+                    unit: "tokens".into(),
+                    window: "day".into(),
+                    allowed_classes: vec!["standard".into(), "interactive".into()],
+                }],
+            )
+            .await
+            .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM identity_users WHERE id=$1 FOR UPDATE")
+            .bind(team_admin)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(authorize_locked(&mut tx, team_admin, team, true)
+            .await
+            .is_ok());
+        assert!(matches!(
+            require_platform_admin_locked(&mut tx, team_admin).await,
+            Err(Error::Forbidden)
+        ));
+        tx.rollback().await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM identity_users WHERE id=$1 FOR UPDATE")
+            .bind(platform_admin)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        require_platform_admin_locked(&mut tx, platform_admin)
+            .await
+            .unwrap();
+        check_class_cap(&mut tx, team, "interactive").await.unwrap();
+        assert!(matches!(
+            check_class_cap(&mut tx, team, "privileged").await,
+            Err(Error::Forbidden)
+        ));
+        assert!(matches!(
+            check_class_cap(&mut tx, team, "Interactive").await,
+            Err(Error::Invalid(_))
+        ));
+        tx.rollback().await.unwrap();
+        sqlx::query("UPDATE identity_budget_projection SET refreshed_at=clock_timestamp()-interval '2 minutes'")
+            .execute(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        assert!(matches!(
+            check_class_cap(&mut tx, team, "interactive").await,
+            Err(Error::Invalid(_))
+        ));
     }
 
     #[sqlx::test(migrations = "./migrations")]

@@ -1,0 +1,29 @@
+{
+  "apiVersion": "inference.networking.k8s.io/v1",
+  "kind": "InferencePool",
+  "metadata": {
+    "name": "example-pool-deployment-inference-pool",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "appProtocol": "http",
+    "endpointPickerRef": {
+      "failureMode": "FailClose",
+      "kind": "Service",
+      "name": "example-pool-deployment-epp",
+      "port": {
+        "number": 9002
+      }
+    },
+    "selector": {
+      "matchLabels": {
+        "thalamus.ai/deployment": "example-pool-deployment"
+      }
+    },
+    "targetPorts": [
+      {
+        "number": 8000
+      }
+    ]
+  }
+}

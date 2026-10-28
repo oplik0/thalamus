@@ -29,6 +29,20 @@ jobs:
       TEST_DATABASE_URL: postgres://thalamus:thalamus@localhost:5432/thalamus_test
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: kcl
+          add_shims_to_path: 'false'
+      - name: Expose pinned KCL to isolated renderers
+        run: |
+          mkdir -p "$RUNNER_TEMP/catalog-tools"
+          kcl="$(mise which kcl)"
+          test -x "$kcl"
+          ln -s "$kcl" "$RUNNER_TEMP/catalog-tools/kcl"
+          echo "$RUNNER_TEMP/catalog-tools" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.94.1
@@ -40,6 +54,10 @@ jobs:
         run: cargo build --workspace --all-targets --all-features
       - name: Test workspace
         run: cargo test --workspace --all-features
+      - name: Test PostgreSQL change-store transitions
+        run: cargo test -p thalamus-changes --test store -- --ignored
+      - name: Test benchmark adapter boundaries
+        run: python3 -m unittest discover -s scripts/inference-perf -p 'test_*.py'
       - name: Lint workspace
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
@@ -47,15 +65,52 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
       - uses: jdx/mise-action@v3
         with:
-          install_args: kcl
-      - name: Render illustrative KCL example
-        run: kcl main.k -D service_file=catalog/services/example-service.yaml
-      - name: Test serving and feature recipes
+          install_args: kcl go
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-schema-go-${{ hashFiles('mise.toml', 'deploy/**') }}
+          restore-keys: ${{ runner.os }}-schema-go-
+      - name: Check generated service schema
+        run: python3 scripts/generate-service-schema.py --check
+      - name: Check complete rendered catalog
+        run: python3 scripts/render-catalog.py --check --workload-namespace thalamus-inference
+      - name: Test catalog publication in temporary worktrees
+        run: python3 -B -m unittest discover -s scripts -p 'test_render_catalog.py'
+      - name: Render service and fresh installation
+        run: |
+          kcl main.k -D service_file=catalog/services/example-service.yaml -o /tmp/thalamus-service.yaml
+          kcl main.k -D service_file=catalog/services/example-pool-service.yaml -o /tmp/thalamus-pool-service.yaml
+          kcl main.k -D service_file=catalog/fixtures/agentic-service.yaml -D workload_namespace=thalamus-inference -o /tmp/thalamus-agentic-service.yaml
+          kcl deploy/install.k -D config_file=install.fixture.yaml -o /tmp/thalamus-install.yaml
+          kcl limits.k -D limit_file=catalog/limits/example-shared.yaml -o /tmp/thalamus-limits.yaml
+          kcl pool.k -D pool_file=catalog/pools/example-pool.yaml -o /tmp/thalamus-pool.yaml
+      - name: Test serving, feature, gateway and platform recipes
         run: |
           kcl test ./templates/serving
           kcl test ./templates/features
+          kcl test ./templates/gateway
+          kcl test ./templates/platform
+      - name: Validate rendered resources against pinned offline schemas
+        env:
+          GOMAXPROCS: 4
+          GOFLAGS: -p=4
+        run: |
+          python3 deploy/prepare-schema-bundle.py /tmp/thalamus-schemas
+          /tmp/thalamus-schemas/validate --bundle /tmp/thalamus-schemas/schemas.json /tmp/thalamus-service.yaml /tmp/thalamus-pool-service.yaml /tmp/thalamus-agentic-service.yaml /tmp/thalamus-install.yaml /tmp/thalamus-limits.yaml /tmp/thalamus-pool.yaml
+      - name: Test offline schema and CEL boundaries
+        working-directory: deploy/schema-validator
+        env:
+          GOMAXPROCS: 4
+          GOFLAGS: -p=4
+        run: go test ./...
       - name: Exercise gateway authentication and attribution
         run: python3 scripts/gateway-policy-smoke.py
 

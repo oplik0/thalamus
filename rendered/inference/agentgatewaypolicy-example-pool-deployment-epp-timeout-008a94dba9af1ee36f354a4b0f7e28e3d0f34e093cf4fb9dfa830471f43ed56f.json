@@ -1,0 +1,22 @@
+{
+  "apiVersion": "agentgateway.dev/v1alpha1",
+  "kind": "AgentgatewayPolicy",
+  "metadata": {
+    "name": "example-pool-deployment-epp-timeout",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "backend": {
+      "http": {
+        "requestTimeout": "30s5s"
+      }
+    },
+    "targetRefs": [
+      {
+        "group": "",
+        "kind": "Service",
+        "name": "example-pool-deployment-epp"
+      }
+    ]
+  }
+}

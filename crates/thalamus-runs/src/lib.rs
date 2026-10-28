@@ -2,12 +2,23 @@
 //! Authorization of the supplied team and actor is the caller's responsibility.
 
 mod artifacts;
+pub mod benchmark;
 mod jobs;
 mod storage;
 
-pub use artifacts::{ArtifactRef, Artifacts};
+pub use artifacts::{ArtifactRef, Artifacts, S3Config};
+pub use benchmark::{
+    compare_benchmark_results, parse_benchmark_result, BenchmarkComparison, BenchmarkData,
+    BenchmarkDefinition, BenchmarkGoodput, BenchmarkGoodputThresholds, BenchmarkLoad,
+    BenchmarkPercentiles, BenchmarkPoint, BenchmarkResult, BenchmarkRunner, BenchmarkStage,
+    BenchmarkThroughput, BenchmarkTokenizer, BenchmarkWorkloadSpec, ComparedConditions,
+    ComparedValue, ConcurrentStage, ConstantStage, BENCHMARK_MAX_POINTS,
+    BENCHMARK_MAX_RESULT_BYTES, BENCHMARK_SCHEMA_VERSION, INFERENCE_PERF_IMAGE,
+};
 pub use jobs::{
-    build_job, verify_owned_job, verify_recoverable_job, JobTemplate, ResultUpload, Templates,
+    build_job, validate_benchmark_options, validate_benchmark_workload,
+    validate_observed_validation_config, verify_owned_job, verify_recoverable_job, JobTemplate,
+    ResultUpload, Templates,
 };
 pub use storage::{Run, RunCursor, Store, Transition, WorkerStore};
 
@@ -49,7 +60,7 @@ pub enum RunKind {
 
 /// Pinned identities, not merely tags or mutable PVC names. The producer must resolve
 /// actual runtime identity and ensure its content manifests are immutable.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct EvidenceIdentity {
     pub desired_configuration: String,
     pub observed_runtime: String,
@@ -57,13 +68,14 @@ pub struct EvidenceIdentity {
     pub conditions: RunConditions,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RunConditions {
     pub hardware: String,
     pub nodes: Vec<String>,
     pub replicas: u32,
     pub cache_state: String,
     pub competing_traffic: String,
+    #[schema(value_type = String, format = DateTime)]
     pub observed_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -80,8 +92,9 @@ pub struct Workload {
     pub tool_budget_calls: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RunRequest {
+    #[schema(value_type = String, format = "uuid")]
     pub project_id: Uuid,
     pub kind: RunKind,
     pub service: String,

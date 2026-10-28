@@ -1,0 +1,22 @@
+[package]
+name = "thalamus-runtime"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+http = "1"
+k8s-openapi = { version = "0.24", features = ["v1_30"] }
+kube = { version = "0.98", features = ["client", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json"] }
+thiserror = "2"
+thalamus-core = { path = "../thalamus-core" }
+thalamus-runs = { path = "../thalamus-runs" }
+url = "2"
+uuid = { version = "1", features = ["serde"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

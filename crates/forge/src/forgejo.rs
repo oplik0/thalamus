@@ -148,6 +148,7 @@ fn change(v: &Value, host: &str) -> Result<ChangeRequest> {
             None => Mergeability::Unknown,
         },
         merge_commit: optional(v, "merge_commit_sha"),
+        merged_at: optional(v, "merged_at"),
         source_repository,
         author: text(nested(v, "user")?, "login")?.into(),
         labels,
@@ -332,11 +333,6 @@ impl BranchPolicies for Forgejo {
             "complete Forgejo policy evidence is unavailable".into(),
         ))
     }
-    async fn policy_actor(&self) -> Result<PolicyActor> {
-        Err(Error::Unsupported(
-            "Forgejo bypass actor evidence is unavailable".into(),
-        ))
-    }
 }
 impl Webhooks for Forgejo {
     fn webhook(
@@ -422,6 +418,25 @@ mod tests {
         );
         assert_eq!(c.source_repository.unwrap().namespace, "alice");
         assert!(change(&v, "other.example").is_err());
+        assert!(c.merged_at.is_none());
+        let mut merged = v.clone();
+        merged["state"] = json!("closed");
+        merged["merged"] = json!(true);
+        merged["merged_at"] = json!("2026-01-01T12:34:56Z");
+        assert_eq!(
+            change(&merged, "forge.example")
+                .unwrap()
+                .merged_at
+                .as_deref(),
+            Some("2026-01-01T12:34:56Z")
+        );
+        merged["merged_at"] = Value::Null;
+        assert!(
+            change(&merged, "forge.example")
+                .unwrap()
+                .merged_at
+                .is_none()
+        );
     }
     #[test]
     fn webhook_authenticates_raw_payload_and_origin() {

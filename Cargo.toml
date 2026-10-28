@@ -17,6 +17,7 @@ members = [
     "crates/thalamus-server",
     "crates/thalamus-validation",
     "crates/thalamus-usage",
+    "crates/thalamus-runtime",
     "crates/thalamus-worker",
 ]
 resolver = "3"

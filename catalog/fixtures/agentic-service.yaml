@@ -1,0 +1,91 @@
+# OFFLINE render fixture only. Artifact identities, model image, revision,
+# database address, Gateway TLS bundle and team UUID are illustrative; replace
+# them with measured, operator-approved values before any deployment.
+# Render from the repository root:
+# kcl run main.k --format json -D service_file=catalog/fixtures/agentic-service.yaml -D workload_namespace=thalamus-inference
+name: agentic-fixture
+namespace: thalamus-inference
+access:
+  teams:
+    - "00000000-0000-4000-8000-000000000001"
+gateway:
+  name: inference-serving
+  namespace: thalamus-inference
+  hostname: agentic-inference.example.invalid
+  keySelector:
+    thalamus.dev/gateway-keys: "true"
+  rateLimit: example-shared
+network:
+  gatewayPodSelector:
+    gateway.networking.k8s.io/gateway-name: inference-serving
+  dns:
+    namespaceSelector:
+      kubernetes.io/metadata.name: kube-system
+    podSelector:
+      k8s-app: kube-dns
+  prometheus:
+    namespaceSelector:
+      kubernetes.io/metadata.name: monitoring
+    podSelector:
+      app.kubernetes.io/name: prometheus
+  apiServer:
+    - cidr: 192.0.2.0/24
+      ports: [6443]
+versions:
+  kserve: v0.21.0
+  agentgateway: v1.7.0
+  inferenceExtension: v1.6.2
+  vllm: v0.23.0
+agentic:
+  name: agentic-fixture
+  namespace: thalamus-inference
+  mode: shared-stateless
+  # Official amd64 nightly tag built from this pinned commit; trust and pull
+  # eligibility remain operator decisions, not runtime observations.
+  image: docker.io/vllm/agentic-api@sha256:26a284e11865a21a51e71b8d2145817b76c96f36b92b18911719363d9a0075c4
+  upstreamCommit: 27e60cf006cb771cf1961ea9909e64d812f5f3c8
+  gatewayVersion: v1.7.0
+  publicGateway: inference-serving
+  publicGatewayNamespace: thalamus-inference
+  internalGateway: agentic-internal
+  internalGatewayNamespace: thalamus-inference
+  internalGatewayService: agentic-internal
+  internalGatewayTargetPort: 443
+  internalHostname: agentic-internal.thalamus-inference.svc.cluster.local
+  internalCAConfigMap: thalamus-agentic-ca
+  gatewayNamespaceLabels:
+    kubernetes.io/metadata.name: thalamus-inference
+  gatewayPodLabels:
+    gateway.networking.k8s.io/gateway-name: inference-serving
+  dnsNamespaceLabels:
+    kubernetes.io/metadata.name: kube-system
+  dnsPodLabels:
+    k8s-app: kube-dns
+  internalGatewayPodLabels:
+    gateway.networking.k8s.io/gateway-name: agentic-internal
+  instances:
+    - name: assistant
+      hostname: agentic.example.invalid
+      databaseSecret: agentic-example-db
+      databaseCidrs: [192.0.2.10/32]
+      keySelector:
+        thalamus.dev/gateway-keys: "true"
+deployments:
+  - name: agentic-stable
+    artifact: example-packaged-model
+    hardware: example-gpu
+    image: "example.invalid/engine-with-model@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    revision: "5555555555555555555555555555555555555555555555555555555555555555"
+    role: stable
+    rolloutStrategy: Recreate
+    packagedModel: true
+    replicas: 1
+  - name: agentic-preview
+    artifact: example-packaged-model
+    hardware: example-gpu
+    image: "example.invalid/engine-with-model@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    revision: "6666666666666666666666666666666666666666666666666666666666666666"
+    role: candidate
+    rolloutStrategy: Recreate
+    packagedModel: true
+    replicas: 1

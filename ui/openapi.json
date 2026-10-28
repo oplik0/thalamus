@@ -29,9 +29,6 @@
           "401": {
             "description": "Authentication required"
           },
-          "403": {
-            "description": "Platform administrator required"
-          },
           "503": {
             "description": "Changes unavailable"
           }
@@ -90,6 +87,52 @@
           },
           "503": {
             "description": "Changes unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/changes/form/{service}": {
+      "get": {
+        "tags": [
+          "crate::workflow_form"
+        ],
+        "operationId": "get_form",
+        "parameters": [
+          {
+            "name": "service",
+            "in": "path",
+            "description": "Selected service name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Committed service, artifact catalog and KCL-generated form schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceForm"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid service name"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Platform administrator required"
+          },
+          "404": {
+            "description": "Service not found at the target revision"
+          },
+          "503": {
+            "description": "GitOps, artifact catalog or service schema unavailable"
           }
         }
       }
@@ -183,6 +226,161 @@
           },
           "503": {
             "description": "Changes unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/changes/{id}/rollout": {
+      "get": {
+        "tags": [
+          "crate::rollout"
+        ],
+        "operationId": "get_rollout",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RolloutView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Change not found"
+          },
+          "503": {
+            "description": "Rollout unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/changes/{id}/rollout/approve": {
+      "post": {
+        "tags": [
+          "crate::rollout"
+        ],
+        "operationId": "approve_rollout",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalBinding"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RolloutView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Approval requires an open scheduled PR"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Service owner required"
+          },
+          "404": {
+            "description": "Change not found"
+          },
+          "409": {
+            "description": "Reviewed approval snapshot is stale"
+          },
+          "503": {
+            "description": "Rollout unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/changes/{id}/rollout/schedule": {
+      "post": {
+        "tags": [
+          "crate::rollout"
+        ],
+        "operationId": "schedule_rollout",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleRollout"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RolloutView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid window or state"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Service owner required"
+          },
+          "404": {
+            "description": "Change not found"
+          },
+          "503": {
+            "description": "Rollout unavailable"
           }
         }
       }
@@ -353,6 +551,284 @@
         }
       }
     },
+    "/api/v1/debug/models": {
+      "get": {
+        "tags": [
+          "crate::debug"
+        ],
+        "operationId": "models",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DebugModelsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "503": {
+            "description": "Debug configuration unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/debug/sessions": {
+      "post": {
+        "tags": [
+          "crate::debug"
+        ],
+        "operationId": "create_session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DebugSessionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DebugSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid debug request"
+          },
+          "404": {
+            "description": "Project, service, deployment, or run not found"
+          },
+          "409": {
+            "description": "Idempotency conflict"
+          },
+          "503": {
+            "description": "Debug unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/debug/sessions/{id}": {
+      "get": {
+        "tags": [
+          "crate::debug"
+        ],
+        "operationId": "get_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DebugSessionResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "crate::debug"
+        ],
+        "operationId": "cancel_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Cancellation requested; cleanup may remain pending"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "409": {
+            "description": "Session already terminal"
+          }
+        }
+      }
+    },
+    "/api/v1/debug/sessions/{id}/events": {
+      "get": {
+        "tags": [
+          "crate::debug"
+        ],
+        "operationId": "get_events",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DebugEventResponse"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found"
+          }
+        }
+      }
+    },
+    "/api/v1/debug/sessions/{id}/reply": {
+      "post": {
+        "tags": [
+          "crate::debug"
+        ],
+        "operationId": "reply",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DebugReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Reply accepted"
+          },
+          "400": {
+            "description": "Invalid reply"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "409": {
+            "description": "Session or reply conflict"
+          },
+          "503": {
+            "description": "Debug proxy unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/keys": {
       "get": {
         "tags": [
@@ -405,7 +881,7 @@
             }
           },
           "400": {
-            "description": "Invalid request"
+            "description": "Invalid key scope or request"
           },
           "401": {
             "description": "Authentication required"
@@ -414,10 +890,10 @@
             "description": "Permission denied"
           },
           "404": {
-            "description": "Project not found"
+            "description": "Team, project or service not found"
           },
           "503": {
-            "description": "Identity service unavailable"
+            "description": "Identity service or committed access policy unavailable"
           }
         }
       }
@@ -582,6 +1058,101 @@
         }
       }
     },
+    "/api/v1/projects/{id}/traffic-class": {
+      "put": {
+        "tags": [
+          "crate::projects"
+        ],
+        "operationId": "set_project_traffic_class",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetProjectTrafficClass"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Traffic class updated"
+          },
+          "400": {
+            "description": "Invalid class"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Platform administrator and reviewed class required"
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "503": {
+            "description": "Reviewed policy unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/traffic-classes": {
+      "get": {
+        "tags": [
+          "crate::projects"
+        ],
+        "operationId": "project_traffic_classes",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectTrafficClasses"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid project id"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Platform administrator required"
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "503": {
+            "description": "Reviewed policy unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/runs": {
       "get": {
         "tags": [
@@ -706,6 +1277,242 @@
           },
           "503": {
             "description": "Runs unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/benchmark": {
+      "get": {
+        "tags": [
+          "crate::benchmark_results"
+        ],
+        "operationId": "get_benchmark",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Benchmark run ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Run not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Run or benchmark summary is incomplete or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Benchmark results unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/benchmark/compare/{other_id}": {
+      "get": {
+        "tags": [
+          "crate::benchmark_results"
+        ],
+        "operationId": "compare_benchmark",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Baseline benchmark run ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "other_id",
+            "in": "path",
+            "description": "Candidate benchmark run ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkComparison"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Run not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Runs or benchmark summaries are incomplete, invalid, or not comparable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Benchmark results unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/promote": {
+      "post": {
+        "tags": [
+          "crate::run_promotion"
+        ],
+        "operationId": "promote",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Successful validation or benchmark run",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPromotionView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Platform administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Run not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Execution evidence, catalog or rollout policy does not match",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Promotion dependencies unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         }
       }
@@ -1018,6 +1825,32 @@
         }
       }
     },
+    "/api/v1/teams": {
+      "get": {
+        "tags": [
+          "crate::projects"
+        ],
+        "operationId": "list_teams",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "503": {
+            "description": "Identity service unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/usage": {
       "get": {
         "tags": [
@@ -1266,6 +2099,530 @@
   },
   "components": {
     "schemas": {
+      "ApprovalBinding": {
+        "type": "object",
+        "description": "Exact reviewed snapshot. The UI submits this unchanged, so an approval\ncannot silently authorize a newer window, PR head, base, or policy.",
+        "required": [
+          "head_sha",
+          "base_sha",
+          "window_start",
+          "window_end",
+          "policy_digest"
+        ],
+        "properties": {
+          "base_sha": {
+            "type": "string"
+          },
+          "head_sha": {
+            "type": "string"
+          },
+          "policy_digest": {
+            "type": "string"
+          },
+          "window_end": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "window_start": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BenchmarkComparison": {
+        "type": "object",
+        "required": [
+          "baseline",
+          "candidate",
+          "desired_configuration",
+          "observed_runtime",
+          "conditions",
+          "deployment",
+          "observed_at"
+        ],
+        "properties": {
+          "baseline": {
+            "$ref": "#/components/schemas/BenchmarkResult"
+          },
+          "candidate": {
+            "$ref": "#/components/schemas/BenchmarkResult"
+          },
+          "conditions": {
+            "$ref": "#/components/schemas/ComparedConditions"
+          },
+          "deployment": {
+            "$ref": "#/components/schemas/ComparedValue_String"
+          },
+          "desired_configuration": {
+            "$ref": "#/components/schemas/ComparedValue_String"
+          },
+          "observed_at": {
+            "$ref": "#/components/schemas/ComparedValue_String",
+            "description": "Timestamps are provenance, not a condition difference by themselves."
+          },
+          "observed_runtime": {
+            "$ref": "#/components/schemas/ComparedValue_String"
+          }
+        }
+      },
+      "BenchmarkData": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "input_len",
+              "output_len",
+              "type"
+            ],
+            "properties": {
+              "input_len": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "output_len": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "random"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "num_groups",
+              "num_prompts_per_group",
+              "system_prompt_len",
+              "question_len",
+              "output_len",
+              "enable_multi_turn_chat",
+              "type"
+            ],
+            "properties": {
+              "enable_multi_turn_chat": {
+                "type": "boolean"
+              },
+              "num_groups": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "num_prompts_per_group": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "output_len": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "question_len": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "system_prompt_len": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "shared_prefix"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "BenchmarkDefinition": {
+        "type": "object",
+        "required": [
+          "name",
+          "seed",
+          "warmup_seconds",
+          "spec"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "seed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "spec": {
+            "$ref": "#/components/schemas/BenchmarkWorkloadSpec"
+          },
+          "warmup_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "BenchmarkGoodput": {
+        "type": "object",
+        "required": [
+          "requests_per_second"
+        ],
+        "properties": {
+          "requests_per_second": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BenchmarkGoodputThresholds": {
+        "type": "object",
+        "required": [
+          "ttft",
+          "itl"
+        ],
+        "properties": {
+          "itl": {
+            "type": "number",
+            "format": "double"
+          },
+          "ttft": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BenchmarkLoad": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "stages",
+              "type"
+            ],
+            "properties": {
+              "stages": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ConstantStage"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "constant"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "stages",
+              "type"
+            ],
+            "properties": {
+              "stages": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ConcurrentStage"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "concurrent"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "BenchmarkPercentiles": {
+        "type": "object",
+        "required": [
+          "p50",
+          "p95"
+        ],
+        "properties": {
+          "p50": {
+            "type": "number",
+            "format": "double"
+          },
+          "p95": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BenchmarkPoint": {
+        "type": "object",
+        "required": [
+          "stage",
+          "successes",
+          "failures",
+          "achieved_request_rate",
+          "ttft_seconds",
+          "itl_seconds",
+          "throughput",
+          "goodput"
+        ],
+        "properties": {
+          "achieved_request_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Upstream's observed request-start rate: recorded request count divided\nby the time between first and last start, not the scheduled load rate.\nNull when the upstream start span was unavailable or zero."
+          },
+          "failures": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "goodput": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BenchmarkGoodput"
+              }
+            ]
+          },
+          "itl_seconds": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BenchmarkPercentiles"
+              }
+            ]
+          },
+          "stage": {
+            "$ref": "#/components/schemas/BenchmarkStage"
+          },
+          "successes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "throughput": {
+            "$ref": "#/components/schemas/BenchmarkThroughput"
+          },
+          "ttft_seconds": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BenchmarkPercentiles"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "BenchmarkResult": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "run_id",
+          "request",
+          "runner",
+          "tokenizer",
+          "definition",
+          "points"
+        ],
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/BenchmarkDefinition"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BenchmarkPoint"
+            }
+          },
+          "request": {
+            "$ref": "#/components/schemas/RunRequest"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "runner": {
+            "$ref": "#/components/schemas/BenchmarkRunner"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "tokenizer": {
+            "$ref": "#/components/schemas/BenchmarkTokenizer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BenchmarkRunner": {
+        "type": "object",
+        "required": [
+          "name",
+          "version",
+          "adapter_version",
+          "image",
+          "upstream_image"
+        ],
+        "properties": {
+          "adapter_version": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string",
+            "description": "Digest-pinned adapter image from the persisted prepared Job."
+          },
+          "name": {
+            "type": "string"
+          },
+          "upstream_image": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BenchmarkStage": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "rate",
+              "duration",
+              "type"
+            ],
+            "properties": {
+              "duration": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "rate": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "constant"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "concurrency_level",
+              "num_requests",
+              "type"
+            ],
+            "properties": {
+              "concurrency_level": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "num_requests": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "concurrent"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A stage repeats the corresponding configured load stage with its type."
+      },
+      "BenchmarkThroughput": {
+        "type": "object",
+        "required": [
+          "requests_per_second",
+          "output_tokens_per_second"
+        ],
+        "properties": {
+          "output_tokens_per_second": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "requests_per_second": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BenchmarkTokenizer": {
+        "type": "object",
+        "required": [
+          "repository",
+          "revision"
+        ],
+        "properties": {
+          "repository": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BenchmarkWorkloadSpec": {
+        "type": "object",
+        "description": "This is the exact named workload object, including SLO thresholds. Numbers\nare retained as JSON numbers so comparison does not normalize the spec.",
+        "required": [
+          "load",
+          "data",
+          "goodput"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BenchmarkData"
+          },
+          "goodput": {
+            "$ref": "#/components/schemas/BenchmarkGoodputThresholds"
+          },
+          "load": {
+            "$ref": "#/components/schemas/BenchmarkLoad"
+          }
+        },
+        "additionalProperties": false
+      },
       "ChangeView": {
         "type": "object",
         "required": [
@@ -1343,6 +2700,45 @@
           }
         }
       },
+      "ComparedConditions": {
+        "type": "object",
+        "description": "`changed` compares all conditions except `observed_at`. Both original\ncondition snapshots remain available, including their observation times.",
+        "required": [
+          "changed",
+          "baseline",
+          "candidate"
+        ],
+        "properties": {
+          "baseline": {
+            "$ref": "#/components/schemas/RunConditions"
+          },
+          "candidate": {
+            "$ref": "#/components/schemas/RunConditions"
+          },
+          "changed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ComparedValue_String": {
+        "type": "object",
+        "required": [
+          "changed",
+          "baseline",
+          "candidate"
+        ],
+        "properties": {
+          "baseline": {
+            "type": "string"
+          },
+          "candidate": {
+            "type": "string"
+          },
+          "changed": {
+            "type": "boolean"
+          }
+        }
+      },
       "Comparison": {
         "type": "object",
         "required": [
@@ -1400,6 +2796,26 @@
           }
         }
       },
+      "ConcurrentStage": {
+        "type": "object",
+        "required": [
+          "concurrency_level",
+          "num_requests"
+        ],
+        "properties": {
+          "concurrency_level": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "num_requests": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "ConfigRequest": {
         "type": "object",
         "required": [
@@ -1431,6 +2847,26 @@
           }
         }
       },
+      "ConstantStage": {
+        "type": "object",
+        "required": [
+          "rate",
+          "duration"
+        ],
+        "properties": {
+          "duration": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rate": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateChange": {
         "type": "object",
         "required": [
@@ -1441,6 +2877,16 @@
         "properties": {
           "base_commit": {
             "type": "string"
+          },
+          "new_artifact": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NewArtifact"
+              }
+            ]
           },
           "patch": {
             "type": "object",
@@ -1459,7 +2905,7 @@
         "type": "object",
         "required": [
           "name",
-          "project_id",
+          "kind",
           "allowed_services"
         ],
         "properties": {
@@ -1476,14 +2922,28 @@
             ],
             "format": "date-time"
           },
+          "kind": {
+            "$ref": "#/components/schemas/SelfServiceKeyKind"
+          },
           "name": {
             "type": "string"
           },
           "project_id": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "CreateProject": {
         "type": "object",
@@ -1498,6 +2958,12 @@
               "null"
             ],
             "format": "double"
+          },
+          "cost_centre": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "name": {
             "type": "string"
@@ -1606,6 +3072,224 @@
           }
         }
       },
+      "DebugEventResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "sequence",
+          "client_request_key",
+          "kind",
+          "payload",
+          "created_at"
+        ],
+        "properties": {
+          "client_request_key": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "payload": {},
+          "sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "DebugModelsResponse": {
+        "type": "object",
+        "required": [
+          "models"
+        ],
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "DebugReplyRequest": {
+        "type": "object",
+        "required": [
+          "text",
+          "client_request_key"
+        ],
+        "properties": {
+          "client_request_key": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DebugSessionCreateRequest": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "service_id",
+          "model",
+          "client_request_key"
+        ],
+        "properties": {
+          "client_request_key": {
+            "type": "string"
+          },
+          "deployment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failed_run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "model": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "service_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DebugSessionResponse": {
+        "type": "object",
+        "description": "The same fields as the durable session, excluding internal initialization\nclaims and all Job credentials.",
+        "required": [
+          "id",
+          "user_id",
+          "team_id",
+          "project_id",
+          "client_request_key",
+          "service_id",
+          "model",
+          "checkout_revision",
+          "job_namespace",
+          "job_name",
+          "deadline",
+          "model_budget",
+          "tool_budget",
+          "tool_calls_used",
+          "service_context",
+          "failing_evidence",
+          "state",
+          "cleanup_required",
+          "seed_accepted",
+          "next_event_sequence",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "checkout_revision": {
+            "type": "string"
+          },
+          "cleanup_required": {
+            "type": "boolean"
+          },
+          "client_request_key": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "failing_evidence": {},
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_name": {
+            "type": "string"
+          },
+          "job_namespace": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "model_budget": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "next_event_sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "outcome": {},
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "seed_accepted": {
+            "type": "boolean",
+            "description": "The upstream seed was durably accepted; replies are permitted only then."
+          },
+          "service_context": {},
+          "service_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "team_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tool_budget": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tool_calls_used": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "upstream_session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "DeploymentCompatibility": {
         "type": "object",
         "required": [
@@ -1681,6 +3365,30 @@
           }
         }
       },
+      "EvidenceIdentity": {
+        "type": "object",
+        "description": "Pinned identities, not merely tags or mutable PVC names. The producer must resolve\nactual runtime identity and ensure its content manifests are immutable.",
+        "required": [
+          "desired_configuration",
+          "observed_runtime",
+          "test_definition",
+          "conditions"
+        ],
+        "properties": {
+          "conditions": {
+            "$ref": "#/components/schemas/RunConditions"
+          },
+          "desired_configuration": {
+            "type": "string"
+          },
+          "observed_runtime": {
+            "type": "string"
+          },
+          "test_definition": {
+            "type": "string"
+          }
+        }
+      },
       "Health": {
         "type": "object",
         "required": [
@@ -1712,7 +3420,8 @@
         "required": [
           "id",
           "name",
-          "project_id",
+          "team_id",
+          "kind",
           "allowed_services",
           "revocation_state"
         ],
@@ -1734,15 +3443,25 @@
             "type": "string",
             "format": "uuid"
           },
+          "kind": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
           "project_id": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid"
           },
           "revocation_state": {
             "type": "string"
+          },
+          "team_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -1851,6 +3570,31 @@
           }
         }
       },
+      "NewArtifact": {
+        "type": "object",
+        "description": "Catalog intent for a new immutable packaged model. These administrator\ndeclarations are reviewed in Git; they are not runtime evidence.",
+        "required": [
+          "name",
+          "uri",
+          "model_digest",
+          "tokenizer_digest"
+        ],
+        "properties": {
+          "model_digest": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tokenizer_digest": {
+            "type": "string"
+          },
+          "uri": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "PrView": {
         "type": "object",
         "required": [
@@ -1862,12 +3606,27 @@
           }
         }
       },
+      "ProjectTrafficClasses": {
+        "type": "object",
+        "required": [
+          "classes"
+        ],
+        "properties": {
+          "classes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "ProjectView": {
         "type": "object",
         "required": [
           "id",
           "name",
-          "team"
+          "team",
+          "traffic_class"
         ],
         "properties": {
           "budget": {
@@ -1877,6 +3636,12 @@
             ],
             "format": "double"
           },
+          "cost_centre": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "id": {
             "type": "string",
             "format": "uuid"
@@ -1885,6 +3650,9 @@
             "type": "string"
           },
           "team": {
+            "type": "string"
+          },
+          "traffic_class": {
             "type": "string"
           }
         }
@@ -1900,6 +3668,286 @@
             "items": {
               "$ref": "#/components/schemas/ProjectView"
             }
+          }
+        }
+      },
+      "RolloutApprovalView": {
+        "type": "object",
+        "required": [
+          "actor",
+          "owner_team",
+          "head_sha",
+          "base_sha",
+          "window_start",
+          "window_end",
+          "policy_digest",
+          "approved_at"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "base_sha": {
+            "type": "string"
+          },
+          "head_sha": {
+            "type": "string"
+          },
+          "owner_team": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "policy_digest": {
+            "type": "string"
+          },
+          "window_end": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "window_start": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RolloutStageView": {
+        "type": "object",
+        "required": [
+          "stage",
+          "change_id"
+        ],
+        "properties": {
+          "change_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "merged_commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stage": {
+            "type": "string"
+          },
+          "validation_run": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "RolloutStatusView": {
+        "type": "object",
+        "required": [
+          "change_id",
+          "stage",
+          "prepared",
+          "in_place_pool",
+          "queued",
+          "approvals",
+          "stages"
+        ],
+        "properties": {
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RolloutApprovalView"
+            }
+          },
+          "candidate_deployment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "candidate_revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "candidate_validation_run": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "change_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filler_verified_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "in_place_pool": {
+            "type": "boolean"
+          },
+          "merge_observed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Local time at which the controller observed a merge response or merged PR."
+          },
+          "merge_requested_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Local time at which the controller requested the merge."
+          },
+          "old_deployment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prepared": {
+            "type": "boolean"
+          },
+          "previous_revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "public_validation_run": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "queued": {
+            "type": "boolean"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RolloutStageView"
+            }
+          },
+          "upstream_merged_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Actual merge time reported by the forge, if available."
+          },
+          "window_end": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "window_start": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "workload_namespace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RolloutView": {
+        "type": "object",
+        "required": [
+          "mode",
+          "can_schedule",
+          "can_approve",
+          "status"
+        ],
+        "properties": {
+          "approval_binding": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApprovalBinding"
+              }
+            ]
+          },
+          "can_approve": {
+            "type": "boolean"
+          },
+          "can_schedule": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RolloutStatusView"
+          }
+        }
+      },
+      "RunConditions": {
+        "type": "object",
+        "required": [
+          "hardware",
+          "nodes",
+          "replicas",
+          "cache_state",
+          "competing_traffic",
+          "observed_at"
+        ],
+        "properties": {
+          "cache_state": {
+            "type": "string"
+          },
+          "competing_traffic": {
+            "type": "string"
+          },
+          "hardware": {
+            "type": "string"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "replicas": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -1951,10 +3999,63 @@
           "debug"
         ]
       },
+      "RunPromotionView": {
+        "type": "object",
+        "required": [
+          "change_id",
+          "pr_url"
+        ],
+        "properties": {
+          "change_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pr_url": {
+            "type": "string"
+          }
+        }
+      },
+      "RunRequest": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "kind",
+          "service",
+          "deployment",
+          "runner",
+          "workload",
+          "evidence"
+        ],
+        "properties": {
+          "deployment": {
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/EvidenceIdentity"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RunKind"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "runner": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "workload": {
+            "$ref": "#/components/schemas/Workload"
+          }
+        }
+      },
       "RunView": {
         "type": "object",
         "required": [
           "id",
+          "project_id",
           "service",
           "deployment",
           "kind",
@@ -1971,6 +4072,10 @@
           },
           "kind": {
             "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
           },
           "revision": {
             "type": "string"
@@ -1993,6 +4098,72 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/RunView"
+            }
+          }
+        }
+      },
+      "ScheduleRollout": {
+        "type": "object",
+        "required": [
+          "window_start",
+          "window_end"
+        ],
+        "properties": {
+          "window_end": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "window_start": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelfServiceKeyKind": {
+        "type": "string",
+        "enum": [
+          "personal",
+          "project"
+        ]
+      },
+      "ServiceForm": {
+        "type": "object",
+        "description": "All form data describe the same immutable GitOps commit. `source` and\n`artifacts` are committed YAML data expressed as JSON without added defaults.",
+        "required": [
+          "service",
+          "base_commit",
+          "source",
+          "artifacts",
+          "schema"
+        ],
+        "properties": {
+          "artifacts": {
+            "type": "object",
+            "description": "Artifact name to the exact committed artifact object, including its URI\nand any model/tokenizer content identities.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "base_commit": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "object",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "service": {
+            "type": "string"
+          },
+          "source": {
+            "type": "object",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
             }
           }
         }
@@ -2060,6 +4231,18 @@
           }
         }
       },
+      "SetProjectTrafficClass": {
+        "type": "object",
+        "required": [
+          "traffic_class"
+        ],
+        "properties": {
+          "traffic_class": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "StatusView": {
         "type": "object",
         "required": [
@@ -2079,8 +4262,48 @@
               "null"
             ]
           },
+          "revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "state": {
             "type": "string"
+          }
+        }
+      },
+      "TeamView": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "role"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      },
+      "TeamsResponse": {
+        "type": "object",
+        "required": [
+          "teams"
+        ],
+        "properties": {
+          "teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamView"
+            }
           }
         }
       },

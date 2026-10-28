@@ -1,0 +1,11 @@
+{
+  "apiVersion": "v1",
+  "data": {
+    "endpoint-picker.yaml": "{\"apiVersion\": \"llm-d.ai/v1\", \"kind\": \"EndpointPickerConfig\", \"plugins\": [{\"type\": \"single-profile-handler\"}, {\"type\": \"decode-filter\"}, {\"type\": \"load-aware-scorer\"}, {\"type\": \"max-score-picker\"}, {\"type\": \"approx-prefix-cache-producer\", \"parameters\": {\"autoTune\": false, \"blockSizeTokens\": 64, \"lruCapacityPerServer\": 31250}}, {\"type\": \"prefix-cache-scorer\"}], \"schedulingProfiles\": [{\"name\": \"default\", \"plugins\": [{\"pluginRef\": \"decode-filter\"}, {\"pluginRef\": \"load-aware-scorer\", \"weight\": 1.0}, {\"pluginRef\": \"prefix-cache-scorer\", \"weight\": 1.0}, {\"pluginRef\": \"max-score-picker\"}]}]}"
+  },
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "example-deployment-epp-config",
+    "namespace": "thalamus-inference"
+  }
+}

@@ -1,3 +1,13 @@
-# Illustrative data, not imported from an existing deployment.
+# Illustrative data: replace both content identities with measured digests.
+# Configure reviewed network destinations for remote downloads in each
+# Service.network.storageEgress; packaged models need no pod storage egress.
 example-model:
   uri: hf://Qwen/Qwen2.5-0.5B-Instruct
+  modelDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  tokenizerDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
+# Example only: the digest below does not identify a real packaged model image.
+example-packaged-model:
+  uri: "oci://example.invalid/engine-with-model@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  modelDigest: "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+  tokenizerDigest: "sha256:4444444444444444444444444444444444444444444444444444444444444444"

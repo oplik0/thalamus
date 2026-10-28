@@ -20,6 +20,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/changes/form/{service}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_form"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/changes/{id}/open-pr": {
         parameters: {
             query?: never;
@@ -50,6 +66,54 @@ export interface paths {
          *     and explicitly validated before another publication.
          */
         post: operations["refresh_change"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/changes/{id}/rollout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_rollout"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/changes/{id}/rollout/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["approve_rollout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/changes/{id}/rollout/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["schedule_rollout"];
         delete?: never;
         options?: never;
         head?: never;
@@ -98,6 +162,86 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["check"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/debug/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["models"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/debug/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["create_session"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/debug/sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_session"];
+        put?: never;
+        post?: never;
+        delete: operations["cancel_session"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/debug/sessions/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/debug/sessions/{id}/reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reply"];
         delete?: never;
         options?: never;
         head?: never;
@@ -168,6 +312,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/traffic-class": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["set_project_traffic_class"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/traffic-classes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["project_traffic_classes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs": {
         parameters: {
             query?: never;
@@ -194,6 +370,54 @@ export interface paths {
         get: operations["get_run"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{id}/benchmark": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_benchmark"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{id}/benchmark/compare/{other_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["compare_benchmark"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{id}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["promote"];
         delete?: never;
         options?: never;
         head?: never;
@@ -288,6 +512,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["service_metrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/teams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_teams"];
         put?: never;
         post?: never;
         delete?: never;
@@ -396,6 +636,156 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description Exact reviewed snapshot. The UI submits this unchanged, so an approval
+         *     cannot silently authorize a newer window, PR head, base, or policy.
+         */
+        ApprovalBinding: {
+            base_sha: string;
+            head_sha: string;
+            policy_digest: string;
+            /** Format: date-time */
+            window_end: string;
+            /** Format: date-time */
+            window_start: string;
+        };
+        BenchmarkComparison: {
+            baseline: components["schemas"]["BenchmarkResult"];
+            candidate: components["schemas"]["BenchmarkResult"];
+            conditions: components["schemas"]["ComparedConditions"];
+            deployment: components["schemas"]["ComparedValue_String"];
+            desired_configuration: components["schemas"]["ComparedValue_String"];
+            /** @description Timestamps are provenance, not a condition difference by themselves. */
+            observed_at: components["schemas"]["ComparedValue_String"];
+            observed_runtime: components["schemas"]["ComparedValue_String"];
+        };
+        BenchmarkData: {
+            /** Format: int32 */
+            input_len: number;
+            /** Format: int32 */
+            output_len: number;
+            /** @enum {string} */
+            type: "random";
+        } | {
+            enable_multi_turn_chat: boolean;
+            /** Format: int32 */
+            num_groups: number;
+            /** Format: int32 */
+            num_prompts_per_group: number;
+            /** Format: int32 */
+            output_len: number;
+            /** Format: int32 */
+            question_len: number;
+            /** Format: int32 */
+            system_prompt_len: number;
+            /** @enum {string} */
+            type: "shared_prefix";
+        };
+        BenchmarkDefinition: {
+            name: string;
+            /** Format: int64 */
+            seed: number;
+            spec: components["schemas"]["BenchmarkWorkloadSpec"];
+            /** Format: int32 */
+            warmup_seconds: number;
+        };
+        BenchmarkGoodput: {
+            /** Format: double */
+            requests_per_second: number;
+        };
+        BenchmarkGoodputThresholds: {
+            /** Format: double */
+            itl: number;
+            /** Format: double */
+            ttft: number;
+        };
+        BenchmarkLoad: {
+            stages: components["schemas"]["ConstantStage"][];
+            /** @enum {string} */
+            type: "constant";
+        } | {
+            stages: components["schemas"]["ConcurrentStage"][];
+            /** @enum {string} */
+            type: "concurrent";
+        };
+        BenchmarkPercentiles: {
+            /** Format: double */
+            p50: number;
+            /** Format: double */
+            p95: number;
+        };
+        BenchmarkPoint: {
+            /**
+             * Format: double
+             * @description Upstream's observed request-start rate: recorded request count divided
+             *     by the time between first and last start, not the scheduled load rate.
+             *     Null when the upstream start span was unavailable or zero.
+             */
+            achieved_request_rate: number | null;
+            /** Format: int64 */
+            failures: number;
+            goodput: null | components["schemas"]["BenchmarkGoodput"];
+            itl_seconds: null | components["schemas"]["BenchmarkPercentiles"];
+            stage: components["schemas"]["BenchmarkStage"];
+            /** Format: int64 */
+            successes: number;
+            throughput: components["schemas"]["BenchmarkThroughput"];
+            ttft_seconds: null | components["schemas"]["BenchmarkPercentiles"];
+        };
+        BenchmarkResult: {
+            definition: components["schemas"]["BenchmarkDefinition"];
+            points: components["schemas"]["BenchmarkPoint"][];
+            request: components["schemas"]["RunRequest"];
+            /** Format: uuid */
+            run_id: string;
+            runner: components["schemas"]["BenchmarkRunner"];
+            /** Format: int32 */
+            schema_version: number;
+            tokenizer: components["schemas"]["BenchmarkTokenizer"];
+        };
+        BenchmarkRunner: {
+            adapter_version: string;
+            /** @description Digest-pinned adapter image from the persisted prepared Job. */
+            image: string;
+            name: string;
+            upstream_image: string;
+            version: string;
+        };
+        /** @description A stage repeats the corresponding configured load stage with its type. */
+        BenchmarkStage: {
+            /** Format: int32 */
+            duration: number;
+            /** Format: int32 */
+            rate: number;
+            /** @enum {string} */
+            type: "constant";
+        } | {
+            /** Format: int32 */
+            concurrency_level: number;
+            /** Format: int32 */
+            num_requests: number;
+            /** @enum {string} */
+            type: "concurrent";
+        };
+        BenchmarkThroughput: {
+            /** Format: double */
+            output_tokens_per_second: number | null;
+            /** Format: double */
+            requests_per_second: number;
+        };
+        BenchmarkTokenizer: {
+            repository: string;
+            revision: string;
+        };
+        /**
+         * @description This is the exact named workload object, including SLO thresholds. Numbers
+         *     are retained as JSON numbers so comparison does not normalize the spec.
+         */
+        BenchmarkWorkloadSpec: {
+            data: components["schemas"]["BenchmarkData"];
+            goodput: components["schemas"]["BenchmarkGoodputThresholds"];
+            load: components["schemas"]["BenchmarkLoad"];
+        };
         ChangeView: {
             base_commit: string;
             /** Format: uuid */
@@ -416,6 +806,20 @@ export interface components {
             detail: string;
             ok: boolean;
         };
+        /**
+         * @description `changed` compares all conditions except `observed_at`. Both original
+         *     condition snapshots remain available, including their observation times.
+         */
+        ComparedConditions: {
+            baseline: components["schemas"]["RunConditions"];
+            candidate: components["schemas"]["RunConditions"];
+            changed: boolean;
+        };
+        ComparedValue_String: {
+            baseline: string;
+            candidate: string;
+            changed: boolean;
+        };
         Comparison: {
             data_diff: string;
             from: string;
@@ -433,6 +837,12 @@ export interface components {
             deployments: components["schemas"]["DeploymentCompatibility"][];
             service: string;
         };
+        ConcurrentStage: {
+            /** Format: int32 */
+            concurrency_level: number;
+            /** Format: int32 */
+            num_requests: number;
+        };
         ConfigRequest: {
             client: string;
             major_version: string;
@@ -441,8 +851,15 @@ export interface components {
         ConfigResponse: {
             config: string;
         };
+        ConstantStage: {
+            /** Format: int32 */
+            duration: number;
+            /** Format: int32 */
+            rate: number;
+        };
         CreateChange: {
             base_commit: string;
+            new_artifact?: null | components["schemas"]["NewArtifact"];
             patch: {
                 [key: string]: unknown;
             };
@@ -452,13 +869,17 @@ export interface components {
             allowed_services: string[];
             /** Format: date-time */
             expires_at?: string | null;
+            kind: components["schemas"]["SelfServiceKeyKind"];
             name: string;
             /** Format: uuid */
-            project_id: string;
+            project_id?: string | null;
+            /** Format: uuid */
+            team_id?: string | null;
         };
         CreateProject: {
             /** Format: double */
             budget?: number | null;
+            cost_centre?: string | null;
             name: string;
             team: string;
         };
@@ -492,6 +913,78 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        DebugEventResponse: {
+            client_request_key: string;
+            /** Format: date-time */
+            created_at: string;
+            kind: string;
+            payload: unknown;
+            /** Format: int64 */
+            sequence: number;
+            /** Format: uuid */
+            session_id: string;
+        };
+        DebugModelsResponse: {
+            models: string[];
+        };
+        DebugReplyRequest: {
+            client_request_key: string;
+            text: string;
+        };
+        DebugSessionCreateRequest: {
+            client_request_key: string;
+            deployment?: string | null;
+            /** Format: uuid */
+            failed_run_id?: string | null;
+            model: string;
+            /** Format: uuid */
+            project_id: string;
+            service_id: string;
+        };
+        /**
+         * @description The same fields as the durable session, excluding internal initialization
+         *     claims and all Job credentials.
+         */
+        DebugSessionResponse: {
+            checkout_revision: string;
+            cleanup_required: boolean;
+            client_request_key: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            deadline: string;
+            failing_evidence: unknown;
+            /** Format: uuid */
+            id: string;
+            job_name: string;
+            job_namespace: string;
+            model: string;
+            /** Format: int64 */
+            model_budget: number;
+            /** Format: int64 */
+            next_event_sequence: number;
+            outcome?: unknown;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            run_id?: string | null;
+            /** @description The upstream seed was durably accepted; replies are permitted only then. */
+            seed_accepted: boolean;
+            service_context: unknown;
+            service_id: string;
+            state: string;
+            /** Format: uuid */
+            team_id: string;
+            /** Format: int64 */
+            tool_budget: number;
+            /** Format: int64 */
+            tool_calls_used: number;
+            /** Format: date-time */
+            updated_at: string;
+            upstream_session_id?: string | null;
+            /** Format: uuid */
+            user_id: string;
+        };
         DeploymentCompatibility: {
             artifact: string;
             deployment: string;
@@ -511,6 +1004,16 @@ export interface components {
         ErrorBody: {
             message: string;
         };
+        /**
+         * @description Pinned identities, not merely tags or mutable PVC names. The producer must resolve
+         *     actual runtime identity and ensure its content manifests are immutable.
+         */
+        EvidenceIdentity: {
+            conditions: components["schemas"]["RunConditions"];
+            desired_configuration: string;
+            observed_runtime: string;
+            test_definition: string;
+        };
         Health: {
             status: string;
         };
@@ -524,10 +1027,13 @@ export interface components {
             expires_at?: string | null;
             /** Format: uuid */
             id: string;
+            kind: string;
             name: string;
             /** Format: uuid */
-            project_id: string;
+            project_id?: string | null;
             revocation_state: string;
+            /** Format: uuid */
+            team_id: string;
         };
         KeysResponse: {
             keys: components["schemas"]["KeyView"][];
@@ -558,19 +1064,115 @@ export interface components {
             /** Format: double */
             value?: number | null;
         };
+        /**
+         * @description Catalog intent for a new immutable packaged model. These administrator
+         *     declarations are reviewed in Git; they are not runtime evidence.
+         */
+        NewArtifact: {
+            model_digest: string;
+            name: string;
+            tokenizer_digest: string;
+            uri: string;
+        };
         PrView: {
             url: string;
+        };
+        ProjectTrafficClasses: {
+            classes: string[];
         };
         ProjectView: {
             /** Format: double */
             budget?: number | null;
+            cost_centre?: string | null;
             /** Format: uuid */
             id: string;
             name: string;
             team: string;
+            traffic_class: string;
         };
         ProjectsResponse: {
             projects: components["schemas"]["ProjectView"][];
+        };
+        RolloutApprovalView: {
+            /** Format: uuid */
+            actor: string;
+            /** Format: date-time */
+            approved_at: string;
+            base_sha: string;
+            head_sha: string;
+            /** Format: uuid */
+            owner_team: string;
+            policy_digest: string;
+            /** Format: date-time */
+            window_end: string;
+            /** Format: date-time */
+            window_start: string;
+        };
+        RolloutStageView: {
+            /** Format: uuid */
+            change_id: string;
+            merged_commit?: string | null;
+            stage: string;
+            /** Format: uuid */
+            validation_run?: string | null;
+        };
+        RolloutStatusView: {
+            approvals: components["schemas"]["RolloutApprovalView"][];
+            candidate_deployment?: string | null;
+            candidate_revision?: string | null;
+            /** Format: uuid */
+            candidate_validation_run?: string | null;
+            /** Format: uuid */
+            change_id: string;
+            error?: string | null;
+            /** Format: date-time */
+            filler_verified_at?: string | null;
+            in_place_pool: boolean;
+            /**
+             * Format: date-time
+             * @description Local time at which the controller observed a merge response or merged PR.
+             */
+            merge_observed_at?: string | null;
+            /**
+             * Format: date-time
+             * @description Local time at which the controller requested the merge.
+             */
+            merge_requested_at?: string | null;
+            old_deployment?: string | null;
+            prepared: boolean;
+            previous_revision?: string | null;
+            /** Format: uuid */
+            public_validation_run?: string | null;
+            queued: boolean;
+            stage: string;
+            stages: components["schemas"]["RolloutStageView"][];
+            /**
+             * Format: date-time
+             * @description Actual merge time reported by the forge, if available.
+             */
+            upstream_merged_at?: string | null;
+            /** Format: date-time */
+            window_end?: string | null;
+            /** Format: date-time */
+            window_start?: string | null;
+            workload_namespace?: string | null;
+        };
+        RolloutView: {
+            approval_binding?: null | components["schemas"]["ApprovalBinding"];
+            can_approve: boolean;
+            can_schedule: boolean;
+            mode: string;
+            status: components["schemas"]["RolloutStatusView"];
+        };
+        RunConditions: {
+            cache_state: string;
+            competing_traffic: string;
+            hardware: string;
+            nodes: string[];
+            /** Format: date-time */
+            observed_at: string;
+            /** Format: int32 */
+            replicas: number;
         };
         RunEvidence: {
             deployment: string;
@@ -586,17 +1188,63 @@ export interface components {
         };
         /** @enum {string} */
         RunKind: "validation" | "benchmark" | "debug";
+        RunPromotionView: {
+            /** Format: uuid */
+            change_id: string;
+            pr_url: string;
+        };
+        RunRequest: {
+            deployment: string;
+            evidence: components["schemas"]["EvidenceIdentity"];
+            kind: components["schemas"]["RunKind"];
+            /** Format: uuid */
+            project_id: string;
+            runner: string;
+            service: string;
+            workload: components["schemas"]["Workload"];
+        };
         RunView: {
             deployment: string;
             /** Format: uuid */
             id: string;
             kind: string;
+            /** Format: uuid */
+            project_id: string;
             revision: string;
             service: string;
             state: string;
         };
         RunsView: {
             runs: components["schemas"]["RunView"][];
+        };
+        ScheduleRollout: {
+            /** Format: date-time */
+            window_end: string;
+            /** Format: date-time */
+            window_start: string;
+        };
+        /** @enum {string} */
+        SelfServiceKeyKind: "personal" | "project";
+        /**
+         * @description All form data describe the same immutable GitOps commit. `source` and
+         *     `artifacts` are committed YAML data expressed as JSON without added defaults.
+         */
+        ServiceForm: {
+            /**
+             * @description Artifact name to the exact committed artifact object, including its URI
+             *     and any model/tokenizer content identities.
+             */
+            artifacts: {
+                [key: string]: unknown;
+            };
+            base_commit: string;
+            schema: {
+                [key: string]: unknown;
+            };
+            service: string;
+            source: {
+                [key: string]: unknown;
+            };
         };
         ServiceList: {
             services: components["schemas"]["ServiceView"][];
@@ -613,11 +1261,24 @@ export interface components {
             name: string;
             status: components["schemas"]["ServiceStatus"];
         };
+        SetProjectTrafficClass: {
+            traffic_class: string;
+        };
         StatusView: {
             /** Format: date-time */
             observed_at?: string | null;
             reason?: string | null;
+            revision?: string | null;
             state: string;
+        };
+        TeamView: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            role: string;
+        };
+        TeamsResponse: {
+            teams: components["schemas"]["TeamView"][];
         };
         UsageQuery: {
             /**
@@ -698,13 +1359,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Platform administrator required */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description Changes unavailable */
             503: {
                 headers: {
@@ -766,6 +1420,64 @@ export interface operations {
                 content?: never;
             };
             /** @description Changes unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_form: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Selected service name */
+                service: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Committed service, artifact catalog and KCL-generated form schema */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceForm"];
+                };
+            };
+            /** @description Invalid service name */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Platform administrator required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Service not found at the target revision */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description GitOps, artifact catalog or service schema unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -878,6 +1590,175 @@ export interface operations {
                 content?: never;
             };
             /** @description Changes unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_rollout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RolloutView"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Change not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rollout unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    approve_rollout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalBinding"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RolloutView"];
+                };
+            };
+            /** @description Approval requires an open scheduled PR */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Service owner required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Change not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Reviewed approval snapshot is stale */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rollout unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    schedule_rollout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleRollout"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RolloutView"];
+                };
+            };
+            /** @description Invalid window or state */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Service owner required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Change not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rollout unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -1036,6 +1917,244 @@ export interface operations {
             };
         };
     };
+    models: {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DebugModelsResponse"];
+                };
+            };
+            /** @description Project not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Debug configuration unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DebugSessionCreateRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DebugSessionResponse"];
+                };
+            };
+            /** @description Invalid debug request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Project, service, deployment, or run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Debug unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_session: {
+        parameters: {
+            query: {
+                team_id: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DebugSessionResponse"];
+                };
+            };
+            /** @description Session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cancel_session: {
+        parameters: {
+            query: {
+                team_id: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cancellation requested; cleanup may remain pending */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Session already terminal */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_events: {
+        parameters: {
+            query: {
+                team_id: string;
+                after?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DebugEventResponse"][];
+                };
+            };
+            /** @description Session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reply: {
+        parameters: {
+            query: {
+                team_id: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DebugReplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Reply accepted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid reply */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Session or reply conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Debug proxy unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_keys: {
         parameters: {
             query?: never;
@@ -1090,7 +2209,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssuedKeyView"];
                 };
             };
-            /** @description Invalid request */
+            /** @description Invalid key scope or request */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1111,14 +2230,14 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Project not found */
+            /** @description Team, project or service not found */
             404: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description Identity service unavailable */
+            /** @description Identity service or committed access policy unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -1339,6 +2458,121 @@ export interface operations {
             };
         };
     };
+    set_project_traffic_class: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetProjectTrafficClass"];
+            };
+        };
+        responses: {
+            /** @description Traffic class updated */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid class */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Platform administrator and reviewed class required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Project not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Reviewed policy unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    project_traffic_classes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectTrafficClasses"];
+                };
+            };
+            /** @description Invalid project id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Platform administrator required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Project not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Reviewed policy unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_runs: {
         parameters: {
             query?: never;
@@ -1485,6 +2719,191 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    get_benchmark: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Benchmark run ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkResult"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Run or benchmark summary is incomplete or invalid */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Benchmark results unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    compare_benchmark: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Baseline benchmark run ID */
+                id: string;
+                /** @description Candidate benchmark run ID */
+                other_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkComparison"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Runs or benchmark summaries are incomplete, invalid, or not comparable */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Benchmark results unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    promote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Successful validation or benchmark run */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunPromotionView"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Platform administrator required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Execution evidence, catalog or rollout policy does not match */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Promotion dependencies unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
             };
         };
     };
@@ -1817,6 +3236,39 @@ export interface operations {
                 content?: never;
             };
             /** @description Catalog or identity service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_teams: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamsResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Identity service unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;

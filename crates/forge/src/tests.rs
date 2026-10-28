@@ -117,6 +117,7 @@ async fn approval_guard_rejects_changed_target_base_or_head() {
             draft: false,
             mergeability: Mergeability::Mergeable,
             merge_commit: None,
+            merged_at: None,
             source_repository: None,
             author: "alice".into(),
             labels: vec![],

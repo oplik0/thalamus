@@ -15,6 +15,8 @@ pub struct ResourceConfig {
     pub issuer: String,
     pub audience: String,
     pub required_scopes: Vec<String>,
+    /// Optional PEM CA bundle added to the built-in public roots.
+    pub ca_pem: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,11 +133,20 @@ impl ResourceVerifier {
         {
             return Err(VerifyError::Configuration);
         }
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(10))
-            .build()
-            .map_err(|_| VerifyError::Configuration)?;
+            .timeout(Duration::from_secs(10));
+        if let Some(pem) = config.ca_pem.as_deref() {
+            let certificates = reqwest::Certificate::from_pem_bundle(pem)
+                .map_err(|_| VerifyError::Configuration)?;
+            if certificates.is_empty() {
+                return Err(VerifyError::Configuration);
+            }
+            for certificate in certificates {
+                builder = builder.add_root_certificate(certificate);
+            }
+        }
+        let client = builder.build().map_err(|_| VerifyError::Configuration)?;
         Ok(Self { config, client })
     }
 
@@ -252,6 +263,7 @@ mod tests {
             issuer: "https://issuer.example".into(),
             audience: "https://api.example/mcp".into(),
             required_scopes: vec!["read".into()],
+            ca_pem: None,
         }
     }
     fn claims() -> Value {
@@ -327,6 +339,12 @@ mod tests {
         ));
         let mut c = config();
         c.required_scopes = vec!["read write".into()];
+        assert!(matches!(
+            ResourceVerifier::new(c),
+            Err(VerifyError::Configuration)
+        ));
+        let mut c = config();
+        c.ca_pem = Some(b"not a PEM certificate".to_vec());
         assert!(matches!(
             ResourceVerifier::new(c),
             Err(VerifyError::Configuration)

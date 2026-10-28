@@ -8,6 +8,16 @@ Thalamus v2 is a control plane for self-hosted inference on heterogeneous Kubern
 
 v1 was a data-plane router: OpenAI/Anthropic proxying, routing strategies, a priority queue and Wasm plugins. The needs moved to more GPUs of more kinds, and agentgateway, llm-d's endpoint picker and agentic-api now cover the request path. What is missing is the layer that ties them together; today each component is configured separately through KCL and Flux, with manual edits.
 
+**Deployment scope:** design a new Kubernetes installation from scratch. No existing
+cluster, private GitOps repository, or deployment history is available or required.
+The catalog and installation manifests define the starting configuration. Missing
+infrastructure contracts are design work, not prerequisites for implementation.
+Local integration environments use disposable services and the inference simulator;
+real Kubernetes and GPU acceptance runs require separate approval and remain
+explicitly unverified until exercised.
+
+This document preserves the design and milestone acceptance targets, not a claim that all live acceptance has passed. The implementation and operator entrypoints are described in [README](../README.md); [TESTING](../TESTING.md) distinguishes local checks from cluster and GPU evidence.
+
 **Goals**
 
 - Turn the common deployment changes (new model, image bump, context or batching change, enabling a feature) into a form or an agent proposal that ends in a reviewed PR.
@@ -38,13 +48,13 @@ In text:
 
 - **Request path** (Thalamus is never in it): clients → agentgateway (keys and limits) → agentic-api (optional) → llm-d pool (endpoint picker) → vLLM, one variant per GPU class.
 - **Thalamus** (API and web UI, MCP server and CLI, worker for projections and runs, Flux and rollout follower):
-  - opens PRs on the GitOps repo (any forge); Flux applies the resulting manifests to the request path;
+  - opens reviewed GitOps PRs with catalog source and generated manifests together; Flux applies the merged manifests to the request path;
   - makes live writes of key and project data to agentgateway;
   - reads status from the request path;
   - queries Prometheus (metrics, usage), stores runs, keys and the audit log in Postgres, and logs users in through the OIDC provider.
 - **Users and agents** reach Thalamus through the web UI, MCP and the CLI.
 
-Flux applies everything reviewed in Git. Thalamus writes only the key and project `ConfigMap`s it owns, and otherwise reads. agentic-api is in the path only for stateful Responses and Messages calls.
+Flux applies reviewed serving and request-path changes from Git. Thalamus writes its owned key and project projections and manages the bounded, ephemeral run and debug lifecycle, including the Jobs, Pods, Services, RBAC and Secrets needed by those sessions; it otherwise observes serving state. These narrowly owned resources do not permit generic Kubernetes mutation. agentic-api is in the path only for stateful Responses and Messages calls.
 
 | Concern | Owned by | Thalamus's role |
 | --- | --- | --- |
@@ -131,46 +141,50 @@ Thalamus has three write paths, and each object has exactly one. The rule of thu
 
 ## GitOps workflow
 
-Hand-written KCL modules hold the "how"; Thalamus edits only plain data files those modules import. It renders by calling the same `kcl` CLI and container image that CI uses, never by embedding kcl-lib.
+Hand-written KCL modules hold the "how"; Thalamus makes structured edits only to supported catalog source data, then runs a trusted installed copy of the catalog renderer and stages its generated files in the same PR. It runs the renderer with Python isolated mode from the proposal worktree, not from that worktree's Python script. Manual edits and protected CI use the checked-in script; operators keep it version-matched with the trusted copy. The renderer calls the pinned KCL CLI rather than embedding kcl-lib.
 
-A proposed repo layout:
+The publication layout is:
 
 ```
-catalog/                  # machine-edited data (YAML)
-  artifacts.yaml
-  hardware.yaml
-  services/coding-main.yaml   # one file per published service + its deployments
+catalog/
+  artifacts.yaml, hardware.yaml, budget-caps.json
+  services/               # one file per published service + its deployments
+  limits/                 # shared limits profiles
+  pools/                  # shared pool definitions
 templates/                # hand-written KCL, reviewed like code
-  serving/kserve.k
-  serving/llmd.k
-  features/kv_offload.k
-  features/agentic_api.k
-  gateway/routes.k
-  gateway/policy.k
+main.k, limits.k, pool.k  # service, limits and pool entrypoints
+scripts/render-catalog.py
+rendered/
+  inference/              # namespaced resources and kustomization.yaml
+  pools/                  # privileged pool resources and kustomization.yaml
 ```
 
-One file per published service keeps PRs small and conflicts rare.
+One source file per published service keeps changes focused; one source edit can also change multiple renderer-owned files.
 
-Today CI renders the KCL and most of the result deploys as Helm releases. So the rendered diff covers both the release values and the `helm template` output, and "applied" means the `HelmRelease` is ready at that revision. UI forms come from a JSON Schema generated from the KCL schemas, so there is one schema to maintain.
+The service form schema is generated from KCL. The deterministic catalog renderer invokes the service, shared limits and shared pools entrypoints, emits a combined Kubernetes `List` on stdout and owns both rendered trees. `rendered/inference` excludes cluster-scoped resources and installer-owned Redis objects. The installer uses one `GitRepository` in `thalamus-system` for both roots, with an ordinary namespace-scoped inference reconciler and a separate, administrator-controlled `poolGitOps` reconciler with narrowly scoped cluster privileges. If both are enabled, inference depends on the pool reconciliation being ready at the shared source artifact's revision, and Flux must permit the cross-namespace references. Protect the pool inputs, output and all templates and generator code that can affect them with administrator review.
+
+**Publication boundary.** Source and generated resources are reviewed and merged in the same Git commit, not mapped to a publisher branch or a different artifact revision. Flux follows the configured ref, and the source and applied revisions must still satisfy the existing exact-commit and readiness checks; two reconciliations may lag or skip an intermediate commit. Separately, `catalog.commit` pins the application checkout at startup. Merge and apply do not advance API authorization, catalog/manual-deployment allowlists or worker budget caps. The operator must publish the reviewed `catalog.commit` and redeploy both server and worker to advance those inputs. Durable rollout stages authorize their dynamic candidates without a static startup candidate inventory; they do not automatically publish ordinary ACL changes.
+
+The installer manages a serving Gateway separate from the control-plane Gateway and the shared namespaced `thalamus-epp` service account. Service `network` selectors, API CIDRs and storage egress require administrator review for the actual CNI and trusted peers. Its single-primary TLS/auth Redis StatefulSet and PVC support the separately reconciled RLS; it is not HA, and PVC loss resets counters. Provision and protect the auth, server TLS and RLS CA Secrets and durable storage before exposing traffic. See the [README](../README.md) for exact prerequisites; fixture hosts, Secrets and application/model digests are not deployable evidence.
 
 **Change flow**
 
-1. **Propose.** A UI form or an agent produces a structured patch to a data file, never free text edits.
-2. **Validate.** Render with the new data; KCL schema checks fail fast with the KCL error.
+1. **Propose.** A UI form or an agent produces a structured patch to a catalog source file, never free text edits.
+2. **Validate.** Render the catalog with the new data; KCL schema checks fail with the KCL error.
 3. **Diff.** Show the data diff and the rendered-manifest diff against the base commit's render.
-4. **Open a PR** on branch `thalamus/<change-id>` through the forge library. The body carries the rendered diff summary, the validation tier of the target recipe and hardware, and who asked.
-5. **Merge** according to the change's rollout mode: normal review for gated and rolling changes, approval plus a scheduled window for in-place ones (see Rollouts and promotion).
-6. **Follow** the chain from catalog commit to CI output, Flux source, Helm release and serving resource, then run the recipe's checks and attach results to the revision. A later commit can supersede one that Flux never applied on its own.
+4. **Open a PR** on branch `thalamus/<change-id>` through the forge library, with source and renderer-owned output staged in the same commit. The body carries the rendered diff summary, the validation tier of the target recipe and hardware, and who asked.
+5. **Merge** according to the change's rollout mode: normal review for gated and rolling changes, approval plus a scheduled window for in-place ones (see Rollouts and promotion). Protected CI checks the committed output read-only before merge.
+6. **Follow** the exact merged commit through the Flux source, reconcilers and serving resources, then run the recipe's checks and attach results to the revision. A later commit can supersede one that Flux never applied on its own.
 7. **Roll back** by opening a revert PR from the service page.
 
 **Rules**
 
 - Thalamus never edits hand-written `.k` files. Template changes are ordinary PRs, reviewed like code.
-- The repo works without Thalamus: editing a data file by hand has the same effect.
+- The repo works without Thalamus: a manual PR edits source, runs `python3 scripts/render-catalog.py --write`, and commits all changed `rendered/inference` and `rendered/pools` files with that source.
 - Upstream churn should land in templates, within a supported composition of pinned versions. Thalamus reads upstream objects as dynamic objects plus a few hand-written fields, so a renamed API group means an adapter change, not regenerated types. Example: within four months llm-d moved the WVA CRD to a new API group (0.8), switched its autoscaling guides to KEDA (0.9), renamed the autoscaler project and deprecated the WVA guides (0.10), then shipped 1.0.
-- Existing deployments are imported, not recreated: the first milestone turns the edits repeated across the last \~20 GitOps commits into catalog fields.
-- Every render or PR runs in its own worktree from a bare clone, pinned to its base commit; when the base moves, the diff is regenerated.
-- The authoritative render check runs in CI, so a Thalamus outage never blocks human PRs. Thalamus calls the same implementation for previews.
+- For this greenfield installation, M0 defines the catalog and templates from the deployment requirements rather than importing unavailable GitOps history. A repeated change can remain a one-file source edit, plus any generated output.
+- Every render or PR runs in its own worktree from a bare clone, pinned to its base commit; when the base moves, the diff is regenerated. The operator must provision the bare clone and an existing writable worktree root accessible to server and worker.
+- The authoritative `python3 scripts/render-catalog.py --check` runs read-only in required CI, so a Thalamus outage never blocks human PRs. It fails on missing, modified or extra output; it does not change the checkout or commit files. This repository supplies its own CI check, while a separate site repository must configure and protect an equivalent check. The installer does not provision that repository, its ref, credentials or CI. The site checkout needs the renderer script for manual use and CI as well as the catalog and KCL inputs. Thalamus instead runs its separately installed, trusted renderer outside the checkout; keep the reviewed copies version-matched and protect the runtime copy from catalog writers. Both environments need Python 3 and KCL 0.13.2. Use the same workload namespace in all of them; service and limit namespaces and pool member namespaces must already match.
 - Forms come from the KCL-generated JSON Schema plus a small layer of UI metadata (units, grouping). The schema carries structure only, so KCL checks still run server-side.
 
 ## Rollouts and promotion
@@ -188,8 +202,7 @@ Thalamus picks the mode from the hardware profile and the GPUs a new pod could a
 **In-place changes**
 
 - **Approval:** the service's owners approve the PR and pick a window. Merging is the deployment, so the PR stays unmerged until then.
-- **Windows** live in the catalog: one-off times, or a recurring slot per service such as nightly at 02:00. At the window Thalamus re-renders against the current base, confirms approvals and CI still hold, and merges; Flux applies it.
-- **Guard without Thalamus:** the CI render check flags a PR that changes an in-place service outside its window, so a manual merge at the wrong time is a deliberate override. If Thalamus is down at the window, nothing happens and a person can merge by hand.
+- **Windows and guard:** the controller uses the reviewed rollout policy, re-renders and rechecks CI and approval snapshots against current base and head before a direct expected-head guarded merge. Configure the signed webhook and App-pinned `thalamus/rollout-window` required status as described in the README. Mandatory merge queues are rejected; a success status has no automatic expiry and a window does not guarantee completion by its end. Human override remains a repository governance decision.
 - **Expected downtime** comes from evidence: the measured time from pod start to Ready in this deployment's earlier rollouts. The PR, the service page and the user portal show it with the window.
 - **During the window** the service has no ready endpoint, so requests fail fast. Optionally a service names a fallback service, such as a smaller model on other hardware, that takes its traffic meanwhile; the portal marks the reduced capabilities.
 - **Rollback** costs another model load, so a revert PR reuses the window unless an admin runs it at once.
@@ -198,6 +211,8 @@ Thalamus picks the mode from the hardware profile and the GPUs a new pod could a
 
 - The candidate gets its own serving resource and pool, reachable only through an authenticated candidate route with validation keys. KServe's own rollout weights are the alternative; one of the two owns the route fields, never both.
 - Validation records which backend answered, so a test cannot pass by reaching the old deployment.
+- The public route is validated using its own observed topology, not a candidate topology reused after promotion. Candidate and benchmark names derive from the authorized deployment; live route, backend, pinned workload and Flux observations bind each run at admission, Job preparation and ingestion. A committed catalog deployment or durable rollout stage authorizes the target; no startup inventory of future candidates or fixed expected revision is proof.
+- Candidate and public validation must use the same agentic mode and relevant test options; a different profile or underlying-model-only validation cannot promote an agentic contract.
 - Test the moment a backend goes from no traffic to live with agentgateway before relying on it.
 - In shared GPU pools, fillers are rollout headroom: a candidate at normal priority preempts fillers, so a model with one serving copy can still roll out gated.
 
@@ -205,9 +220,9 @@ Thalamus picks the mode from the hardware profile and the GPUs a new pod could a
 
 Thalamus talks to GitHub, GitLab and Forgejo through one Rust library: a unified data model with the existing per-forge crates as adapters, modelled on [forges](https://github.com/danielroe/forges). It ships as its own crate in the workspace and can be published separately once it proves out.
 
-**First adapter: GitHub Enterprise**, which hosts the GitOps repo today; octocrab takes a custom base URL for it. GitLab and Forgejo follow. Gitea probably works through forgejo-api but is not a priority.
+**First adapter: GitHub**, including GitHub Enterprise through a custom API base URL. The site chooses and supplies the GitOps repository; the fixture does not provision one. GitLab and Forgejo are later design targets for the change workflow. Gitea probably works through forgejo-api but is not a priority.
 
-**Commits go through Git, not the forge API.** Thalamus already needs a checkout to render KCL, so it commits there and pushes with a token or deploy key. That keeps multi-file commits identical on every forge. The forge API handles only review objects: change requests, statuses, comments and webhooks.
+**Proposal commits go through Git, not the forge API.** Thalamus needs a checkout to render KCL, so it commits source and generated files there and pushes with a separately configured transport credential. The forge API handles PRs, checks, reviews, webhooks and guarded merge decisions.
 
 | Adapter crate | Version | Style | Notes |
 | --- | --- | --- | --- |
@@ -234,24 +249,24 @@ The gitlab crate lets callers define their own response structs, so its adapter 
 - Each adapter exposes its underlying client, so forge-specific needs never widen the model.
 - Tests: recorded fixtures per forge, plus integration tests against a Forgejo container in CI.
 
-**What Thalamus uses it for.** Opening and updating its own PRs, following their state, merging scheduled in-place changes, and adding an advisory rendered-diff comment to every PR on the GitOps repo, including hand-written ones. The authoritative render check runs in CI. Webhooks trigger reconciliation, and periodic reads recover missed events.
+**What Thalamus uses it for.** Opening and updating its own PRs, following their state and merging scheduled in-place changes. An advisory rendered-diff comment on every PR, including hand-written ones, is a design target, not a substitute for the required read-only render check. Webhooks trigger reconciliation, and periodic reads recover missed events.
 
 ## Identity, keys and usage
 
 Users log in with OIDC. Thalamus issues API keys, and agentgateway enforces them from a `ConfigMap` of hashed keys with metadata, using CEL rules kept in Git.
 
-**Login.** OIDC only, against the existing identity provider. A groups claim maps to Thalamus roles and, optionally, teams. Platform admins come from a configured group. The UI uses a session cookie backed by a Postgres session table and a signing key from a Kubernetes Secret, so redeploys and extra replicas never log anyone out; v1's PASETO, OPAQUE and HTTP-signature code does not return.
+**Login.** OIDC against a configured identity provider. A groups claim maps to Thalamus roles and, optionally, teams. Platform admins come from a configured group. The UI uses a session cookie backed by a Postgres session table and a stable signing key from a Kubernetes Secret. The optional Keycloak collector or trusted complete snapshots synchronize offboarding; server and worker use the same explicit group mapping and optional private CA. Managed projections expire no later than snapshot time plus ten minutes.
 
 **Keys**
 
 - Format: `thl_` plus 32 random bytes. Postgres stores the SHA-256 hash, which is projected into the key `ConfigMap`. The key is shown once.
 - Metadata per key: user, team, project, allowed services, budget, expiry, creator. CEL rules in the `AgentgatewayPolicy` read it, for example to reject a model outside the key's allowed services.
 - Expiry is enforced twice: CEL checks it per request, and Thalamus removes expired entries on a timer.
-- Revocation removes the entry. It takes effect when agentgateway picks up the `ConfigMap` change; that is fast enough in practice.
-- Three kinds: personal keys; project keys for CI and long-running agents; short-lived keys Thalamus mints for its own debug and benchmark Jobs.
-- Offboarding: disabling a user in the identity provider revokes their personal keys at the next sync; their project keys move to another project member or are revoked.
+- Revocation removes the entry; effective revocation depends on agentgateway observing the projection, and pending state is not proof of enforcement.
+- Three kinds: personal keys; project keys for CI and long-running agents; short-lived keys Thalamus mints for its own debug and benchmark Jobs. Personal and project keys both have exact-team catalog service allowlists; project keys also bind to a project. Classes and cost centres are platform-reviewed.
+- Offboarding removes access using the complete trusted identity snapshot; project-key ownership and revocation follow the applicable membership state.
 
-**Budgets and rate limits.** agentgateway's token-based rate limits use descriptors built from key metadata (user, project, team); limits come from that metadata, clamped by caps kept in Git. Counters live in agentgateway's global rate-limit service and its shared store, not in Thalamus, so a budget holds across gateway replicas. The policy states its unit and reset window, which levels apply together, and what happens when the counter service is down. Tokens are counted after a response, so a request admitted under budget can finish over it: budgets are allowances, not hard spending ceilings.
+**Budgets and rate limits.** agentgateway's token-based rate limits use descriptors built from key metadata (user, project, team); limits come from that metadata, clamped by `catalog/budget-caps.json`. Counters live in agentgateway's global rate-limit service and its shared store, not in Thalamus. Tokens are counted after a response, so an admitted request can finish over budget: these are soft allowances, not hard spending ceilings. Benchmark request budgets are separate.
 
 **Usage**
 
@@ -319,6 +334,8 @@ An `InferencePool` is a routing object, not an HTTP endpoint, so paths are expli
 
 **Runners.** Start with [inference-perf](https://github.com/kubernetes-sigs/inference-perf), which has shared-prefix and multi-turn workloads, load stages, trace replay and SLO goodput. GuideLLM and llm-d-benchmark can follow through the same Job contract: runner image, workload spec, a short-lived key, CPU and time limits, results written to object storage plus a summary JSON that Thalamus ingests. Each run pins its measurement semantics: runner image, tokenizer, seed, load model (fixed rate or fixed concurrency), warmup and token counting. For reasoning models, time to first token and time to first answer token are reported separately.
 
+Run profiles are service-level runner/workload authorization, shared between server and worker, not static candidate or backend revisions. The observed target and operator-approved test options form the run-scoped configuration; identity drift rejects the result. See [README](../README.md) for configuration.
+
 **Provenance per run:** service, deployment, commit, rendered-manifest hash, image digests, model revision, hardware profile and node names, component versions (vLLM, llm-d, KServe, agentgateway), workload spec, cache warmth (cold or warm prefix cache), and production traffic on the same pool during the run. The cluster is shared, so runs during heavy traffic are flagged.
 
 **Workloads shaped like coding agents.** Coding agents reuse long prompt prefixes, so random-prompt benchmarks undersell prefix caching and KV offload. Start with curated workloads resembling that traffic, built with inference-perf's shared-prefix and multi-turn generators and tuned by the length distributions gateway telemetry does show. Aggregate telemetry cannot show which requests shared a prefix or a session, so richer shapes need extra instrumentation and the owners' permission.
@@ -356,6 +373,8 @@ Agents get a Thalamus MCP server whose tools connect Git, the cluster, metrics a
 5. The UI streams the session's events and lets the user reply.
 6. A deadline and a model and tool budget bound the running session. The transcript and outcome go to Postgres, and the Job's TTL cleans up afterwards.
 
+The managed workload and its session Secret must be in the same namespace, with exact-session Secret RBAC. The operator must verify the configured network-policy/CNI, gateway, rate-limit and trusted endpoint/policy assumptions; this is not permission to project arbitrary keys across namespaces. Flux Operator MCP is read-only.
+
 Running debug agents on your own models doubles as continuous tool-calling validation. kagent stays optional, for long-lived hosted agents such as one that watches alerts.
 
 ## Feature recipes
@@ -370,11 +389,10 @@ Each advanced feature is a recipe: a KCL template with defaults, its resource re
 
 [agentic-api](https://github.com/vllm-project/agentic-api) is a Rust/Axum layer that adds stored state, tool execution and multi-turn orchestration for the Responses and Messages APIs. It forwards stateless calls to an upstream set by `--llm-api-base`, uses Postgres for shared sessions, and has an `agentic-llm-d` crate for llm-d.
 
-- **Topology:** public `/v1/responses` and `/v1/messages` on agentgateway go to agentic-api, which calls the `InferencePool` through a separate internal route so requests cannot loop.
+- **Topology:** per-deployment agentic Pods use HTTPS `LLM_API_BASE` at `/agentic/<service>/<deployment>` on the administrator-managed private `agentic-internal` Gateway. The recipe requires matching workload-local Gateway identity and selector, CA ConfigMap, per-instance DB Secret and CIDRs. The pinned agentic application exposes HTTP, so public Gateway-to-Pod transport must be independently encrypted and verified.
 - **Isolation:** stored state is not isolated per user today. In [issue #107](https://github.com/vllm-project/agentic-api/issues/107), still open, a report on 0.9.0 found responses read by ID with no owner check. `store:false` does not help on its own: a stored `previous_response_id` or `conversation` still supplies earlier history. So the recipe enforces one of two modes rather than leaving it to clients. **Shared stateless** rejects state references and disables the stored-state routes. **Team-shared state** runs one instance and database per team, and the team is the sharing boundary. Per-user state waits for owner checks upstream.
-- **Identity chain:** authentication and attribution are separate. agentgateway verifies the user's Thalamus key, strips client-sent attribution headers, sets trusted ones (user, project, team, class), and calls agentic-api with a shared service key from a Secret. agentic-api preserves end-to-end headers on each inference round. The internal route accepts attribution headers only alongside agentic-api's service key. Each supported operation gets its own test, and unsupported ones stay off. Longer term, contribute a trusted-gateway owner header to issue #107, whose open thread asks exactly that.
-- **Usage:** counted at the internal model calls, tagged with the original project and team. Outer requests are a separate metric, so nothing is counted twice.
-- **Validation:** each supported operation separately (continuation, streaming, the server-side tool loop, compaction), attribution on every internal round, and for team-shared state a check that another team's key cannot read a stored response.
+- **Identity chain:** the public gateway authenticates the caller and forwards the bearer only to a trusted digest-pinned agentic image. The internal gateway reauthenticates it and regenerates attribution; candidate outer and inner routes bind Job keys to the exact deployment. Operator-controlled image and immutable Secret allowlists are described in the README.
+- **Usage and validation:** native chat, Responses and Messages paths use AI token rate limiting on internal model calls. The strictly authenticated direct-pool `/models` metadata route instead consumes one Requests unit against key, project and team counters. This does not claim token accounting for audio, legacy completions or embeddings. Continuation, streaming, tool loop, attribution and team isolation remain live acceptance tests, not consequences of rendering.
 
 ### Tiered KV cache
 
@@ -412,7 +430,7 @@ Server and worker can ship as one binary with two roles; the worker loops take a
 - kube and kube-runtime for watches. Upstream objects are read as `DynamicObject`s plus small hand-written structs for the fields Thalamus uses (metadata, replicas, conditions), so an upstream schema change does not mean regenerated types.
 - rmcp for the MCP server, reusing what v1's MCP gateway work taught.
 - openidconnect for login.
-- The `git` and `kcl` CLIs, shelled out, so Thalamus behaves exactly like CI and people do.
+- The `git` and KCL 0.13.2 CLIs and Python 3, shelled out for the trusted runtime and checked-in catalog renderer copies used by Thalamus, CI and manual PRs.
 - object\_store for benchmark artifacts on S3-compatible storage.
 - A Svelte 5 web UI: SvelteKit in SPA mode served by Axum, built from m3-svelte (Material 3) components and theme tokens rather than custom CSS, with a TypeScript client generated from the API's OpenAPI document. m3-svelte has no data table, so tables are plain HTML styled with its tokens. Flows from the existing custom frontend are ported onto this stack.
 
@@ -443,7 +461,7 @@ Nine milestones, each useful on its own; M2 is where hand edits to KCL stop. No 
 
 | Milestone | Depends on | Scope | Exit criterion |
 | --- | --- | --- | --- |
-| M0 · Catalog from repeated edits | — | Mine the last \~20 GitOps commits; catalog data files plus KCL templates, no code | A repeated edit is a one-file data change |
+| M0 · Catalog and initial deployment | — | Define initial catalog data and KCL templates; no existing GitOps history required | A repeated edit is a one-file source change plus regenerated output |
 | M1 · Read-only service view | M0 | Catalog joined with Flux, serving and pool status; five status columns, vLLM metrics | One real service shows every column right |
 | M2 · Changes through PRs | M1 | Forge library, first adapter; one change type; render check in CI, advisory diff on every PR | An image bump goes from form to running |
 | M3 · Validation and benchmarks | M2 | Functional suite and inference-perf Jobs; results keyed to runtime and test identity | An upgrade shows before and after curves |
@@ -454,6 +472,8 @@ Nine milestones, each useful on its own; M2 is where hand edits to KCL stop. No 
 | M8 · Shared pools and traffic classes | M2, M5 | Kueue pools, flow control, priority propagation; batch gateway only once batch demand is real | Batch waits, interactive keeps its SLO |
 
 M5 needs only M1's server, so self-service can move ahead of M2 if key handling in the current frontend hurts more than deployment edits. M8 needs M2's templates and M5's key metadata. Porting key self-service and client setup first, next to the M1 service view, replaces the current frontend soonest.
+
+These exit criteria remain live acceptance requirements. Offline rendered schemas, simulator measurements, standalone gateway checks and source-linked arithmetic proofs exercise narrower boundaries; none proves the milestones in a live Kubernetes/GPU installation.
 
 ## Risks and open questions
 
@@ -472,9 +492,9 @@ The biggest risk is scope: written out, this is a whole platform for one maintai
 **Open questions**
 
 - [x] Which key metadata can agentgateway's CEL rules and rate-limit descriptors read on the deployed version? Answer: all metadata set on the key entry.
-- [x] How long does a key revocation take to reach agentgateway after the `ConfigMap` changes? Answer: fast enough in practice.
-- [x] How is KCL rendered for Flux today: CI to a rendered branch, an OCI artifact, or a plugin? Thalamus must call the same thing. Answer: CI renders it; most of it deploys as Helm releases.
-- [x] How should identity pass from agentgateway to agentic-api? Answer: agentgateway verifies the user's key, sets trusted attribution headers and calls agentic-api with a shared service key; push a trusted-gateway owner header upstream.
+- [ ] What is the end-to-end key-revocation latency in the new deployment, from identity or database change through projection and gateway enforcement? Measure after deployment approval; local checks do not establish the controller propagation delay.
+- [x] What is the greenfield KCL-to-Flux publication contract? Answer: catalog source and deterministic renderer output are committed together in each reviewed PR. Thalamus edits source and stages the output; a manual author runs `python3 scripts/render-catalog.py --write`. Required protected CI runs `--check` read-only, and Flux reads the exact merged source revision through distinct inference and privileged pool reconciliation paths. A site must supply its repository, ref, credentials and equivalent protected CI; no publisher branch or revision mapping replaces this contract. The operator must also advance the separately pinned `catalog.commit` and redeploy the server and worker when catalog authorization inputs change.
+- [x] How should identity pass from agentgateway to agentic-api? Answer: the public gateway authenticates the caller and forwards the bearer only to the trusted, digest-pinned agentic application. The private gateway reauthenticates it and regenerates attribution; both candidate boundaries enforce the deployment-bound Job credential. No shared service key or caller-supplied owner header substitutes for this check.
 - [x] Which flows from the existing custom frontend move over first? Answer: API keys and client setup, next to the M1 service view.
 - [x] Which forge hosts the GitOps repo, and so which adapter comes first? Answer: GitHub Enterprise.
 - [x] Does forgejo-api work against Gitea, or does Gitea need its own adapter? Answer: probably works; not a priority.
@@ -485,10 +505,10 @@ The biggest risk is scope: written out, this is a whole platform for one maintai
 - [x] Is the endpoint picker's flow control mature enough on the deployed version? Answer: it ships in llm-d 1.0 behind the flowControl feature gate, off by default; M8 enables and load-tests it.
 - [x] Who accepts batch jobs for llm-d-async: an upstream producer, or a small Thalamus service outside the control-plane binary? Answer: llm-d-batch-gateway, an OpenAI-compatible upstream service.
 - [x] Could Kueue's fair sharing replace the shared-pool allocator? Answer: yes, with fillers in a zero-quota queue; see Shared GPU pools.
-- [ ] Does agentic-api preserve trusted attribution headers on every inference round, for each supported operation? Test in M7.
+- [ ] Does agentic-api forward the caller's bearer on every inference round, including streaming, continuation and tool execution, so the private gateway can reauthenticate and attribute each call? Test in M7.
 - [ ] Which header does llm-d-batch-gateway read for the tenant, and can agentgateway set it from key metadata?
 - [ ] Does Kueue preempt a model's own fillers before other models' fillers, and can `PreemptionConfig` prevent it?
-- [ ] Which services are in-place only today, and which maintenance windows suit their users?
+- [ ] Which new services will use InPlace rollouts, and which owner-approved maintenance windows suit their users? This is operator input before scheduled merges are enabled, not a dependency on an existing cluster or a prerequisite for implementing the deployment.
 - [ ] Can agentgateway fail a service over to a named fallback service while it has no ready endpoint?
 - [ ] How does a backend behave when it goes from no traffic to live behind agentgateway?
 - [ ] Does the pinned llm-d router convert priority signs correctly for vLLM?

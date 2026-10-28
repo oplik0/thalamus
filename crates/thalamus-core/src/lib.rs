@@ -9,6 +9,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod capacity;
+
 /// A stable caller-facing service and every deployment that may serve it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PublishedService {
@@ -603,12 +605,14 @@ pub fn select_rollout_mode(
         if node.node.is_empty() || !names.insert(&node.node) {
             return Err(CapacityError::InvalidNode(node.node.clone()));
         }
-        let available = node
-            .free_gpus
-            .checked_add(node.preemptible_filler_gpus)
-            .filter(|n| *n <= profile.gpus_per_node)
-            .ok_or_else(|| CapacityError::ExceedsNodeCapacity(node.node.clone()))?;
-        units += u64::from(available / gpus_per_unit);
+        let node_units = capacity::node_serving_units(
+            profile.gpus_per_node,
+            node.free_gpus,
+            node.preemptible_filler_gpus,
+            gpus_per_unit,
+        )
+        .ok_or_else(|| CapacityError::ExceedsNodeCapacity(node.node.clone()))?;
+        units += u64::from(node_units);
     }
     let (mode, reason) = if requires_gate && units >= u64::from(candidate_replicas) {
         (

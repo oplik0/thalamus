@@ -29,6 +29,11 @@ pub fn gateway_entries(
             "key_id": m.id.to_string(), "user": m.user_id.to_string(),
             "creator": m.creator_id.to_string(), "team": m.team_id.to_string(),
             "project": m.project_id.map(|id| id.to_string()), "cost_centre": key.cost_centre,
+            "class": key.class, "run_id": key.run_id.map(|id| id.to_string()),
+            "run_kind": key.run_kind, "request_budget": key.request_budget,
+            "deployment": key.deployment, "debug_session_id": key.debug_session_id.map(|id| id.to_string()),
+            "debug_model": key.debug_model, "project_budget": key.project_budget,
+            "team_budget": key.team_budget, "budget_window": key.budget_window,
             "kind": m.kind, "allowed_services": m.allowed_services,
             "budget": m.budget, "expiry": m.expires_at.map(|at| at.to_rfc3339())
         }});
@@ -99,6 +104,16 @@ mod tests {
             },
             digest: vec![0xab; 32],
             cost_centre: None,
+            class: "standard".into(),
+            run_id: None,
+            deployment: None,
+            run_kind: None,
+            request_budget: None,
+            debug_session_id: None,
+            debug_model: None,
+            project_budget: None,
+            team_budget: None,
+            budget_window: None,
         }
     }
     #[test]
@@ -110,8 +125,35 @@ mod tests {
         assert_eq!(value["keyHash"], format!("sha256:{}", "ab".repeat(32)));
         assert!(value.get("key").is_none());
         assert_eq!(value["metadata"]["allowed_services"][0], "model");
+        assert!(value["metadata"]["run_id"].is_null());
+        assert!(value["metadata"]["deployment"].is_null());
+        assert!(value["metadata"]["debug_session_id"].is_null());
+        assert_eq!(value["metadata"]["class"], "standard");
         k.metadata.expires_at = Some(Utc::now() - chrono::Duration::seconds(1));
         assert!(gateway_entries(&[k], Utc::now()).unwrap().is_empty());
+    }
+    #[test]
+    fn scoped_run_projection_carries_durable_target() {
+        let mut k = key();
+        let id = Uuid::new_v4();
+        k.metadata.kind = "job".into();
+        k.run_id = Some(id);
+        k.deployment = Some("canary".into());
+        k.run_kind = Some("benchmark".into());
+        k.request_budget = Some(42);
+        k.project_budget = Some(100);
+        k.team_budget = Some(500);
+        k.budget_window = Some("day".into());
+        let entries = gateway_entries(&[k], Utc::now()).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(entries.values().next().unwrap()).unwrap();
+        assert_eq!(value["metadata"]["run_id"], id.to_string());
+        assert_eq!(value["metadata"]["deployment"], "canary");
+        assert_eq!(value["metadata"]["run_kind"], "benchmark");
+        assert_eq!(value["metadata"]["request_budget"], 42);
+        assert_eq!(value["metadata"]["project_budget"], 100);
+        assert_eq!(value["metadata"]["team_budget"], 500);
+        assert_eq!(value["metadata"]["budget_window"], "day");
     }
     #[test]
     fn malformed_digest_fails_closed() {

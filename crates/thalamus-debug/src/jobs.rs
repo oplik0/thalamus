@@ -1,9 +1,9 @@
 //! Construction and admission-gated creation of debug-session workloads.
 //!
-//! The configuration and [`DebugLaunchAuthority`] are **trusted control-plane
-//! inputs**, not request data. There is deliberately no default authority: a
-//! deployment without the documented enforcement and credential issuer must
-//! pass `None` and cannot launch a workload. Rendering is not authorization.
+//! The configuration and [`DebugLaunchAuthority`] are trusted control-plane
+//! inputs, not request data. The worker supplies its concrete authority only
+//! under its documented installation contract; an absent or failed authority
+//! cannot launch a workload. Rendering is not authorization.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -31,6 +31,7 @@ use uuid::Uuid;
 
 const SESSION_LABEL: &str = "thalamus.dev/debug-session";
 const LAUNCH_ANNOTATION: &str = "thalamus.dev/launch-state";
+const OWNERSHIP_ANNOTATION: &str = "thalamus.dev/ownership-nonce";
 const PORT: u16 = 4096;
 const MAX_DURATION_SECONDS: i64 = 24 * 60 * 60;
 const MAX_TTL_SECONDS: i32 = 7 * 24 * 60 * 60;
@@ -87,6 +88,8 @@ pub struct DebugJobConfig {
 #[derive(Clone, Debug)]
 pub struct DebugJobRequest {
     pub session_id: Uuid,
+    /// Random immutable ownership identity persisted with the session.
+    pub ownership_nonce: Uuid,
     pub namespace: String,
     pub git_revision: String,
     pub model: String,
@@ -136,20 +139,20 @@ pub struct DebugAdmission {
 ///   message and event operations: it must reject shell/command, file, find,
 ///   config, provider, auth and MCP registration APIs, arbitrary directory,
 ///   agent, model, system prompt and tool overrides.
-/// * The service account has only read access in this service's namespace.
-///   The CNI actually enforces these NetworkPolicies (including service DNAT);
-///   no overlapping policy grants broader ingress or egress. Namespace RBAC
-///   prevents untrusted pods from impersonating the selector or mutating/deleting
-///   the resources and Secret contents. Admission must not unsuspend the staged
-///   Job or inject containers, credentials, altered security settings or other
-///   bypasses into its template or resulting pods. The Git endpoint is anonymous
-///   and does not require forge auth.
+/// * The installed CNI enforces NetworkPolicies, including Service DNAT. The
+///   trusted installer must establish this externally; Kubernetes provides no
+///   CNI self-attestation. The authority checks live policies for broader
+///   selecting rules. Protected namespace RBAC and admission prevent untrusted
+///   pods impersonating selectors, resource/Secret mutation, unsuspension or
+///   injection of bypasses. The service account has only intended read access.
+///   The configured Git endpoint is anonymous and requires no forge credential.
 ///
 /// Secret values used for file-based OpenCode `{env:...}` substitution must be
 /// JSON-safe ASCII credentials; the server password must be high entropy and
 /// unique per session. Never log or return Secret values. An implementation
 /// that merely echoes request fields, labels, booleans or lease IDs does *not*
-/// satisfy this contract. No production implementation is provided here.
+/// satisfy this contract. The worker implementation also relies on the trusted
+/// cluster administrator, pinned components, admission and network installation.
 pub trait DebugLaunchAuthority: Send + Sync {
     fn verify<'a>(
         &'a self,
@@ -157,12 +160,10 @@ pub trait DebugLaunchAuthority: Send + Sync {
         request: &'a DebugJobRequest,
     ) -> Pin<Box<dyn Future<Output = Result<DebugAdmission, DebugJobError>> + Send + 'a>>;
 
-    /// After the session policy and Service have been created, prove that the
-    /// actual cluster/CNI will enforce this policy before any workload packet
-    /// can flow, including on pod creation and across service DNAT. Verify no
-    /// broader policy selects these pods and that the listed resources and
-    /// admission rules remain protected from untrusted mutation. If the CNI
-    /// cannot provide this guarantee, return an error rather than guessing.
+    /// After the session policy and Service are created, check the live
+    /// resources and effective NetworkPolicy peers under the trusted installation
+    /// contract, before the Job is resumed. Do not infer CNI enforcement merely
+    /// from a successful Kubernetes API write.
     fn verify_isolation<'a>(
         &'a self,
         config: &'a DebugJobConfig,
@@ -359,6 +360,7 @@ fn validate(
         ));
     }
     if request.session_id.is_nil()
+        || request.ownership_nonce.is_nil()
         || !(request.git_revision.len() == 40 || request.git_revision.len() == 64)
         || !request
             .git_revision
@@ -592,6 +594,7 @@ pub fn render_debug_job(
         "apiVersion":"batch/v1","kind":"Job",
         "metadata":{"name":name,"namespace":config.namespace,"labels":labels(request.session_id),
             "annotations":{LAUNCH_ANNOTATION:"staging",
+                OWNERSHIP_ANNOTATION:request.ownership_nonce.to_string(),
                 "thalamus.dev/model-token-budget":request.model_token_budget.to_string(),
                 "thalamus.dev/tool-call-budget":request.tool_call_budget.to_string(),
                 "thalamus.dev/model-budget-lease":admission.model_budget_lease_id.to_string(),
@@ -603,7 +606,8 @@ pub fn render_debug_job(
             "suspend":true,"parallelism":1,"completions":1,"completionMode":"NonIndexed",
             "backoffLimit":0,"activeDeadlineSeconds":request.deadline.timestamp() - request.created_at.timestamp(),
             "ttlSecondsAfterFinished":config.ttl_seconds_after_finished,
-            "template":{"metadata":{"labels":labels(request.session_id)},"spec":{}}
+            "template":{"metadata":{"labels":labels(request.session_id),
+                "annotations":{OWNERSHIP_ANNOTATION:request.ownership_nonce.to_string()}},"spec":{}}
         }
     });
     job["spec"]["template"]["spec"] = pod_spec;
@@ -613,6 +617,7 @@ pub fn render_debug_job(
 
 fn owned_metadata(config: &DebugJobConfig, request: &DebugJobRequest, uid: &str) -> Value {
     json!({"name":debug_job_name(request.session_id),"namespace":config.namespace,"labels":labels(request.session_id),
+        "annotations":{OWNERSHIP_ANNOTATION:request.ownership_nonce.to_string()},
         "ownerReferences":[{"apiVersion":"batch/v1","kind":"Job","name":debug_job_name(request.session_id),
             "uid":uid,"controller":false,"blockOwnerDeletion":false}]})
 }
@@ -766,6 +771,17 @@ fn metadata_matches(expected: &kube::api::ObjectMeta, actual: &kube::api::Object
                 .as_ref()
                 .is_some_and(|got| wanted.iter().all(|(k, v)| got.get(k) == Some(v)))
         })
+        && expected
+            .annotations
+            .as_ref()
+            .and_then(|a| a.get(OWNERSHIP_ANNOTATION))
+            .is_none_or(|nonce| {
+                actual
+                    .annotations
+                    .as_ref()
+                    .and_then(|a| a.get(OWNERSHIP_ANNOTATION))
+                    == Some(nonce)
+            })
         && expected.owner_references == actual.owner_references
         && actual.deletion_timestamp.is_none()
 }
@@ -1045,6 +1061,18 @@ async fn finish_launch(
     for _ in 0..4 {
         validate(config, request, Utc::now())?;
         validate_admission(request, admission)?;
+        // Re-read issuer/session state immediately before every resume attempt;
+        // the staged Job may have outlived a cancellation or credential change.
+        let current_admission = authority.verify(config, request).await?;
+        validate_admission(request, &current_admission)?;
+        if current_admission.model_budget_lease_id != admission.model_budget_lease_id
+            || current_admission.tool_budget_lease_id != admission.tool_budget_lease_id
+            || current_admission.model_credential_id != admission.model_credential_id
+            || current_admission.mcp_credential_id != admission.mcp_credential_id
+            || current_admission.credentials_expire_at != admission.credentials_expire_at
+        {
+            return Err(DebugJobError::AdmissionDenied);
+        }
         if current.metadata.uid.as_deref() != Some(uid) {
             return Err(DebugJobError::Conflict("Job"));
         }
@@ -1108,6 +1136,7 @@ mod tests {
         };
         let request = DebugJobRequest {
             session_id: id,
+            ownership_nonce: Uuid::from_u128(6),
             namespace: "service-ns".into(),
             git_revision: "a".repeat(40),
             model: "my-model".into(),

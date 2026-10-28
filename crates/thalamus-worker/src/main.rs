@@ -2,24 +2,15 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::Utc;
 use futures::StreamExt;
 use k8s_openapi::{
-    api::{
-        batch::v1::Job,
-        core::v1::{Secret, Service},
-        networking::v1::NetworkPolicy,
-    },
+    api::{batch::v1::Job, core::v1::Secret},
     apimachinery::pkg::apis::meta::v1::ObjectMeta,
     ByteString,
 };
 use kube::{
-    api::{DeleteParams, ListParams, PostParams, Preconditions, PropagationPolicy},
+    api::{DeleteParams, ListParams, PostParams, Preconditions},
     Api,
 };
-use object_store::{
-    aws::{AmazonS3, AmazonS3Builder, S3ConditionalPut},
-    path::Path as ObjectPath,
-    signer::Signer,
-    ObjectStore,
-};
+use object_store::{aws::AmazonS3, path::Path as ObjectPath, signer::Signer, ObjectStore};
 use rand::{rngs::OsRng, RngCore};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -31,21 +22,27 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use thalamus_debug::{
-    jobs::debug_job_name,
-    store::{
-        DebugIdentity, WorkerSessionCursor, WorkerSessionRef, WorkerStore as DebugWorkerStore,
-    },
-};
 use thalamus_identity::{BudgetCap, WorkerIdentity};
 use thalamus_k8s::{K8s, ReadKind, WatchState};
 use thalamus_runs::{
-    Artifacts, JobTemplate, ResultUpload, RunCursor, RunKind, Store, Templates, Transition,
-    WorkerStore,
+    Artifacts, JobTemplate, ResultUpload, RunCursor, RunKind, S3Config, Store, Templates,
+    Transition, WorkerStore,
 };
+use thalamus_runtime::admission::{validate_profiles, RunnerProfiles};
 use thalamus_usage::{PrometheusSource, UsageStore};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
+
+mod debug;
+mod idp_sync;
+mod runtime_integration;
+mod workflow_controller;
+mod workflow_validation;
+
+use debug::DebugReconciler;
+use idp_sync::IdentitySync;
+use runtime_integration::RuntimeIntegration;
+use workflow_controller::WorkflowController;
 
 type Result<T, E = Box<dyn Error + Send + Sync>> = std::result::Result<T, E>;
 fn required(name: &str) -> Result<String> {
@@ -64,6 +61,7 @@ struct Runner {
     workloads: Vec<String>,
     service_account: String,
     key_secret: Option<String>,
+    route_target: String,
 }
 struct UsageConfig {
     url: String,
@@ -82,16 +80,11 @@ struct Config {
     lease: String,
     health: String,
     templates: Templates,
+    test_profiles: RunnerProfiles,
+    runner_targets: BTreeMap<String, String>,
     catalog: String,
-    s3_endpoint: String,
-    s3_bucket: String,
-    s3_region: String,
-    s3_access: String,
-    s3_secret: String,
-    flux_version: String,
-    helm_version: String,
-    serving_version: String,
-    pool_version: String,
+    s3: S3Config,
+    runtime_config: String,
     usage: UsageConfig,
 }
 impl Config {
@@ -99,22 +92,27 @@ impl Config {
         let namespace = required("THALAMUS_K8S_NAMESPACE")?;
         let runners: BTreeMap<String, Runner> =
             serde_json::from_str(&required("THALAMUS_RUNNERS_JSON")?)?;
-        let runners = runners
-            .into_iter()
-            .map(|(name, r)| {
-                (
-                    name,
-                    JobTemplate {
-                        kind: r.kind,
-                        image: r.image,
-                        command: r.command,
-                        workloads: r.workloads,
-                        service_account: r.service_account,
-                        key_secret: r.key_secret,
-                    },
-                )
-            })
-            .collect();
+        let mut runner_targets = BTreeMap::new();
+        let mut templates_by_name = BTreeMap::new();
+        for (name, r) in runners {
+            if !matches!(r.route_target.as_str(), "candidate" | "public")
+                || (r.kind == RunKind::Benchmark && r.route_target != "candidate")
+            {
+                return Err("invalid runner route target".into());
+            }
+            runner_targets.insert(name.clone(), r.route_target);
+            templates_by_name.insert(
+                name,
+                JobTemplate {
+                    kind: r.kind,
+                    image: r.image,
+                    command: r.command,
+                    workloads: r.workloads,
+                    service_account: r.service_account,
+                    key_secret: r.key_secret,
+                },
+            );
+        }
         let labels: BTreeMap<String, String> =
             serde_json::from_str(&required("THALAMUS_GATEWAY_SELECTOR_LABELS")?)?;
         if labels.is_empty() {
@@ -127,15 +125,26 @@ impl Config {
         let s3_bucket = required("THALAMUS_S3_BUCKET")?;
         let s3_region = required("THALAMUS_S3_REGION")?;
         let upload = ResultUpload {
-            endpoint: s3_endpoint.clone(),
-            bucket: s3_bucket.clone(),
-            region: s3_region.clone(),
+            endpoint: s3_endpoint,
+            bucket: s3_bucket,
+            region: s3_region,
             secret_prefix: required("THALAMUS_S3_RUN_SECRET_PREFIX")?,
         };
-        let validation_configs =
+        let test_profiles: RunnerProfiles =
             serde_json::from_str(&required("THALAMUS_VALIDATION_CONFIGS_JSON")?)?;
-        let templates = Templates::new(namespace.clone(), runners, upload)?
-            .with_validation_configs(validation_configs)?;
+        validate_profiles(&test_profiles)?;
+        for runners in test_profiles.values() {
+            for (name, profile) in runners {
+                if runner_targets.get(name).map(String::as_str)
+                    != Some(profile.route_target.as_str())
+                    || templates_by_name.get(name).map(|runner| &runner.kind) != Some(&profile.kind)
+                {
+                    return Err("test profile does not match the trusted runner".into());
+                }
+            }
+        }
+        let templates = Templates::new(namespace.clone(), templates_by_name, upload)?;
+        let s3 = S3Config::from_env()?.ok_or("S3 configuration is required")?;
         let usage = UsageConfig {
             url: required("THALAMUS_USAGE_PROMETHEUS_URL")?,
             input: required("THALAMUS_USAGE_INPUT_COUNTER")?,
@@ -153,6 +162,8 @@ impl Config {
         Ok(Self {
             database: required("DATABASE_URL")?,
             templates,
+            test_profiles,
+            runner_targets,
             namespace,
             projection: required("THALAMUS_GATEWAY_CONFIGMAP")?,
             labels,
@@ -160,15 +171,8 @@ impl Config {
             lease: required("THALAMUS_LEASE_NAME")?,
             health: required("THALAMUS_WORKER_HEALTH_ADDR")?,
             catalog: required("THALAMUS_CATALOG_DIR")?,
-            s3_endpoint,
-            s3_bucket,
-            s3_region,
-            s3_access: required("THALAMUS_S3_ACCESS_KEY_ID")?,
-            s3_secret: required("THALAMUS_S3_SECRET_ACCESS_KEY")?,
-            flux_version: required("THALAMUS_FLUX_VERSION")?,
-            helm_version: required("THALAMUS_HELM_VERSION")?,
-            serving_version: required("THALAMUS_SERVING_VERSION")?,
-            pool_version: required("THALAMUS_INFERENCE_POOL_VERSION")?,
+            s3,
+            runtime_config: required("THALAMUS_RUNTIME_CONFIG")?,
             usage,
         })
     }
@@ -285,6 +289,12 @@ struct CapEntry {
     max_tokens: i64,
     unit: String,
     window: String,
+    #[serde(default = "default_allowed_classes")]
+    allowed_classes: Vec<String>,
+}
+
+fn default_allowed_classes() -> Vec<String> {
+    vec!["standard".into()]
 }
 
 fn git_output(catalog: &str, args: &[&str]) -> Result<Vec<u8>> {
@@ -297,6 +307,23 @@ fn git_output(catalog: &str, args: &[&str]) -> Result<Vec<u8>> {
         return Err("catalog git read failed".into());
     }
     Ok(out.stdout)
+}
+
+fn caps_object(commit: &str, prefix: &str) -> Result<String> {
+    if !prefix.is_empty()
+        && (!prefix.ends_with('/')
+            || prefix[..prefix.len() - 1].split('/').any(|part| {
+                part.is_empty()
+                    || part == "."
+                    || part == ".."
+                    || part.bytes().any(|byte| {
+                        !(byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+                    })
+            }))
+    {
+        return Err("invalid catalog Git prefix".into());
+    }
+    Ok(format!("{commit}:{prefix}budget-caps.json"))
 }
 
 /// Read only a tracked file from a fixed commit, never a dirty worktree.
@@ -318,7 +345,11 @@ async fn sync_caps(db: &PgPool, identity: &WorkerIdentity, catalog: &str) -> Res
     {
         return Err("invalid catalog commit".into());
     }
-    let object = format!("{commit}:budget-caps.json");
+    let prefix = String::from_utf8(git_output(catalog, &["rev-parse", "--show-prefix"])?)?;
+    let prefix = prefix
+        .strip_suffix('\n')
+        .ok_or("invalid catalog Git prefix")?;
+    let object = caps_object(commit, prefix)?;
     let size = String::from_utf8(git_output(catalog, &["cat-file", "-s", &object])?)?
         .trim()
         .parse::<usize>()?;
@@ -338,6 +369,7 @@ async fn sync_caps(db: &PgPool, identity: &WorkerIdentity, catalog: &str) -> Res
             max_tokens: c.max_tokens,
             unit: c.unit,
             window: c.window,
+            allowed_classes: c.allowed_classes,
         })
         .collect();
     if String::from_utf8(git_output(
@@ -412,7 +444,7 @@ fn job_secret(job: &Job) -> Result<Option<String>> {
     }
     Ok(result)
 }
-fn upload_secret_name(job: &Job, run: &thalamus_runs::Run) -> Result<String> {
+fn upload_secret_name(job: &Job, run_id: Uuid) -> Result<String> {
     let pod = job
         .spec
         .as_ref()
@@ -428,16 +460,27 @@ fn upload_secret_name(job: &Job, run: &thalamus_runs::Run) -> Result<String> {
         .as_ref()
         .and_then(|p| p.sources.as_ref())
         .ok_or("missing upload projection")?;
-    if sources.len() != 1 {
+    if sources.len() != 2 {
         return Err("invalid upload projection".into());
     }
     let secret = sources[0].secret.as_ref().ok_or("missing upload secret")?;
     let items = secret.items.as_ref().ok_or("missing upload item")?;
+    let ca = sources[1]
+        .secret
+        .as_ref()
+        .ok_or("missing upload CA projection")?;
+    let ca_items = ca.items.as_ref().ok_or("missing upload CA item")?;
     if items.len() != 1
         || items[0].key != "url"
         || items[0].path != "url"
+        || secret.optional == Some(true)
+        || ca.name != secret.name
+        || ca.optional != Some(true)
+        || ca_items.len() != 1
+        || ca_items[0].key != "ca.crt"
+        || ca_items[0].path != "ca.pem"
         || !secret.name.starts_with("thalamus-")
-        || !secret.name.ends_with(&format!("-{}", run.id))
+        || !secret.name.ends_with(&format!("-{run_id}"))
     {
         return Err("invalid upload projection".into());
     }
@@ -469,7 +512,12 @@ fn verify_upload_secret(secret: &Secret, run: &thalamus_runs::Run, name: &str) -
         return Err("foreign upload secret".into());
     }
     let data = secret.data.as_ref().ok_or("missing upload data")?;
-    if data.len() != 1 {
+    if !(1..=2).contains(&data.len())
+        || data
+            .get("ca.crt")
+            .is_some_and(|ca| ca.0.is_empty() || ca.0.len() > 1024 * 1024)
+        || data.keys().any(|key| key != "url" && key != "ca.crt")
+    {
         return Err("invalid upload data".into());
     }
     let url = reqwest::Url::parse(std::str::from_utf8(
@@ -496,8 +544,9 @@ async fn provision_upload_secret(
     job: &Job,
     run: &thalamus_runs::Run,
     objects: &AmazonS3,
+    ca_pem: Option<&[u8]>,
 ) -> Result<()> {
-    let name = upload_secret_name(job, run)?;
+    let name = upload_secret_name(job, run.id)?;
     let mut tx = db.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
         .bind(format!("thalamus/run-key/{}", run.id))
@@ -514,7 +563,12 @@ async fn provision_upload_secret(
             .and_then(|a| a.get("thalamus.io/expires-at"))
             .ok_or("missing upload expiry")?
             .parse::<chrono::DateTime<Utc>>()?;
-        if expires > Utc::now() + chrono::Duration::seconds(180) {
+        let current_ca = secret
+            .data
+            .as_ref()
+            .and_then(|data| data.get("ca.crt"))
+            .map(|ca| ca.0.as_slice());
+        if expires > Utc::now() + chrono::Duration::seconds(180) && current_ca == ca_pem {
             tx.commit().await?;
             return Ok(());
         }
@@ -536,6 +590,10 @@ async fn provision_upload_secret(
         )
         .await?;
     let expires = Utc::now() + chrono::Duration::seconds(deadline);
+    let mut data = BTreeMap::from([("url".into(), ByteString(url.as_str().as_bytes().to_vec()))]);
+    if let Some(ca) = ca_pem {
+        data.insert("ca.crt".into(), ByteString(ca.to_vec()));
+    }
     let mut s = Secret {
         metadata: ObjectMeta {
             name: Some(name.clone()),
@@ -553,10 +611,7 @@ async fn provision_upload_secret(
             ])),
             ..Default::default()
         },
-        data: Some(BTreeMap::from([(
-            "url".into(),
-            ByteString(url.as_str().as_bytes().to_vec()),
-        )])),
+        data: Some(data),
         type_: Some("Opaque".into()),
         ..Default::default()
     };
@@ -738,6 +793,14 @@ async fn provision_secret(
         team_id: team,
         project_id: run.request.project_id,
         service: &run.request.service,
+        deployment: &run.request.deployment,
+        run_kind: match &run.request.kind {
+            RunKind::Validation => "validation",
+            RunKind::Benchmark => "benchmark",
+            RunKind::Debug => return Err("debug jobs require the debug reconciler".into()),
+        },
+        request_budget: (run.request.kind == RunKind::Benchmark)
+            .then_some(i64::from(run.request.workload.max_requests)),
         expires_at: expires,
         secret: &key,
         budget,
@@ -769,9 +832,12 @@ async fn cleanup_secret(
     let api: Api<Secret> = Api::namespaced(client.clone(), &config.namespace);
     let key = job_secret(job)?;
     if key.is_some() {
-        identity.revoke_run_key(run.id).await?;
+        match identity.revoke_run_key(run.id).await {
+            Ok(()) | Err(thalamus_identity::Error::NotFound) => {}
+            Err(error) => return Err(error.into()),
+        }
     }
-    let upload = upload_secret_name(job, run)?;
+    let upload = upload_secret_name(job, run.id)?;
     for (name, is_upload) in key
         .into_iter()
         .map(|n| (n, false))
@@ -970,6 +1036,89 @@ struct RunServices<'a> {
     config: &'a Config,
     objects: &'a AmazonS3,
     artifacts: &'a Artifacts,
+    runtime: &'a RuntimeIntegration,
+}
+
+async fn fail_pending(store: &Store, run: &thalamus_runs::Run, reason: &str) -> Result<()> {
+    store
+        .transition(
+            &run.team,
+            "thalamus-worker",
+            run.id,
+            Transition::JobFailed {
+                error: reason.into(),
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+async fn fail_ingestion(store: &Store, run: &thalamus_runs::Run, reason: &str) -> Result<()> {
+    store
+        .transition(
+            &run.team,
+            "thalamus-worker",
+            run.id,
+            Transition::IngestionFailed {
+                error: reason.into(),
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+/// Stop a rejected launch without allowing a crash to cause a second Job.
+/// The Job has already passed the persisted ownership check if it exists.
+async fn reject_prelaunch(
+    services: &RunServices<'_>,
+    run: &thalamus_runs::Run,
+    job: &Job,
+    existing: bool,
+) -> Result<()> {
+    cleanup_secret(
+        services.db,
+        services.identity,
+        services.client,
+        services.config,
+        run,
+        job,
+    )
+    .await?;
+    project(
+        services.db,
+        services.identity,
+        services.k8s,
+        services.config,
+    )
+    .await?;
+    services
+        .store
+        .transition(
+            &run.team,
+            "thalamus-worker",
+            run.id,
+            Transition::JobFailed {
+                error: "runtime evidence could not be established before launch".into(),
+            },
+        )
+        .await?;
+    if existing {
+        let uid = job.metadata.uid.clone().ok_or("Job UID missing")?;
+        let jobs: Api<Job> = Api::namespaced(services.client.clone(), &services.config.namespace);
+        let params = DeleteParams {
+            preconditions: Some(Preconditions {
+                uid: Some(uid),
+                resource_version: None,
+            }),
+            ..Default::default()
+        };
+        match jobs.delete(&run.job_name, &params).await {
+            Ok(_) => {}
+            Err(kube::Error::Api(error)) if error.code == 404 => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 async fn run_one(run: thalamus_runs::Run, services: &RunServices<'_>) -> Result<()> {
@@ -982,9 +1131,14 @@ async fn run_one(run: thalamus_runs::Run, services: &RunServices<'_>) -> Result<
         config,
         objects,
         artifacts,
+        runtime,
     } = services;
     const ACTOR: &str = "thalamus-worker";
     require_generic_runner(&run.request.kind)?;
+    let route_target = config
+        .runner_targets
+        .get(&run.request.runner)
+        .ok_or("unknown runner route target")?;
     let mut run = run;
     if run.state == "pending" {
         // Lease expiry cannot fence a delayed worker. Serialize absence check,
@@ -999,16 +1153,108 @@ async fn run_one(run: thalamus_runs::Run, services: &RunServices<'_>) -> Result<
             create_lock.commit().await?;
             return Ok(());
         }
-        let job = store
-            .prepare_job(&run.team, ACTOR, run.id, &config.templates)
-            .await?;
+        let resolved = if run.job_spec.is_none() {
+            let profile = config
+                .test_profiles
+                .get(&run.request.service)
+                .and_then(|runners| runners.get(&run.request.runner));
+            let Some(profile) = profile else {
+                fail_pending(store, &run, "trusted test profile is unavailable").await?;
+                create_lock.commit().await?;
+                return Ok(());
+            };
+            if profile.kind != run.request.kind
+                || profile.route_target.as_str() != route_target.as_str()
+            {
+                fail_pending(store, &run, "trusted test profile does not match the run").await?;
+                create_lock.commit().await?;
+                return Ok(());
+            }
+            if thalamus_runtime::admission::validate_test_workload(profile, &run.request.workload)
+                .is_err()
+            {
+                fail_pending(
+                    store,
+                    &run,
+                    "workload does not match the trusted test profile",
+                )
+                .await?;
+                create_lock.commit().await?;
+                return Ok(());
+            }
+            match runtime
+                .resolve_config(&run, route_target, &profile.options)
+                .await
+            {
+                Ok(Some(config)) => Some(config),
+                Ok(None) => return Err("resolved Job configuration missing".into()),
+                Err(error) if runtime_integration::is_permanent_failure(error.as_ref()) => {
+                    fail_pending(store, &run, "runtime identity changed before launch").await?;
+                    create_lock.commit().await?;
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            None
+        };
+        let job = match store
+            .prepare_job(
+                &run.team,
+                ACTOR,
+                run.id,
+                &config.templates,
+                resolved.as_ref(),
+            )
+            .await
+        {
+            Ok(job) => job,
+            Err(error)
+                if run.job_spec.is_none() && runtime_integration::is_permanent_failure(&error) =>
+            {
+                fail_pending(store, &run, "runner configuration could not prepare a Job").await?;
+                create_lock.commit().await?;
+                return Ok(());
+            }
+            Err(error) => return Err(error.into()),
+        };
+        // prepare_job persists the spec; refresh so conflict recovery verifies it.
+        run = store.get(&run.team, run.id).await?;
         let job = if let Some(existing) = k8s.get_job(&run.job_name).await? {
+            thalamus_runs::verify_recoverable_job(&run, &existing)?;
+            if let Err(error) = runtime.prelaunch(&run, &existing, true, route_target).await {
+                if runtime_integration::is_permanent_failure(error.as_ref()) {
+                    reject_prelaunch(services, &run, &existing, true).await?;
+                    create_lock.commit().await?;
+                    return Ok(());
+                }
+                return Err(error);
+            }
             existing
         } else {
             if run.job_uid.is_some() {
-                return Err("recorded job missing".into());
+                reject_prelaunch(services, &run, &job, false).await?;
+                create_lock.commit().await?;
+                return Ok(());
             }
-            provision_upload_secret(db, client, &config.namespace, &job, &run, objects).await?;
+            if let Err(error) = runtime.prelaunch(&run, &job, false, route_target).await {
+                if runtime_integration::is_permanent_failure(error.as_ref()) {
+                    reject_prelaunch(services, &run, &job, false).await?;
+                    create_lock.commit().await?;
+                    return Ok(());
+                }
+                return Err(error);
+            }
+            provision_upload_secret(
+                db,
+                client,
+                &config.namespace,
+                &job,
+                &run,
+                objects,
+                config.s3.ca_pem(),
+            )
+            .await?;
             if let Some(name) = job_secret(&job)? {
                 provision_secret(db, identity, client, config, &run, &name).await?;
                 project(db, identity, k8s, config).await?;
@@ -1034,16 +1280,57 @@ async fn run_one(run: thalamus_runs::Run, services: &RunServices<'_>) -> Result<
         create_lock.commit().await?;
     }
     if run.state == "running" {
-        let job = k8s
-            .get_job(&run.job_name)
-            .await?
-            .ok_or("recorded job missing")?;
+        let recorded_failure = if run.request.kind == RunKind::Validation {
+            match runtime.verified_failure(&run, route_target).await {
+                Ok(recorded) => recorded,
+                Err(error) if runtime_integration::is_permanent_failure(error.as_ref()) => false,
+                Err(error) => return Err(error),
+            }
+        } else {
+            false
+        };
+        if recorded_failure {
+            // Failure evidence is already durable even if the finished Job/Pod
+            // expired while the worker was down.
+            let artifact = ingest_result(objects, artifacts, run.id).await?;
+            let prepared = store
+                .prepare_job(&run.team, ACTOR, run.id, &config.templates, None)
+                .await?;
+            cleanup_secret(db, identity, client, config, &run, &prepared).await?;
+            store
+                .transition(&run.team, ACTOR, run.id, failed_job_transition(artifact))
+                .await?;
+            return Ok(());
+        }
+        let Some(job) = k8s.get_job(&run.job_name).await? else {
+            // A deleted or TTL-expired Job cannot be treated as a success.
+            let prepared = store
+                .prepare_job(&run.team, ACTOR, run.id, &config.templates, None)
+                .await?;
+            cleanup_secret(db, identity, client, config, &run, &prepared).await?;
+            store
+                .transition(
+                    &run.team,
+                    ACTOR,
+                    run.id,
+                    Transition::JobFailed {
+                        error: "Kubernetes Job disappeared before completion was recorded".into(),
+                    },
+                )
+                .await?;
+            return Ok(());
+        };
         thalamus_runs::verify_owned_job(&run, &job, &config.namespace)?;
         if let Some(success) = thalamus_worker::job_outcome(&job) {
             let transition = if success {
                 Transition::JobSucceeded
             } else if run.request.kind == RunKind::Validation {
-                failed_job_transition(ingest_result(objects, artifacts, run.id).await?)
+                let artifact = match runtime.failure(&run, &job, route_target).await {
+                    Ok(()) => ingest_result(objects, artifacts, run.id).await?,
+                    Err(error) if runtime_integration::is_permanent_failure(error.as_ref()) => None,
+                    Err(error) => return Err(error),
+                };
+                failed_job_transition(artifact)
             } else {
                 failed_job_transition(None)
             };
@@ -1052,13 +1339,50 @@ async fn run_one(run: thalamus_runs::Run, services: &RunServices<'_>) -> Result<
                 .transition(&run.team, ACTOR, run.id, transition)
                 .await?;
         } else {
-            provision_upload_secret(db, client, &config.namespace, &job, &run, objects).await?;
+            provision_upload_secret(
+                db,
+                client,
+                &config.namespace,
+                &job,
+                &run,
+                objects,
+                config.s3.ca_pem(),
+            )
+            .await?;
         }
     }
     if run.state == "ingesting" {
-        let artifact = ingest_result(objects, artifacts, run.id)
-            .await?
-            .ok_or("result missing")?;
+        let recorded = match runtime.verified_ingestion(&run, route_target).await {
+            Ok(recorded) => recorded,
+            Err(error) if runtime_integration::is_permanent_failure(error.as_ref()) => {
+                fail_ingestion(store, &run, "runtime evidence could not be verified").await?;
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        if !recorded {
+            let Some(job) = k8s.get_job(&run.job_name).await? else {
+                fail_ingestion(
+                    store,
+                    &run,
+                    "Kubernetes Job disappeared before evidence was recorded",
+                )
+                .await?;
+                return Ok(());
+            };
+            thalamus_runs::verify_owned_job(&run, &job, &config.namespace)?;
+            if let Err(error) = runtime.ingestion(&run, &job, route_target).await {
+                if runtime_integration::is_permanent_failure(error.as_ref()) {
+                    fail_ingestion(store, &run, "runtime evidence could not be verified").await?;
+                    return Ok(());
+                }
+                return Err(error);
+            }
+        }
+        let Some(artifact) = ingest_result(objects, artifacts, run.id).await? else {
+            fail_ingestion(store, &run, "result object missing").await?;
+            return Ok(());
+        };
         store
             .transition(
                 &run.team,
@@ -1069,170 +1393,6 @@ async fn run_one(run: thalamus_runs::Run, services: &RunServices<'_>) -> Result<
                 },
             )
             .await?;
-    }
-    Ok(())
-}
-
-fn debug_resource_owned(meta: &ObjectMeta, session: &WorkerSessionRef, namespace: &str) -> bool {
-    let name = debug_job_name(session.id);
-    let labels = meta.labels.as_ref();
-    session.job_name == name
-        && session.job_namespace == namespace
-        && meta.name.as_deref() == Some(name.as_str())
-        && meta.namespace.as_deref() == Some(namespace)
-        && meta.uid.as_ref().is_some_and(|s| !s.is_empty())
-        && meta
-            .resource_version
-            .as_ref()
-            .is_some_and(|s| !s.is_empty())
-        && labels
-            .and_then(|l| l.get("app.kubernetes.io/name"))
-            .map(String::as_str)
-            == Some("thalamus-debug")
-        && labels
-            .and_then(|l| l.get("app.kubernetes.io/managed-by"))
-            .map(String::as_str)
-            == Some("thalamus")
-        && labels
-            .and_then(|l| l.get("thalamus.dev/debug-session"))
-            .map(String::as_str)
-            == Some(session.id.to_string().as_str())
-}
-
-fn debug_child_owned(
-    meta: &ObjectMeta,
-    session: &WorkerSessionRef,
-    namespace: &str,
-    uid: &str,
-) -> bool {
-    debug_resource_owned(meta, session, namespace)
-        && meta.owner_references.as_ref().is_some_and(|owners| {
-            owners.len() == 1
-                && owners[0].api_version == "batch/v1"
-                && owners[0].kind == "Job"
-                && owners[0].name == session.job_name
-                && owners[0].uid == uid
-                && owners[0].controller == Some(false)
-                && owners[0].block_owner_deletion == Some(false)
-        })
-}
-
-async fn cleanup_debug_resources(
-    client: &kube::Client,
-    namespace: &str,
-    session: &WorkerSessionRef,
-) -> Result<()> {
-    if session.job_namespace != namespace || session.job_name != debug_job_name(session.id) {
-        return Err("invalid debug resource identity".into());
-    }
-    let jobs: Api<Job> = Api::namespaced(client.clone(), namespace);
-    let services: Api<Service> = Api::namespaced(client.clone(), namespace);
-    let policies: Api<NetworkPolicy> = Api::namespaced(client.clone(), namespace);
-    let name = &session.job_name;
-    let job = jobs.get_opt(name).await?;
-    let service = services.get_opt(name).await?;
-    let policy = policies.get_opt(name).await?;
-    if let Some(job) = job {
-        if !debug_resource_owned(&job.metadata, session, namespace) {
-            return Err("foreign debug Job".into());
-        }
-        let uid = job.metadata.uid.as_deref().ok_or("debug Job UID missing")?;
-        if service
-            .as_ref()
-            .is_some_and(|s| !debug_child_owned(&s.metadata, session, namespace, uid))
-            || policy
-                .as_ref()
-                .is_some_and(|p| !debug_child_owned(&p.metadata, session, namespace, uid))
-        {
-            return Err("foreign debug dependent".into());
-        }
-        let state = job
-            .metadata
-            .annotations
-            .as_ref()
-            .and_then(|a| a.get("thalamus.dev/launch-state"))
-            .map(String::as_str);
-        let suspended = job.spec.as_ref().and_then(|s| s.suspend).unwrap_or(false);
-        if !matches!(
-            (state, suspended),
-            (Some("staging"), true) | (Some("active"), false)
-        ) {
-            return Err("invalid debug Job launch state".into());
-        }
-        if job.metadata.deletion_timestamp.is_none() {
-            let params = DeleteParams {
-                propagation_policy: Some(PropagationPolicy::Foreground),
-                preconditions: Some(Preconditions {
-                    uid: Some(uid.to_owned()),
-                    resource_version: job.metadata.resource_version.clone(),
-                }),
-                ..Default::default()
-            };
-            match jobs.delete(name, &params).await {
-                Ok(_) => {}
-                Err(kube::Error::Api(e)) if e.code == 404 => {}
-                Err(e) => return Err(e.into()),
-            }
-        }
-        return Err("debug Job deletion pending".into());
-    }
-    if service.is_some() || policy.is_some() {
-        return Err("debug dependents pending deletion".into());
-    }
-    // The trusted issuer record and model-credential revocation adapter are
-    // prerequisites to deleting Secrets or acknowledging cleanup.
-    Err("debug credential cleanup authority unavailable".into())
-}
-
-async fn reconcile_debug(
-    store: &DebugWorkerStore,
-    client: &kube::Client,
-    namespace: &str,
-) -> Result<()> {
-    let mut cursor = None;
-    let mut failed = false;
-    loop {
-        let sessions = store.list_actionable(cursor, 100).await?;
-        if sessions.is_empty() {
-            break;
-        }
-        let count = sessions.len();
-        cursor = sessions.last().map(WorkerSessionCursor::from);
-        for session in sessions {
-            let identity = DebugIdentity {
-                user_id: session.user_id,
-                team_id: session.team_id,
-            };
-            match store
-                .finalize_expired_or_inactive(&identity, session.id)
-                .await
-            {
-                Ok(Some((session, _))) => {
-                    if cleanup_debug_resources(client, namespace, &session)
-                        .await
-                        .is_err()
-                    {
-                        failed = true;
-                    }
-                }
-                Ok(None) if session.cleanup_required => {
-                    if cleanup_debug_resources(client, namespace, &session)
-                        .await
-                        .is_err()
-                    {
-                        failed = true;
-                    }
-                }
-                Ok(None) => {}
-                Err(_) => failed = true,
-            }
-        }
-        if count < 100 {
-            break;
-        }
-    }
-    if failed {
-        return Err("debug cleanup incomplete".into());
     }
     Ok(())
 }
@@ -1314,32 +1474,65 @@ async fn main() -> Result<()> {
     )?;
     let usage_store = UsageStore::new(db.clone());
     let identity = WorkerIdentity::new(db.clone());
+    let idp_sync = IdentitySync::from_env()?;
     let client = kube::Client::try_default().await?;
     let k8s = K8s::new(client.clone(), &config.namespace)?;
     let store = Store::new(db.clone());
     let worker_store = WorkerStore::new(db.clone());
-    let debug_store = DebugWorkerStore::new(db.clone());
-    let objects = Arc::new(
-        AmazonS3Builder::new()
-            .with_endpoint(&config.s3_endpoint)
-            .with_bucket_name(&config.s3_bucket)
-            .with_region(&config.s3_region)
-            .with_access_key_id(&config.s3_access)
-            .with_secret_access_key(&config.s3_secret)
-            .with_conditional_put(S3ConditionalPut::ETagMatch)
-            .build()?,
+    let debug = DebugReconciler::new(
+        db.clone(),
+        client.clone(),
+        config.namespace.clone(),
+        config.namespace.clone(),
+        config.projection.clone(),
+    )?;
+    let policy_source = thalamus_access::PolicySource::new(
+        required("THALAMUS_ACCESS_REPOSITORY")?,
+        required("THALAMUS_ACCESS_CATALOG_PATH")?,
+        required("THALAMUS_ACCESS_COMMIT")?,
     );
+    let runtime = RuntimeIntegration::new(
+        &config.runtime_config,
+        client.clone(),
+        db.clone(),
+        policy_source,
+    )?;
+    if runtime.config().namespace != config.namespace {
+        return Err("runtime and worker namespaces differ".into());
+    }
+    let objects = config.s3.store()?;
     let artifacts = Artifacts::new(objects.clone());
+    let workflows = WorkflowController::from_env(
+        db.clone(),
+        client.clone(),
+        artifacts.clone(),
+        &config.runtime_config,
+        &config.runner_targets,
+        &config.templates,
+        &config.test_profiles,
+    )?;
     let health = Arc::new(Mutex::new(Health::default()));
     for (label, kind, version) in [
-        ("flux", ReadKind::GitRepository, config.flux_version.clone()),
-        ("helm", ReadKind::HelmRelease, config.helm_version.clone()),
+        (
+            "flux",
+            ReadKind::GitRepository,
+            runtime.config().source_version.clone(),
+        ),
+        (
+            "helm",
+            ReadKind::HelmRelease,
+            runtime.config().helm_version.clone(),
+        ),
         (
             "serving",
             ReadKind::LlmInferenceService,
-            config.serving_version.clone(),
+            runtime.config().serving_version.clone(),
         ),
-        ("pool", ReadKind::InferencePool, config.pool_version.clone()),
+        (
+            "pool",
+            ReadKind::InferencePool,
+            runtime.config().pool_version.clone(),
+        ),
     ] {
         tokio::spawn(watch(k8s.clone(), health.clone(), label, kind, version));
     }
@@ -1354,11 +1547,22 @@ async fn main() -> Result<()> {
         config: &config,
         objects: objects.as_ref(),
         artifacts: &artifacts,
+        runtime: &runtime,
     };
     loop {
         let cycle = async {
             k8s.acquire_lease(&config.lease, &config.holder, 30, Utc::now())
                 .await?;
+            if let Some(sync) = &idp_sync {
+                if let Err(error) = sync.reconcile(&identity).await {
+                    // A configured but unavailable collector must also remove
+                    // stale managed-issuer keys from the gateway projection.
+                    if project(&db, &identity, &k8s, &config).await.is_err() {
+                        record_projection_error(&db, &config).await;
+                    }
+                    return Err(error);
+                }
+            }
             if let Err(e) = project(&db, &identity, &k8s, &config).await {
                 record_projection_error(&db, &config).await;
                 return Err(e);
@@ -1387,11 +1591,13 @@ async fn main() -> Result<()> {
             {
                 failed = true;
             }
-            if reconcile_debug(&debug_store, &client, &config.namespace)
-                .await
-                .is_err()
-            {
+            if debug.reconcile().await.is_err() {
                 failed = true;
+            }
+            if let Some(workflows) = &workflows {
+                if workflows.reconcile().await.is_err() {
+                    failed = true;
+                }
             }
             let usage_ready = matches!(
                 reconcile_usage(&db, &usage_store, &usage_source, &config.usage).await,
@@ -1437,34 +1643,6 @@ mod tests {
     }
 
     #[test]
-    fn debug_cleanup_requires_exact_session_identity_and_owner_uid() {
-        let id = Uuid::new_v4();
-        let name = debug_job_name(id);
-        let session = WorkerSessionRef {
-            id,
-            user_id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
-            state: thalamus_debug::store::SessionState::TimedOut,
-            deadline: Utc::now(),
-            created_at: Utc::now(),
-            job_namespace: "service".into(),
-            job_name: name.clone(),
-            cleanup_required: true,
-        };
-        let mut meta: ObjectMeta = serde_json::from_value(serde_json::json!({
-            "name": name, "namespace": "service", "uid": "child-uid", "resourceVersion": "7",
-            "labels": {"app.kubernetes.io/name":"thalamus-debug","app.kubernetes.io/managed-by":"thalamus","thalamus.dev/debug-session":id.to_string()},
-            "ownerReferences":[{"apiVersion":"batch/v1","kind":"Job","name":session.job_name,"uid":"job-uid","controller":false,"blockOwnerDeletion":false}]
-        })).unwrap();
-        assert!(debug_resource_owned(&meta, &session, "service"));
-        assert!(debug_child_owned(&meta, &session, "service", "job-uid"));
-        assert!(!debug_child_owned(&meta, &session, "service", "other-job"));
-        assert!(!debug_resource_owned(&meta, &session, "other-namespace"));
-        meta.resource_version = None;
-        assert!(!debug_resource_owned(&meta, &session, "service"));
-    }
-
-    #[test]
     fn usage_recovery_processes_only_closed_utc_days_in_order() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 28).unwrap();
         let previous = today.pred_opt().unwrap();
@@ -1482,6 +1660,22 @@ mod tests {
         assert!(serde_json::from_str::<CapFile>(r#"{"teams":[],"unexpected":1}"#).is_err());
         let parsed: CapFile = serde_json::from_str(r#"{"teams":[{"team_id":"00000000-0000-0000-0000-000000000001","max_tokens":100,"unit":"tokens","window":"day"}]}"#).unwrap();
         assert_eq!(parsed.teams[0].max_tokens, 100);
+        assert_eq!(parsed.teams[0].allowed_classes, vec!["standard"]);
+    }
+
+    #[test]
+    fn budget_caps_follow_the_configured_catalog_directory() {
+        assert_eq!(
+            caps_object("abc", "catalog/").unwrap(),
+            "abc:catalog/budget-caps.json"
+        );
+        assert_eq!(
+            caps_object("abc", "nested/catalog/").unwrap(),
+            "abc:nested/catalog/budget-caps.json"
+        );
+        assert_eq!(caps_object("abc", "").unwrap(), "abc:budget-caps.json");
+        assert!(caps_object("abc", "../").is_err());
+        assert!(caps_object("abc", "catalog//").is_err());
     }
     #[test]
     fn job_secret_requires_reference_and_reserved_name() {
@@ -1510,6 +1704,42 @@ mod tests {
             .unwrap()
             .name = "foreign".into();
         assert!(job_secret(&job).is_err());
+    }
+
+    #[test]
+    fn upload_projection_requires_shared_optional_ca() {
+        let id = Uuid::new_v4();
+        let name = format!("thalamus-upload-{id}");
+        let mut job: Job = serde_json::from_value(serde_json::json!({
+            "spec":{"template":{"spec":{"restartPolicy":"Never","containers":[{"name":"runner"}],
+                "volumes":[{"name":"result-upload","projected":{"sources":[
+                    {"secret":{"name":name,"items":[{"key":"url","path":"url"}]}},
+                    {"secret":{"name":name,"optional":true,"items":[{"key":"ca.crt","path":"ca.pem"}]}}
+                ]}}]}}}
+        })).unwrap();
+        assert_eq!(upload_secret_name(&job, id).unwrap(), name);
+        let ca = &mut job
+            .spec
+            .as_mut()
+            .unwrap()
+            .template
+            .spec
+            .as_mut()
+            .unwrap()
+            .volumes
+            .as_mut()
+            .unwrap()[0]
+            .projected
+            .as_mut()
+            .unwrap()
+            .sources
+            .as_mut()
+            .unwrap()[1]
+            .secret
+            .as_mut()
+            .unwrap();
+        ca.optional = Some(false);
+        assert!(upload_secret_name(&job, id).is_err());
     }
     #[tokio::test]
     async fn failed_job_retains_uploaded_summary_even_if_it_claims_success() {

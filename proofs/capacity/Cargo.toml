@@ -1,0 +1,18 @@
+[package]
+name = "thalamus-capacity-proof"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Compile the exact arithmetic module used by thalamus-core, not a copy.
+[lib]
+path = "../../crates/thalamus-core/src/capacity.rs"
+
+[dependencies]
+creusot-std = "=0.14.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(creusot)'] }
+
+# Keep this opt-in verification target out of the normal workspace.
+[workspace]

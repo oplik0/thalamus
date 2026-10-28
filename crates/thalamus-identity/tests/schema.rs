@@ -88,7 +88,7 @@ async fn worker_registration_is_scoped_idempotent_and_revocable(pool: PgPool) {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO identity_projects(id,team_id,name) VALUES ($1,$2,'project')")
+    sqlx::query("INSERT INTO identity_projects(id,team_id,name,cost_centre,budget) VALUES ($1,$2,'project','cost-a',70)")
         .bind(project)
         .bind(team)
         .execute(&pool)
@@ -109,6 +109,7 @@ async fn worker_registration_is_scoped_idempotent_and_revocable(pool: PgPool) {
                 max_tokens: 100,
                 unit: "tokens".into(),
                 window: "day".into(),
+                allowed_classes: vec!["standard".into(), "interactive".into()],
             }],
         )
         .await
@@ -117,6 +118,9 @@ async fn worker_registration_is_scoped_idempotent_and_revocable(pool: PgPool) {
     let expires = Utc::now() + Duration::hours(1);
     let request = RunKeyRequest {
         run_id: run,
+        deployment: "revision-a",
+        run_kind: "validation",
+        request_budget: None,
         user_id: user,
         team_id: team,
         project_id: project,
@@ -135,6 +139,21 @@ async fn worker_registration_is_scoped_idempotent_and_revocable(pool: PgPool) {
         })
         .await
         .is_err());
+    assert!(worker
+        .register_run_key(RunKeyRequest {
+            deployment: "revision-b",
+            ..request
+        })
+        .await
+        .is_err());
+    assert!(worker
+        .register_run_key(RunKeyRequest {
+            run_kind: "benchmark",
+            request_budget: Some(25),
+            ..request
+        })
+        .await
+        .is_err());
     let projection = worker.active_projection().await.unwrap();
     assert_eq!(projection.len(), 1);
     assert_eq!(
@@ -142,11 +161,42 @@ async fn worker_registration_is_scoped_idempotent_and_revocable(pool: PgPool) {
         Sha256::digest(secret.as_bytes()).to_vec()
     );
     assert_eq!(projection[0].metadata.allowed_services, vec!["model"]);
+    assert_eq!(projection[0].run_id, Some(run));
+    assert_eq!(projection[0].deployment.as_deref(), Some("revision-a"));
+    assert_eq!(projection[0].run_kind.as_deref(), Some("validation"));
+    assert_eq!(projection[0].request_budget, None);
+    assert_eq!(projection[0].debug_session_id, None);
+    assert_eq!(projection[0].class, "standard");
+    assert_eq!(projection[0].cost_centre.as_deref(), Some("cost-a"));
+    assert_eq!(projection[0].project_budget, Some(70));
+    assert_eq!(projection[0].team_budget, Some(100));
+    assert_eq!(projection[0].budget_window.as_deref(), Some("day"));
     let audit_count: i64 = sqlx::query_scalar("SELECT count(*) FROM identity_audit WHERE actor_id=$1 AND agent='thalamus-worker' AND details->>'run_id'=$2").bind(user).bind(run.to_string()).fetch_one(&pool).await.unwrap();
     assert_eq!(audit_count, 1);
     worker.revoke_run_key(run).await.unwrap();
     worker.revoke_run_key(run).await.unwrap();
     assert!(worker.active_projection().await.unwrap().is_empty());
+    let benchmark_secret = format!("thl_{}", URL_SAFE_NO_PAD.encode([8u8; 32]));
+    let benchmark = RunKeyRequest {
+        run_id: Uuid::new_v4(),
+        run_kind: "benchmark",
+        request_budget: Some(25),
+        secret: &benchmark_secret,
+        ..request
+    };
+    worker.register_run_key(benchmark).await.unwrap();
+    let projection = worker.active_projection().await.unwrap();
+    assert_eq!(projection[0].run_kind.as_deref(), Some("benchmark"));
+    assert_eq!(projection[0].request_budget, Some(25));
+    assert_eq!(projection[0].metadata.budget, Some(10));
+    assert!(worker
+        .register_run_key(RunKeyRequest {
+            request_budget: Some(26),
+            ..benchmark
+        })
+        .await
+        .is_err());
+    worker.revoke_run_key(benchmark.run_id).await.unwrap();
     assert!(worker.register_run_key(request).await.is_err());
     sqlx::query("DELETE FROM identity_memberships WHERE user_id=$1 AND team_id=$2")
         .bind(user)
@@ -204,6 +254,9 @@ async fn worker_rejects_unbounded_or_cross_team_keys(pool: PgPool) {
     assert!(worker
         .register_run_key(RunKeyRequest {
             run_id: Uuid::new_v4(),
+            deployment: "revision-a",
+            run_kind: "validation",
+            request_budget: None,
             user_id: user,
             team_id: team,
             project_id: project,
@@ -217,6 +270,9 @@ async fn worker_rejects_unbounded_or_cross_team_keys(pool: PgPool) {
     assert!(worker
         .register_run_key(RunKeyRequest {
             run_id: Uuid::new_v4(),
+            deployment: "revision-a",
+            run_kind: "validation",
+            request_budget: None,
             user_id: user,
             team_id: team,
             project_id: project,
@@ -230,6 +286,9 @@ async fn worker_rejects_unbounded_or_cross_team_keys(pool: PgPool) {
     assert!(worker
         .register_run_key(RunKeyRequest {
             run_id: Uuid::new_v4(),
+            deployment: "revision-a",
+            run_kind: "validation",
+            request_budget: None,
             user_id: user,
             team_id: team,
             project_id: project,
@@ -258,6 +317,7 @@ async fn budget_projection_preserves_windows_and_rolls_back_failed_refresh(pool:
         max_tokens: 100,
         unit: "tokens".into(),
         window: "day".into(),
+        allowed_classes: vec!["standard".into()],
     };
     let first_commit = "a".repeat(40);
     worker
@@ -294,6 +354,14 @@ async fn budget_projection_preserves_windows_and_rolls_back_failed_refresh(pool:
             .execute(&pool)
             .await;
     assert!(invalid_window.is_err());
+    let oversized = BudgetCap {
+        max_tokens: i64::from(u32::MAX) + 1,
+        ..cap.clone()
+    };
+    assert!(worker
+        .sync_budget_caps(&"b".repeat(40), &[oversized])
+        .await
+        .is_err());
 
     let missing_team = BudgetCap {
         team_id: Uuid::new_v4(),

@@ -181,6 +181,7 @@ fn change(v: &Value, source_repository: Option<RepoRef>) -> Result<ChangeRequest
             _ => Mergeability::Unknown,
         },
         merge_commit: optional(v, "merge_commit_sha"),
+        merged_at: optional(v, "merged_at"),
         source_repository,
         author: text(nested(v, "author")?, "username")?.into(),
         labels,
@@ -368,11 +369,6 @@ impl BranchPolicies for Gitlab {
             "GitLab branch policy evidence is not implemented".into(),
         ))
     }
-    async fn policy_actor(&self) -> Result<PolicyActor> {
-        Err(Error::Unsupported(
-            "GitLab bypass permissions cannot be established".into(),
-        ))
-    }
 }
 impl Webhooks for Gitlab {
     fn webhook(
@@ -487,6 +483,16 @@ mod tests {
         assert_eq!(c.base_sha, target);
         assert_eq!(c.head_sha, head);
         assert_eq!(c.labels, vec!["review"]);
+        assert!(c.merged_at.is_none());
+        let mut merged = v.clone();
+        merged["state"] = json!("merged");
+        merged["merged_at"] = json!("2026-01-01T12:34:56.000Z");
+        assert_eq!(
+            change(&merged, None).unwrap().merged_at.as_deref(),
+            Some("2026-01-01T12:34:56.000Z")
+        );
+        merged["merged_at"] = Value::Null;
+        assert!(change(&merged, None).unwrap().merged_at.is_none());
         let mut bad = v;
         bad["sha"] = json!(base);
         assert!(change(&bad, None).is_err());

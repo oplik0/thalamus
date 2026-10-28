@@ -6,6 +6,7 @@ export type Service = Schemas['ServiceView'];
 export type Observation = Service['status']['accepted'];
 export type Metric = Schemas['MetricList']['metrics'][number];
 export type Project = Schemas['ProjectView'];
+export type Team = Schemas['TeamView'];
 export type Key = Schemas['KeyView'];
 export type Change = Schemas['ChangeView'];
 export type Validation = Schemas['ValidationView'];
@@ -42,6 +43,7 @@ export const api = {
   service: (id: string) => request<Service>(`/services/${segment(id)}`),
   metrics: (id: string) => request<Schemas['MetricList']>(`/services/${segment(id)}/metrics`),
   projects: () => request<Schemas['ProjectsResponse']>('/projects'),
+  teams: () => request<Schemas['TeamsResponse']>('/teams'),
   usage: (team: string, start: string, end: string, projectId?: string) => {
     const query = new URLSearchParams({ team, start, end });
     if (projectId) query.set('project_id', projectId);

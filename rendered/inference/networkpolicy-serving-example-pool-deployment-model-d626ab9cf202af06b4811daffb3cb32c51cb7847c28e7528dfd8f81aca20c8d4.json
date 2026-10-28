@@ -1,0 +1,63 @@
+{
+  "apiVersion": "networking.k8s.io/v1",
+  "kind": "NetworkPolicy",
+  "metadata": {
+    "name": "serving-example-pool-deployment-model",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "egress": [],
+    "ingress": [
+      {
+        "from": [
+          {
+            "namespaceSelector": {
+              "matchLabels": {
+                "kubernetes.io/metadata.name": "thalamus-inference"
+              }
+            },
+            "podSelector": {
+              "matchLabels": {
+                "gateway.networking.k8s.io/gateway-name": "inference-serving"
+              }
+            }
+          },
+          {
+            "podSelector": {
+              "matchLabels": {
+                "app.kubernetes.io/name": "example-pool-deployment-epp"
+              }
+            }
+          },
+          {
+            "namespaceSelector": {
+              "matchLabels": {
+                "kubernetes.io/metadata.name": "monitoring"
+              }
+            },
+            "podSelector": {
+              "matchLabels": {
+                "app.kubernetes.io/name": "prometheus"
+              }
+            }
+          }
+        ],
+        "ports": [
+          {
+            "port": 8000,
+            "protocol": "TCP"
+          }
+        ]
+      }
+    ],
+    "podSelector": {
+      "matchLabels": {
+        "thalamus.ai/deployment": "example-pool-deployment"
+      }
+    },
+    "policyTypes": [
+      "Ingress",
+      "Egress"
+    ]
+  }
+}

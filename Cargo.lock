@@ -3421,6 +3421,7 @@ dependencies = [
  "pastey",
  "pin-project-lite",
  "rand 0.9.2",
+ "reqwest 0.12.28",
  "rmcp-macros",
  "schemars 1.2.3",
  "serde",
@@ -4434,11 +4435,19 @@ dependencies = [
 name = "thalamus-access"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "hmac",
+ "rustls-pemfile 1.0.4",
  "serde",
  "serde_yaml",
+ "sha2",
+ "sqlx",
  "tempfile",
  "thalamus-identity",
  "thiserror 2.0.18",
+ "tokio",
+ "tokio-rustls 0.24.1",
  "uuid",
 ]
 
@@ -4446,10 +4455,12 @@ dependencies = [
 name = "thalamus-changes"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "futures-util",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sha2",
  "sqlx",
  "thalamus-forge",
@@ -4509,6 +4520,7 @@ version = "0.1.0"
 dependencies = [
  "async-stream",
  "async-trait",
+ "chrono",
  "forgejo-api",
  "futures-core",
  "gitlab",
@@ -4533,6 +4545,7 @@ dependencies = [
  "similar",
  "tempfile",
  "thiserror 2.0.18",
+ "url",
 ]
 
 [[package]]
@@ -4544,6 +4557,7 @@ dependencies = [
  "hmac",
  "openidconnect",
  "rand 0.8.5",
+ "reqwest 0.11.27",
  "serde",
  "serde_json",
  "sha2",
@@ -4638,6 +4652,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "thalamus-runtime"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "http 1.4.0",
+ "k8s-openapi",
+ "kube",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thalamus-core",
+ "thalamus-runs",
+ "thiserror 2.0.18",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "thalamus-server"
 version = "0.1.0"
 dependencies = [
@@ -4645,8 +4679,12 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chrono",
+ "futures-util",
  "hmac",
+ "k8s-openapi",
+ "kube",
  "reqwest 0.12.28",
+ "rmcp",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -4659,15 +4697,16 @@ dependencies = [
  "thalamus-forge",
  "thalamus-gitops",
  "thalamus-identity",
+ "thalamus-k8s",
  "thalamus-logs",
  "thalamus-mcp",
  "thalamus-metrics",
  "thalamus-oidc-resource",
  "thalamus-runs",
+ "thalamus-runtime",
  "thalamus-usage",
  "thiserror 2.0.18",
  "tokio",
- "tower",
  "tower-http",
  "url",
  "utoipa",
@@ -4714,12 +4753,18 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sha2",
  "sqlx",
+ "thalamus-access",
+ "thalamus-changes",
  "thalamus-debug",
+ "thalamus-forge",
+ "thalamus-gitops",
  "thalamus-identity",
  "thalamus-k8s",
  "thalamus-runs",
+ "thalamus-runtime",
  "thalamus-usage",
  "tokio",
  "uuid",

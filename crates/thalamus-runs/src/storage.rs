@@ -281,14 +281,15 @@ impl Store {
         rows.iter().map(decode).collect()
     }
 
-    /// Persist the desired Job before CREATE. Repeated calls return the original
-    /// spec even if operator templates have since changed.
+    /// Persist a Job built from the trusted, observed run configuration before
+    /// CREATE. Recovery returns the original spec and does not need a config.
     pub async fn prepare_job(
         &self,
         team: &str,
         actor: &str,
         id: Uuid,
         templates: &crate::Templates,
+        config: Option<&serde_json::Value>,
     ) -> Result<k8s_openapi::api::batch::v1::Job> {
         text(actor, "actor", 256)?;
         let mut tx = self.pool.begin().await?;
@@ -311,7 +312,10 @@ impl Store {
             if run.state != "pending" {
                 return Err(Error::InvalidTransition);
             }
-            let job = crate::build_job(&run, templates)?;
+            let config = config.ok_or_else(|| {
+                Error::Invalid("resolved runner configuration is required".into())
+            })?;
+            let job = crate::build_job(&run, templates, config)?;
             let spec = serde_json::to_value(job.spec.as_ref().ok_or(Error::ForeignJob)?)?;
             let namespace = job.metadata.namespace.as_deref().ok_or(Error::ForeignJob)?;
             sqlx::query("UPDATE thalamus_runs SET job_spec=$1,job_namespace=$2,updated_at=now() WHERE id=$3")

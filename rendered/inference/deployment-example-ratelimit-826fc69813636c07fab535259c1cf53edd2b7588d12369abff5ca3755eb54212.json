@@ -1,0 +1,178 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "example-ratelimit",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "replicas": 2,
+    "selector": {
+      "matchLabels": {
+        "app.kubernetes.io/component": "global-rate-limiter",
+        "app.kubernetes.io/name": "example-ratelimit"
+      }
+    },
+    "template": {
+      "metadata": {
+        "annotations": {
+          "checksum/config": "3b247b403a460b2c918c1586958c9af23ca41995e0d60c2f0ffb1855ee1e2072"
+        },
+        "labels": {
+          "app.kubernetes.io/component": "global-rate-limiter",
+          "app.kubernetes.io/name": "example-ratelimit"
+        }
+      },
+      "spec": {
+        "automountServiceAccountToken": false,
+        "containers": [
+          {
+            "command": [
+              "/bin/ratelimit"
+            ],
+            "env": [
+              {
+                "name": "RUNTIME_ROOT",
+                "value": "/data"
+              },
+              {
+                "name": "RUNTIME_SUBDIRECTORY",
+                "value": "ratelimit"
+              },
+              {
+                "name": "RUNTIME_IGNOREDOTFILES",
+                "value": "true"
+              },
+              {
+                "name": "RUNTIME_WATCH_ROOT",
+                "value": "false"
+              },
+              {
+                "name": "USE_STATSD",
+                "value": "false"
+              },
+              {
+                "name": "GRPC_PORT",
+                "value": "8081"
+              },
+              {
+                "name": "DEBUG_HOST",
+                "value": "127.0.0.1"
+              },
+              {
+                "name": "DEBUG_PORT",
+                "value": "0"
+              },
+              {
+                "name": "REDIS_SOCKET_TYPE",
+                "value": "tcp"
+              },
+              {
+                "name": "REDIS_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "example-redis"
+                  }
+                }
+              },
+              {
+                "name": "REDIS_AUTH",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "auth",
+                    "name": "example-redis"
+                  }
+                }
+              },
+              {
+                "name": "REDIS_TLS",
+                "value": "true"
+              },
+              {
+                "name": "HEALTHY_WITH_AT_LEAST_ONE_CONFIG_LOADED",
+                "value": "true"
+              },
+              {
+                "name": "REDIS_HEALTH_CHECK_ACTIVE_CONNECTION",
+                "value": "true"
+              },
+              {
+                "name": "REDIS_TLS_CACERT",
+                "value": "/etc/redis-ca/ca.crt"
+              }
+            ],
+            "image": "docker.io/envoyproxy/ratelimit@sha256:70453d5ca820dce0c2939d95a3eeb0f3e64ac083749bc021401c13e4233d1595",
+            "name": "ratelimit",
+            "ports": [
+              {
+                "containerPort": 8081,
+                "name": "grpc"
+              },
+              {
+                "containerPort": 8080,
+                "name": "health"
+              }
+            ],
+            "readinessProbe": {
+              "httpGet": {
+                "path": "/healthcheck",
+                "port": 8080
+              },
+              "periodSeconds": 5
+            },
+            "securityContext": {
+              "allowPrivilegeEscalation": false,
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "readOnlyRootFilesystem": true
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/data/ratelimit/config",
+                "name": "config",
+                "readOnly": true
+              },
+              {
+                "mountPath": "/etc/redis-ca",
+                "name": "redis-ca",
+                "readOnly": true
+              }
+            ]
+          }
+        ],
+        "securityContext": {
+          "runAsGroup": 10001,
+          "runAsNonRoot": true,
+          "runAsUser": 10001,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "volumes": [
+          {
+            "configMap": {
+              "name": "example-shared-ratelimit-config"
+            },
+            "name": "config"
+          },
+          {
+            "name": "redis-ca",
+            "secret": {
+              "items": [
+                {
+                  "key": "ca.crt",
+                  "path": "ca.crt"
+                }
+              ],
+              "secretName": "example-redis-ca"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -7,14 +7,14 @@
 //! general HTTP API are exposed here.
 //!
 //! `/event` is a hot, instance-wide SSE feed, not a replayable session feed.
-//! Run exactly one continuously polled collector per Job, connect it after
-//! `create_session` and before `send_seed`, and serve UI subscribers from the
-//! durable event store.  A disconnect or process crash can lose events: OpenCode
-//! does not document an event cursor.  Gateway/tool budget enforcement and Job
-//! deadlines must independently stop the agent even if this collector is not
-//! running; the proxy's abort requests are only best effort.
+//! [`DebugProxy::run_collector`] elects and supervises one collector per Job,
+//! connects it before the persisted seed, and stores events independently of
+//! browser connections.  Every reconnect records a durable transcript gap: a
+//! disconnect or process crash can lose events because OpenCode has no cursor.
+//! Gateway/tool budget enforcement and Job deadlines must independently stop
+//! the agent even if this collector is not running; aborts are only best effort.
 
-use std::{io, net::IpAddr, str::FromStr, sync::Arc, time::Duration};
+use std::{future::Future, io, net::IpAddr, str::FromStr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -23,6 +23,8 @@ use serde_json::{json, Value};
 use thiserror::Error;
 use tokio::time::{self, Instant};
 use uuid::Uuid;
+
+use crate::store::{DebugIdentity, DebugStore, PromptClaim, PromptKind, SessionLock, StoreError};
 
 const OPENCODE_PORT: u16 = 4096;
 const MAX_PROMPT_BYTES: usize = 1024 * 1024;
@@ -52,8 +54,10 @@ pub enum Operation {
 /// A fresh, authoritative authorization decision.  Do not log or serialize it:
 /// it contains the OpenCode server password.
 ///
-/// `budget_available` must reflect *both* model and tool budgets, not merely the
-/// original configured limits.  The target is constructed by this module from
+/// `budget_available` must reflect the remaining tool budget and a valid,
+/// session-bound model key.  The gateway independently enforces model spending;
+/// this flag does not establish how many model tokens remain. The target is
+/// constructed by this module from
 /// `namespace` and the Thalamus session ID; the host must load the namespace and
 /// password from trusted session/Job state.  `upstream_session_id` is absent
 /// only before creation and must come from the durable session record thereafter.
@@ -83,8 +87,12 @@ pub enum HostError {
     NotFound,
     #[error("session state conflict")]
     Conflict,
+    #[error("invalid input")]
+    InvalidInput,
     #[error("session budget exhausted")]
     BudgetExhausted,
+    #[error("upstream initialization is already reserved")]
+    InitializationBusy,
     #[error("host service unavailable")]
     Unavailable,
 }
@@ -98,10 +106,12 @@ pub enum HostError {
 /// was sent.  If a create request may have reached OpenCode, its reservation is
 /// deliberately retained for reconciliation rather than allowing a duplicate.
 ///
-/// `load_seed` must construct text exclusively from persisted service context and
+/// `load_seed` constructs text exclusively from persisted service context and
 /// failing evidence, excluding credentials; never use caller-provided seed text.
-/// `append_event` must commit before returning, and may map `key` to the store's
-/// client request key.  Event payloads are sensitive transcript data.
+/// Prompt claims, outcomes and their transcript events must be committed
+/// atomically.  The host may release only a claim that definitely has not been
+/// dispatched. Collector events must be fenced against the current durable
+/// collector generation. Event payloads are sensitive transcript data.
 #[async_trait]
 pub trait ProxyHost: Send + Sync {
     async fn authorize(
@@ -135,11 +145,48 @@ pub trait ProxyHost: Send + Sync {
 
     async fn load_seed(&self, actor: &Actor, session: Uuid) -> Result<String, HostError>;
 
-    async fn append_event(
+    async fn claim_prompt(
         &self,
         actor: &Actor,
         session: Uuid,
+        kind: PromptKind,
+        key: &str,
+        text: &str,
+        claim: Uuid,
+    ) -> Result<PromptClaim, HostError>;
+
+    async fn accept_prompt(
+        &self,
+        actor: &Actor,
+        session: Uuid,
+        kind: PromptKind,
+        key: &str,
+        claim: Uuid,
+    ) -> Result<(), HostError>;
+
+    async fn release_prompt(
+        &self,
+        actor: &Actor,
+        session: Uuid,
+        kind: PromptKind,
+        key: &str,
+        text: &str,
+        claim: Uuid,
+    ) -> Result<(), HostError>;
+
+    async fn append_collector_event(
+        &self,
+        actor: &Actor,
+        session: Uuid,
+        generation: i64,
         event: StoredEvent,
+    ) -> Result<(), HostError>;
+
+    async fn record_collector_gap(
+        &self,
+        actor: &Actor,
+        session: Uuid,
+        generation: i64,
     ) -> Result<(), HostError>;
 }
 
@@ -214,6 +261,14 @@ pub enum ProxyError {
     AuthorizationChanged,
     #[error("empty or oversized message")]
     InvalidMessage,
+    #[error("invalid client request key")]
+    InvalidRequestKey,
+    #[error("prompt outcome is uncertain; it must not be resent automatically")]
+    PromptIndeterminate,
+    #[error("another replica is collecting this session")]
+    CollectorBusy,
+    #[error("collector leadership was lost")]
+    CollectorLeadershipLost,
     #[error("OpenCode request failed")]
     Upstream,
     #[error("OpenCode returned HTTP {0}")]
@@ -229,6 +284,16 @@ pub enum ProxyError {
         claim: Uuid,
         upstream_session_id: Option<String>,
     },
+}
+
+/// The durable identity of a prompt dispatch, borrowed for its entire attempt.
+struct PromptReservation<'a> {
+    actor: &'a Actor,
+    session: Uuid,
+    kind: PromptKind,
+    key: &'a str,
+    text: &'a str,
+    claim: Uuid,
 }
 
 struct Target {
@@ -536,14 +601,50 @@ impl<H: ProxyHost + ?Sized + 'static> DebugProxy<H> {
         )
     }
 
+    // A read-only feed handshake proves the server is listening before a create
+    // claim is made. Jobs can be Running while checkout or OpenCode is starting;
+    // a premature mutating request would otherwise be permanently ambiguous.
+    async fn event_response(
+        &self,
+        target: &Target,
+        deadline: DateTime<Utc>,
+    ) -> Result<Response, ProxyError> {
+        let url = target.endpoint(&["event"])?;
+        let response = time::timeout(
+            self.limits.request_timeout.min(remaining(deadline)?),
+            self.client
+                .get(url)
+                .basic_auth("opencode", Some(&target.password))
+                .header(header::ACCEPT, "text/event-stream")
+                .send(),
+        )
+        .await
+        .map_err(|_| ProxyError::Upstream)?
+        .map_err(|_| ProxyError::Upstream)?;
+        if !response.status().is_success() {
+            return Err(ProxyError::UpstreamStatus(response.status().as_u16()));
+        }
+        let is_sse = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(';').next())
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("text/event-stream"));
+        if !is_sse {
+            return Err(ProxyError::InvalidUpstreamResponse);
+        }
+        Ok(response)
+    }
+
     /// Reserve and create exactly one upstream session.  An indeterminate create
     /// keeps its claim: the host must reconcile it before retrying.
-    pub async fn create_session(&self, actor: &Actor, session: Uuid) -> Result<String, ProxyError> {
+    async fn create_session(&self, actor: &Actor, session: Uuid) -> Result<String, ProxyError> {
         let initial = self.grant(actor, session, Operation::CreateSession).await?;
         if initial.upstream_session_id.is_some() {
             return Err(ProxyError::AlreadyInitialized);
         }
         let initial_target = Target::from_grant(session, &initial, self.port())?;
+        let url = initial_target.endpoint(&["session"])?;
         let claim = Uuid::new_v4();
         time::timeout(
             self.limits
@@ -593,7 +694,6 @@ impl<H: ProxyHost + ?Sized + 'static> DebugProxy<H> {
                 });
             }
         };
-        let url = initial_target.endpoint(&["session"])?;
         let response = self
             .client
             .post(url)
@@ -652,9 +752,9 @@ impl<H: ProxyHost + ?Sized + 'static> DebugProxy<H> {
         Ok(upstream_id)
     }
 
-    /// Submit the host's persisted service context and evidence, not caller text.
-    /// The host must make seeding a one-time state transition.
-    pub async fn send_seed(&self, actor: &Actor, session: Uuid) -> Result<(), ProxyError> {
+    /// Submit the persisted context only from the supervised collector, after
+    /// its event connection is open. A seed is a singleton durable prompt.
+    async fn send_seed(&self, actor: &Actor, session: Uuid) -> Result<(), ProxyError> {
         let initial = self.grant(actor, session, Operation::Seed).await?;
         let seed = time::timeout(
             self.limits
@@ -664,21 +764,55 @@ impl<H: ProxyHost + ?Sized + 'static> DebugProxy<H> {
         )
         .await
         .map_err(|_| ProxyError::Host(HostError::Unavailable))??;
-        self.send_text(actor, session, Operation::Seed, &seed, initial)
+        self.send_text(actor, session, Operation::Seed, "seed", &seed, initial)
             .await
     }
 
-    /// Send text only.  Model, agent, tools, directory, command and shell
-    /// overrides are intentionally not exposed.
+    /// Send text only, using a stable caller-supplied key. Reusing the key with
+    /// different text conflicts; an unresolved dispatch is never sent again.
+    /// Model, agent, tool, directory, command and shell overrides are forbidden.
     pub async fn send_reply(
         &self,
         actor: &Actor,
         session: Uuid,
+        client_key: &str,
         text: &str,
     ) -> Result<(), ProxyError> {
+        if client_key.is_empty()
+            || client_key.len() > 256
+            || !client_key.bytes().all(|byte| (b'!'..=b'~').contains(&byte))
+        {
+            return Err(ProxyError::InvalidRequestKey);
+        }
         let initial = self.grant(actor, session, Operation::Reply).await?;
-        self.send_text(actor, session, Operation::Reply, text, initial)
+        self.send_text(actor, session, Operation::Reply, client_key, text, initial)
             .await
+    }
+
+    async fn release_prompt_before_send(
+        &self,
+        reservation: &PromptReservation<'_>,
+        error: ProxyError,
+    ) -> ProxyError {
+        if matches!(
+            time::timeout(
+                self.limits.request_timeout,
+                self.host.release_prompt(
+                    reservation.actor,
+                    reservation.session,
+                    reservation.kind,
+                    reservation.key,
+                    reservation.text,
+                    reservation.claim,
+                ),
+            )
+            .await,
+            Ok(Ok(()))
+        ) {
+            error
+        } else {
+            ProxyError::PromptIndeterminate
+        }
     }
 
     async fn send_text(
@@ -686,6 +820,7 @@ impl<H: ProxyHost + ?Sized + 'static> DebugProxy<H> {
         actor: &Actor,
         session: Uuid,
         operation: Operation,
+        key: &str,
         text: &str,
         initial: AuthorizedSession,
     ) -> Result<(), ProxyError> {
@@ -700,6 +835,12 @@ impl<H: ProxyHost + ?Sized + 'static> DebugProxy<H> {
             return Err(ProxyError::InvalidTarget);
         }
         let target = Target::from_grant(session, &initial, self.port())?;
+        let url = target.endpoint(&["session", upstream_id, "prompt_async"])?;
+        let kind = match operation {
+            Operation::Seed => PromptKind::Seed,
+            Operation::Reply => PromptKind::Reply,
+            _ => return Err(ProxyError::InvalidMessage),
+        };
         let current = match self.grant(actor, session, operation).await {
             Ok(current) => current,
             Err(error) => {
@@ -712,66 +853,57 @@ impl<H: ProxyHost + ?Sized + 'static> DebugProxy<H> {
             return Err(ProxyError::AuthorizationChanged);
         }
         let mut deadline = initial.deadline.min(current.deadline);
-        let key = Uuid::new_v4();
-        let kind = if operation == Operation::Seed {
-            "seed.requested"
-        } else {
-            "reply.requested"
+        let reservation = PromptReservation {
+            actor,
+            session,
+            kind,
+            key,
+            text,
+            claim: Uuid::new_v4(),
         };
-        let record_timeout = match remaining(deadline) {
-            Ok(duration) => duration.min(self.limits.request_timeout),
-            Err(error) => {
-                best_effort_abort(&self.client, &target, upstream_id).await;
-                return Err(error);
-            }
-        };
-        let recorded = time::timeout(
-            record_timeout,
-            self.host.append_event(
-                actor,
-                session,
-                StoredEvent {
-                    key,
-                    kind,
-                    payload: json!({"text": text}),
-                },
+        let claimed = time::timeout(
+            self.limits.request_timeout.min(remaining(deadline)?),
+            self.host.claim_prompt(
+                reservation.actor,
+                reservation.session,
+                reservation.kind,
+                reservation.key,
+                reservation.text,
+                reservation.claim,
             ),
         )
         .await;
-        match recorded {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                best_effort_abort(&self.client, &target, upstream_id).await;
-                return Err(ProxyError::Host(error));
+        match claimed {
+            Ok(Ok(PromptClaim::Accepted)) => return Ok(()),
+            Ok(Ok(PromptClaim::Indeterminate)) => return Err(ProxyError::PromptIndeterminate),
+            Ok(Ok(PromptClaim::Acquired)) => {}
+            Ok(Err(HostError::Unavailable)) | Err(_) => {
+                return Err(ProxyError::PromptIndeterminate);
             }
-            Err(_) => {
-                best_effort_abort(&self.client, &target, upstream_id).await;
-                return Err(ProxyError::Host(HostError::Unavailable));
-            }
+            Ok(Err(error)) => return Err(ProxyError::Host(error)),
         }
 
-        // Do not send after revocation or a budget/state change during persistence.
+        // Reauthorize after persistence. Only this known-unsent path can release.
         let current = match self.grant(actor, session, operation).await {
-            Ok(current) => current,
-            Err(error) => {
+            Ok(current) if target.matches(&current, upstream_id) => current,
+            result => {
+                let error = match result {
+                    Err(error) => error,
+                    Ok(_) => ProxyError::AuthorizationChanged,
+                };
                 best_effort_abort(&self.client, &target, upstream_id).await;
-                return Err(error);
+                return Err(self.release_prompt_before_send(&reservation, error).await);
             }
         };
-        if !target.matches(&current, upstream_id) {
-            best_effort_abort(&self.client, &target, upstream_id).await;
-            return Err(ProxyError::AuthorizationChanged);
-        }
         deadline = deadline.min(current.deadline);
         let request_timeout = match remaining(deadline) {
             Ok(duration) => duration.min(self.limits.request_timeout),
             Err(error) => {
                 best_effort_abort(&self.client, &target, upstream_id).await;
-                return Err(error);
+                return Err(self.release_prompt_before_send(&reservation, error).await);
             }
         };
-        let url = target.endpoint(&["session", upstream_id, "prompt_async"])?;
-        let result = self
+        let response = self
             .client
             .post(url)
             .basic_auth("opencode", Some(&target.password))
@@ -779,58 +911,33 @@ impl<H: ProxyHost + ?Sized + 'static> DebugProxy<H> {
             .json(&json!({"parts": [{"type": "text", "text": text}]}))
             .send()
             .await;
-        let response = match result {
-            Ok(response) if response.status().as_u16() == 204 => response,
-            Ok(response) => {
-                let status = response.status().as_u16();
-                best_effort_abort(&self.client, &target, upstream_id).await;
-                return Err(ProxyError::UpstreamStatus(status));
-            }
-            Err(_) => {
-                best_effort_abort(&self.client, &target, upstream_id).await;
-                return Err(ProxyError::Upstream);
-            }
-        };
-        drop(response);
-        let kind = if operation == Operation::Seed {
-            "seed.accepted"
-        } else {
-            "reply.accepted"
-        };
-        let saved = time::timeout(
-            self.limits
-                .request_timeout
-                .min(remaining(deadline).unwrap_or(Duration::ZERO)),
-            self.host.append_event(
-                actor,
-                session,
-                StoredEvent {
-                    key: Uuid::new_v4(),
-                    kind,
-                    payload: json!({"request_key": key}),
-                },
+        // Any response other than the documented acceptance, a transport error,
+        // or cancellation may follow dispatch. The claim must remain unresolved.
+        if !matches!(&response, Ok(response) if response.status().as_u16() == 204) {
+            return Err(ProxyError::PromptIndeterminate);
+        }
+        match time::timeout(
+            self.limits.request_timeout,
+            self.host.accept_prompt(
+                reservation.actor,
+                reservation.session,
+                reservation.kind,
+                reservation.key,
+                reservation.claim,
             ),
         )
-        .await;
-        match saved {
+        .await
+        {
             Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => {
-                best_effort_abort(&self.client, &target, upstream_id).await;
-                Err(ProxyError::Host(error))
-            }
-            Err(_) => {
-                best_effort_abort(&self.client, &target, upstream_id).await;
-                Err(ProxyError::Host(HostError::Unavailable))
-            }
+            _ => Err(ProxyError::PromptIndeterminate),
         }
     }
 
-    /// Connect the single host-owned event collector before sending the seed.
-    /// Poll `next_event` continuously even when no UI client is connected.
-    pub async fn open_events(
+    async fn open_events(
         &self,
         actor: &Actor,
         session: Uuid,
+        generation: i64,
     ) -> Result<EventStream<H>, ProxyError> {
         let grant = self.grant(actor, session, Operation::Stream).await?;
         let upstream_id = grant
@@ -841,46 +948,7 @@ impl<H: ProxyHost + ?Sized + 'static> DebugProxy<H> {
             return Err(ProxyError::InvalidTarget);
         }
         let target = Target::from_grant(session, &grant, self.port())?;
-        let url = target.endpoint(&["event"])?;
-        let request_timeout = match remaining(grant.deadline) {
-            Ok(duration) => duration.min(self.limits.request_timeout),
-            Err(error) => {
-                best_effort_abort(&self.client, &target, upstream_id).await;
-                return Err(error);
-            }
-        };
-        let response = match time::timeout(
-            request_timeout,
-            self.client
-                .get(url)
-                .basic_auth("opencode", Some(&target.password))
-                .header(header::ACCEPT, "text/event-stream")
-                .send(),
-        )
-        .await
-        {
-            Ok(Ok(response)) => response,
-            _ => {
-                best_effort_abort(&self.client, &target, upstream_id).await;
-                return Err(ProxyError::Upstream);
-            }
-        };
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            best_effort_abort(&self.client, &target, upstream_id).await;
-            return Err(ProxyError::UpstreamStatus(status));
-        }
-        let is_sse = response
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(';').next())
-            .map(|v| v.trim().eq_ignore_ascii_case("text/event-stream"))
-            .unwrap_or(false);
-        if !is_sse {
-            best_effort_abort(&self.client, &target, upstream_id).await;
-            return Err(ProxyError::InvalidUpstreamResponse);
-        }
+        let response = self.event_response(&target, grant.deadline).await?;
         let deadline = match remaining(grant.deadline) {
             Ok(duration) => Instant::now() + duration,
             Err(error) => {
@@ -893,6 +961,7 @@ impl<H: ProxyHost + ?Sized + 'static> DebugProxy<H> {
             client: self.client.clone(),
             actor: *actor,
             session,
+            generation,
             target,
             upstream_id: upstream_id.to_owned(),
             deadline,
@@ -905,10 +974,167 @@ impl<H: ProxyHost + ?Sized + 'static> DebugProxy<H> {
             closed: false,
         };
         if let Err(error) = stream.refresh().await {
-            stream.abort().await;
+            if should_abort(&error) {
+                stream.abort().await;
+            }
             return Err(error);
         }
         Ok(stream)
+    }
+
+    /// Run independently of browser connections. A database advisory lease
+    /// elects one replica, and each stream attempt obtains a durable generation
+    /// that fences events from collectors whose database connection was lost.
+    /// A crash or stream loss records a transcript gap; OpenCode cannot replay.
+    pub async fn run_collector(
+        &self,
+        actor: &Actor,
+        session: Uuid,
+        store: &DebugStore,
+    ) -> Result<(), ProxyError> {
+        let mut lease = time::timeout(
+            self.limits.request_timeout,
+            store.try_collector_leadership(session),
+        )
+        .await
+        .map_err(|_| ProxyError::Host(HostError::Unavailable))?
+        .map_err(collector_store_error)?
+        .ok_or(ProxyError::CollectorBusy)?;
+        let identity = DebugIdentity {
+            user_id: actor.user_id,
+            team_id: actor.team_id,
+        };
+
+        with_leadership(&mut lease, &self.limits, async {
+            let grant = self.grant(actor, session, Operation::CreateSession).await?;
+            if grant.upstream_session_id.is_none() {
+                let target = Target::from_grant(session, &grant, self.port())?;
+                drop(self.event_response(&target, grant.deadline).await?);
+                self.create_session(actor, session).await?;
+            }
+            Ok(())
+        })
+        .await?;
+
+        loop {
+            // A generation is recorded before connecting so even a crash during
+            // connection establishment is recognized by the next leader.
+            with_leadership(&mut lease, &self.limits, async {
+                self.grant(actor, session, Operation::Stream).await?;
+                Ok(())
+            })
+            .await?;
+            let generation =
+                time::timeout(self.limits.request_timeout, lease.begin_attempt(&identity))
+                    .await
+                    .map_err(|_| ProxyError::CollectorLeadershipLost)?
+                    .map_err(collector_store_error)?;
+
+            let result = with_leadership(&mut lease, &self.limits, async {
+                let mut stream = self.open_events(actor, session, generation).await?;
+                // Keep polling while seed dispatch is in flight. Retain the
+                // same pinned event future when seed completes, so a decoded
+                // event cannot be dropped between reading and persistence.
+                let collect = async {
+                    loop {
+                        stream.next_event().await?;
+                    }
+                };
+                let seed = self.send_seed(actor, session);
+                tokio::pin!(collect);
+                tokio::pin!(seed);
+                tokio::select! {
+                    biased;
+                    result = &mut collect => return result,
+                    result = &mut seed => result?,
+                }
+                collect.await
+            })
+            .await;
+
+            // This also succeeds after terminal state. If leadership was lost
+            // first, the next generation records the gap instead.
+            let _ = time::timeout(
+                self.limits.request_timeout,
+                self.host.record_collector_gap(actor, session, generation),
+            )
+            .await;
+            let error = match result {
+                Ok(()) => return Ok(()),
+                Err(error) => error,
+            };
+            if !reconnectable(&error) {
+                return Err(error);
+            }
+            with_leadership(&mut lease, &self.limits, async {
+                time::sleep(Duration::from_secs(1)).await;
+                Ok(())
+            })
+            .await?;
+        }
+    }
+}
+
+fn collector_store_error(error: StoreError) -> ProxyError {
+    match error {
+        StoreError::Forbidden => ProxyError::Host(HostError::Unauthorized),
+        StoreError::NotFound => ProxyError::Host(HostError::NotFound),
+        StoreError::InitializationBusy => ProxyError::Host(HostError::InitializationBusy),
+        StoreError::Inactive | StoreError::InvalidTransition | StoreError::IdempotencyConflict => {
+            ProxyError::Host(HostError::Conflict)
+        }
+        StoreError::BudgetExhausted => ProxyError::BudgetExhausted,
+        _ => ProxyError::Host(HostError::Unavailable),
+    }
+}
+
+fn should_abort(error: &ProxyError) -> bool {
+    matches!(
+        error,
+        ProxyError::DeadlineExceeded
+            | ProxyError::BudgetExhausted
+            | ProxyError::AuthorizationChanged
+            | ProxyError::Host(
+                HostError::Unauthorized | HostError::NotFound | HostError::BudgetExhausted
+            )
+    )
+}
+
+fn reconnectable(error: &ProxyError) -> bool {
+    matches!(
+        error,
+        ProxyError::Upstream
+            | ProxyError::UpstreamStatus(_)
+            | ProxyError::InvalidUpstreamResponse
+            | ProxyError::StreamLimit
+            | ProxyError::StreamClosed
+            | ProxyError::Host(HostError::Unavailable)
+    )
+}
+
+/// Cancels the supervised operation as soon as the lock connection stops
+/// responding. The generation check independently fences stale event writes.
+async fn with_leadership<T>(
+    lease: &mut SessionLock,
+    limits: &ProxyLimits,
+    operation: impl Future<Output = Result<T, ProxyError>>,
+) -> Result<T, ProxyError> {
+    let mut heartbeat = time::interval(limits.reauthorize_interval);
+    heartbeat.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
+    tokio::pin!(operation);
+    loop {
+        tokio::select! {
+            biased;
+            _ = heartbeat.tick() => {
+                if !matches!(
+                    time::timeout(limits.request_timeout, lease.check()).await,
+                    Ok(Ok(()))
+                ) {
+                    return Err(ProxyError::CollectorLeadershipLost);
+                }
+            }
+            result = &mut operation => return result,
+        }
     }
 }
 
@@ -944,17 +1170,12 @@ async fn best_effort_abort(client: &Client, target: &Target, upstream_id: &str) 
     }
 }
 
-/// One actual upstream bus event, already durably appended before delivery.
-pub struct ProxyEvent {
-    pub key: Uuid,
-    pub payload: Value,
-}
-
-pub struct EventStream<H: ProxyHost + ?Sized> {
+struct EventStream<H: ProxyHost + ?Sized> {
     host: Arc<H>,
     client: Client,
     actor: Actor,
     session: Uuid,
+    generation: i64,
     target: Target,
     upstream_id: String,
     deadline: Instant,
@@ -1005,21 +1226,24 @@ impl<H: ProxyHost + ?Sized + 'static> EventStream<H> {
         Ok(())
     }
 
-    /// Wait for one session-scoped event.  Persistence succeeds before the
-    /// event is returned; a persistence, authorization, budget or stream error
-    /// closes this collector and attempts to abort the upstream session.
-    pub async fn next_event(&mut self) -> Result<ProxyEvent, ProxyError> {
+    /// Persist each session-scoped event before returning to the collector.
+    /// Stream loss is not itself a reason to abort the upstream agent.
+    async fn next_event(&mut self) -> Result<(), ProxyError> {
         if self.closed {
             return Err(ProxyError::StreamClosed);
         }
         let result = self.next_event_inner().await;
-        if result.is_err() {
-            self.abort().await;
+        if let Err(error) = &result {
+            if should_abort(error) {
+                self.abort().await;
+            } else {
+                self.closed = true;
+            }
         }
         result
     }
 
-    async fn next_event_inner(&mut self) -> Result<ProxyEvent, ProxyError> {
+    async fn next_event_inner(&mut self) -> Result<(), ProxyError> {
         loop {
             self.remaining()?;
             if Instant::now() >= self.reauthorize_at {
@@ -1042,13 +1266,14 @@ impl<H: ProxyHost + ?Sized + 'static> EventStream<H> {
                 let key = Uuid::new_v4();
                 time::timeout(
                     self.limits.request_timeout.min(self.remaining()?),
-                    self.host.append_event(
+                    self.host.append_collector_event(
                         &self.actor,
                         self.session,
+                        self.generation,
                         StoredEvent {
                             key,
                             kind: "opencode.event",
-                            payload: payload.clone(),
+                            payload,
                         },
                     ),
                 )
@@ -1056,7 +1281,7 @@ impl<H: ProxyHost + ?Sized + 'static> EventStream<H> {
                 .map_err(|_| ProxyError::Host(HostError::Unavailable))??;
                 // Membership or budgets may have changed while the write waited.
                 self.refresh().await?;
-                return Ok(ProxyEvent { key, payload });
+                return Ok(());
             }
             let wait = self
                 .reauthorize_at
@@ -1387,8 +1612,49 @@ mod tests {
         async fn load_seed(&self, _: &Actor, _: Uuid) -> Result<String, HostError> {
             panic!("must not load")
         }
-        async fn append_event(&self, _: &Actor, _: Uuid, _: StoredEvent) -> Result<(), HostError> {
+        async fn claim_prompt(
+            &self,
+            _: &Actor,
+            _: Uuid,
+            _: PromptKind,
+            _: &str,
+            _: &str,
+            _: Uuid,
+        ) -> Result<PromptClaim, HostError> {
+            panic!("must not claim")
+        }
+        async fn accept_prompt(
+            &self,
+            _: &Actor,
+            _: Uuid,
+            _: PromptKind,
+            _: &str,
+            _: Uuid,
+        ) -> Result<(), HostError> {
+            panic!("must not accept")
+        }
+        async fn release_prompt(
+            &self,
+            _: &Actor,
+            _: Uuid,
+            _: PromptKind,
+            _: &str,
+            _: &str,
+            _: Uuid,
+        ) -> Result<(), HostError> {
+            panic!("must not release")
+        }
+        async fn append_collector_event(
+            &self,
+            _: &Actor,
+            _: Uuid,
+            _: i64,
+            _: StoredEvent,
+        ) -> Result<(), HostError> {
             panic!("must not append")
+        }
+        async fn record_collector_gap(&self, _: &Actor, _: Uuid, _: i64) -> Result<(), HostError> {
+            panic!("must not record a gap")
         }
     }
 
@@ -1417,11 +1683,11 @@ mod tests {
             Err(ProxyError::Host(HostError::Unauthorized))
         ));
         assert!(matches!(
-            proxy.send_reply(&actor, session, "hello").await,
+            proxy.send_reply(&actor, session, "reply-1", "hello").await,
             Err(ProxyError::Host(HostError::Unauthorized))
         ));
         assert!(matches!(
-            proxy.open_events(&actor, session).await,
+            proxy.open_events(&actor, session, 1).await,
             Err(ProxyError::Host(HostError::Unauthorized))
         ));
         assert_eq!(host.calls.load(Ordering::SeqCst), 4);
@@ -1441,10 +1707,19 @@ mod tests {
         assert!(matches!(limits.validate(), Err(ProxyError::InvalidLimits)));
     }
 
+    struct TestPrompt {
+        kind: PromptKind,
+        key: String,
+        text: String,
+        claim: Option<Uuid>,
+        accepted: bool,
+    }
+
     struct TestState {
         upstream_id: Option<String>,
         claim: Option<Uuid>,
         events: Vec<StoredEvent>,
+        prompts: Vec<TestPrompt>,
     }
 
     struct TestHost {
@@ -1467,6 +1742,7 @@ mod tests {
                     upstream_id: initialized.then(|| "ses_1".to_owned()),
                     claim: None,
                     events: Vec::new(),
+                    prompts: Vec::new(),
                 }),
                 budget: AtomicBool::new(true),
                 fail_append: AtomicBool::new(false),
@@ -1542,16 +1818,133 @@ mod tests {
             Ok("persisted service evidence".to_owned())
         }
 
-        async fn append_event(
+        async fn claim_prompt(
             &self,
             _: &Actor,
             _: Uuid,
+            kind: PromptKind,
+            key: &str,
+            text: &str,
+            claim: Uuid,
+        ) -> Result<PromptClaim, HostError> {
+            let mut state = self.state.lock().unwrap();
+            let existing = state
+                .prompts
+                .iter()
+                .position(|p| p.kind == kind && p.key == key);
+            if let Some(index) = existing {
+                let prompt = &state.prompts[index];
+                if prompt.text != text {
+                    return Err(HostError::Conflict);
+                }
+                if prompt.accepted {
+                    return Ok(PromptClaim::Accepted);
+                }
+                if prompt.claim.is_some() {
+                    return Ok(PromptClaim::Indeterminate);
+                }
+            }
+            if kind == PromptKind::Reply
+                && !state
+                    .prompts
+                    .iter()
+                    .any(|p| p.kind == PromptKind::Seed && p.accepted)
+            {
+                return Err(HostError::Conflict);
+            }
+            if let Some(index) = existing {
+                state.prompts[index].claim = Some(claim);
+                return Ok(PromptClaim::Acquired);
+            }
+            state.prompts.push(TestPrompt {
+                kind,
+                key: key.to_owned(),
+                text: text.to_owned(),
+                claim: Some(claim),
+                accepted: false,
+            });
+            state.events.push(StoredEvent {
+                key: claim,
+                kind: if kind == PromptKind::Seed {
+                    "seed.requested"
+                } else {
+                    "reply.requested"
+                },
+                payload: if kind == PromptKind::Seed {
+                    json!({"request_key": key})
+                } else {
+                    json!({"request_key": key, "text": text})
+                },
+            });
+            Ok(PromptClaim::Acquired)
+        }
+
+        async fn accept_prompt(
+            &self,
+            _: &Actor,
+            _: Uuid,
+            kind: PromptKind,
+            key: &str,
+            claim: Uuid,
+        ) -> Result<(), HostError> {
+            let mut state = self.state.lock().unwrap();
+            let prompt = state
+                .prompts
+                .iter_mut()
+                .find(|p| p.kind == kind && p.key == key && p.claim == Some(claim))
+                .ok_or(HostError::Conflict)?;
+            prompt.accepted = true;
+            state.events.push(StoredEvent {
+                key: Uuid::new_v4(),
+                kind: if kind == PromptKind::Seed {
+                    "seed.accepted"
+                } else {
+                    "reply.accepted"
+                },
+                payload: json!({"request_key": key}),
+            });
+            Ok(())
+        }
+
+        async fn release_prompt(
+            &self,
+            _: &Actor,
+            _: Uuid,
+            kind: PromptKind,
+            key: &str,
+            text: &str,
+            claim: Uuid,
+        ) -> Result<(), HostError> {
+            let mut state = self.state.lock().unwrap();
+            let prompt = state
+                .prompts
+                .iter_mut()
+                .find(|p| {
+                    p.kind == kind && p.key == key && p.text == text && p.claim == Some(claim)
+                })
+                .ok_or(HostError::Conflict)?;
+            if prompt.accepted {
+                return Err(HostError::Conflict);
+            }
+            prompt.claim = None;
+            Ok(())
+        }
+
+        async fn append_collector_event(
+            &self,
+            _: &Actor,
+            _: Uuid,
+            _: i64,
             event: StoredEvent,
         ) -> Result<(), HostError> {
             if self.fail_append.load(Ordering::SeqCst) {
                 return Err(HostError::Unavailable);
             }
             self.state.lock().unwrap().events.push(event);
+            Ok(())
+        }
+
+        async fn record_collector_gap(&self, _: &Actor, _: Uuid, _: i64) -> Result<(), HostError> {
             Ok(())
         }
     }
@@ -1668,7 +2061,7 @@ mod tests {
         });
         proxy.send_seed(&host.actor, host.session).await.unwrap();
         proxy
-            .send_reply(&host.actor, host.session, "user reply")
+            .send_reply(&host.actor, host.session, "reply-1", "user reply")
             .await
             .unwrap();
         let bodies = server.await.unwrap();
@@ -1708,15 +2101,19 @@ mod tests {
             );
             stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
         });
-        let mut events = proxy.open_events(&host.actor, host.session).await.unwrap();
-        let event = events.next_event().await.unwrap();
+        let mut events = proxy
+            .open_events(&host.actor, host.session, 1)
+            .await
+            .unwrap();
+        events.next_event().await.unwrap();
         {
             let state = host.state.lock().unwrap();
             assert_eq!(state.events.len(), 1);
-            assert_eq!(state.events[0].key, event.key);
             assert_eq!(state.events[0].kind, "opencode.event");
-            assert_eq!(state.events[0].payload, event.payload);
-            assert_eq!(event.payload["properties"]["part"]["text"], "real event");
+            assert_eq!(
+                state.events[0].payload["properties"]["part"]["text"],
+                "real event"
+            );
         }
         server.await.unwrap();
     }
@@ -1728,11 +2125,13 @@ mod tests {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let proxy = test_proxy(Arc::clone(&host), &listener);
         assert!(matches!(
-            proxy.send_reply(&host.actor, host.session, "hello").await,
+            proxy
+                .send_reply(&host.actor, host.session, "reply-1", "hello")
+                .await,
             Err(ProxyError::BudgetExhausted)
         ));
         assert!(matches!(
-            proxy.open_events(&host.actor, host.session).await,
+            proxy.open_events(&host.actor, host.session, 1).await,
             Err(ProxyError::BudgetExhausted)
         ));
         assert!(host.state.lock().unwrap().events.is_empty());
@@ -1741,6 +2140,13 @@ mod tests {
     #[tokio::test]
     async fn upstream_failure_is_not_recorded_as_an_accepted_reply() {
         let host = Arc::new(TestHost::new(true));
+        host.state.lock().unwrap().prompts.push(TestPrompt {
+            kind: PromptKind::Seed,
+            key: "seed".to_owned(),
+            text: "persisted service evidence".to_owned(),
+            claim: Some(Uuid::new_v4()),
+            accepted: true,
+        });
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let proxy = test_proxy(Arc::clone(&host), &listener);
         let server = tokio::spawn(async move {
@@ -1748,17 +2154,12 @@ mod tests {
             let prompt = request(&mut stream).await;
             assert!(prompt.starts_with("POST /session/ses_1/prompt_async HTTP/1.1"));
             stream.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let abort = request(&mut stream).await;
-            assert!(abort.starts_with("POST /session/ses_1/abort HTTP/1.1"));
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                .await
-                .unwrap();
         });
         assert!(matches!(
-            proxy.send_reply(&host.actor, host.session, "hello").await,
-            Err(ProxyError::UpstreamStatus(500))
+            proxy
+                .send_reply(&host.actor, host.session, "reply-1", "hello")
+                .await,
+            Err(ProxyError::PromptIndeterminate)
         ));
         {
             let state = host.state.lock().unwrap();
@@ -1779,15 +2180,11 @@ mod tests {
             let _ = request(&mut stream).await;
             let body = "data: {\"type\":\"message.updated\",\"properties\":{\"info\":{\"sessionID\":\"ses_1\"}}}\n\n";
             stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let abort = request(&mut stream).await;
-            assert!(abort.starts_with("POST /session/ses_1/abort HTTP/1.1"));
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                .await
-                .unwrap();
         });
-        let mut events = proxy.open_events(&host.actor, host.session).await.unwrap();
+        let mut events = proxy
+            .open_events(&host.actor, host.session, 1)
+            .await
+            .unwrap();
         assert!(matches!(
             events.next_event().await,
             Err(ProxyError::Host(HostError::Unavailable))

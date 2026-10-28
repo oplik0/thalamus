@@ -7,6 +7,18 @@
 //! target. Protect every possible target with required checks and reviews, restrict
 //! retargeting and bypass, and do not treat the forge guard as an atomic guarantee.
 
+mod authorization;
+mod refresh;
+mod rollout;
+mod scheduler;
+mod stages;
+pub use authorization::{AuthorizedCandidate, AuthorizedCandidateRun, AuthorizedValidation};
+pub use rollout::{
+    CiStatus, InPlaceSafety, InPlaceSafetyRequirement, MergeGroup, RequiredCheckPin,
+    RolloutApproval, RolloutMode, RolloutPolicy, RolloutStage, RolloutStatus, ValidationGate,
+    ValidationProgress, ValidationRequirement, ValidationStage,
+};
+
 use chrono::{DateTime, Utc};
 use forge::{
     BranchPolicies, ChangeRequest, ChangeRequests, ChangeState, Comments, CreateChangeRequest,
@@ -23,6 +35,8 @@ use uuid::Uuid;
 pub enum Error {
     #[error("invalid request: {0}")]
     Invalid(&'static str),
+    #[error("change conflict: {0}")]
+    Conflict(&'static str),
     #[error("idempotency key was already used for another request")]
     IdempotencyConflict,
     #[error("change not found")]
@@ -140,6 +154,15 @@ pub struct Change {
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
+fn parse_upstream_merge_time(value: Option<&str>) -> Result<Option<DateTime<Utc>>> {
+    value
+        .map(|value| {
+            DateTime::parse_from_rfc3339(value)
+                .map(|time| time.with_timezone(&Utc))
+                .map_err(|_| Error::Invalid("forge merge timestamp is invalid"))
+        })
+        .transpose()
+}
 fn preview_matches(change: &Change, preview: &thalamus_gitops::Preview) -> bool {
     change.base_render_sha256.as_deref() == Some(digest(preview.base_render.as_bytes()).as_str())
         && change.proposed_render_sha256.as_deref()
@@ -221,6 +244,18 @@ impl Store {
         let change = decode(&row)?;
         if inserted.is_some() {
             audit(tx, change.id, actor, "proposed").await?;
+            let (stage, start, end) = match &change.request.rollout {
+                Rollout::Gated => ("candidate_pr", None, None),
+                Rollout::Rolling => ("change_pr", None, None),
+                Rollout::InPlace {
+                    window_start,
+                    window_end,
+                } => ("scheduled_pr", Some(*window_start), Some(*window_end)),
+            };
+            sqlx::query("INSERT INTO thalamus_rollouts(change_id,stage,window_start,window_end) VALUES ($1,$2,$3,$4)")
+                .bind(change.id).bind(stage).bind(start).bind(end).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO thalamus_rollout_stages(change_id,stage,stage_change_id) VALUES ($1,$2,$1)")
+                .bind(change.id).bind(stage).execute(&mut **tx).await?;
         }
         Ok(change)
     }
@@ -328,6 +363,7 @@ impl Store {
         if base == change.request.base_sha {
             return Err(Error::Invalid("target base has not moved"));
         }
+        stages::ensure_refresh_safe(&change, repo, config, &base)?;
         change.request.base_sha = base;
         let path = config
             .worktree_root
@@ -398,9 +434,51 @@ impl Store {
             .fetch_optional(&mut **tx)
             .await?
             .ok_or(Error::NotFound)?;
-        let change = decode(&row)?;
+        let mut change = decode(&row)?;
         if !matches!(change.state.as_str(), "proposed" | "validated") {
             return Err(Error::Invalid("change is not awaiting validation"));
+        }
+        let stage_child: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM thalamus_rollout_stages WHERE stage_change_id=$1 AND change_id<>$1)")
+            .bind(id).fetch_one(&mut **tx).await?;
+        let deployment_edit = change
+            .request
+            .patches
+            .iter()
+            .any(|p| p.path.first().is_some_and(|s| s == "deployments"));
+        if !stage_child
+            && (matches!(
+                &change.request.rollout,
+                Rollout::Gated | Rollout::InPlace { .. }
+            ) || (matches!(&change.request.rollout, Rollout::Rolling) && deployment_edit))
+        {
+            let prepared: bool = sqlx::query_scalar(
+                "SELECT prepared FROM thalamus_rollouts WHERE change_id=$1 FOR UPDATE",
+            )
+            .bind(id)
+            .fetch_one(&mut **tx)
+            .await?;
+            if !prepared {
+                // Preparation renders the pinned base too, so enforce the
+                // same target-base guard before executing the renderer.
+                repo.fetch().map_err(|_| Error::GitOps)?;
+                if repo
+                    .resolve_base(&change.request.target_branch)
+                    .map_err(|_| Error::GitOps)?
+                    != change.request.base_sha
+                {
+                    return Err(Error::Invalid("target base moved; refresh the proposal"));
+                }
+                let value = stages::prepare(&change, repo, config)?;
+                change.request.patches = value.patches;
+                sqlx::query("UPDATE thalamus_changes SET request=$2 WHERE id=$1")
+                    .bind(id)
+                    .bind(serde_json::to_value(&change.request)?)
+                    .execute(&mut **tx)
+                    .await?;
+                sqlx::query("UPDATE thalamus_rollouts SET prepared=true,old_deployment=$2,candidate_deployment=$3,candidate_revision=$4,in_place_pool=$5,previous_revision=$6,workload_namespace=$7,filler_verified_at=NULL,updated_at=now() WHERE change_id=$1")
+                    .bind(id).bind(value.old).bind(value.candidate).bind(value.revision)
+                    .bind(value.in_place_pool).bind(value.previous_revision).bind(value.workload_namespace).execute(&mut **tx).await?;
+            }
         }
         let result = (|| {
             repo.fetch().map_err(|_| Error::GitOps)?;
@@ -417,11 +495,19 @@ impl Store {
             let mut worktree = repo
                 .create_worktree(&change.request.base_sha, &path)
                 .map_err(|_| Error::GitOps)?;
-            let result = match &change.request.revert_commit {
-                Some(commit) => worktree.preview_revert(commit, &config.render),
-                None => worktree.preview(&change.request.patches, &config.render),
-            }
-            .map_err(|_| Error::GitOps);
+            let result = stages::check_artifact_creation(worktree.path(), &change)
+                .and_then(|_| match &change.request.revert_commit {
+                    Some(commit) => worktree
+                        .preview_revert(commit, &config.render)
+                        .map_err(|_| Error::GitOps),
+                    None => worktree
+                        .preview(&change.request.patches, &config.render)
+                        .map_err(|_| Error::GitOps),
+                })
+                .and_then(|preview| {
+                    stages::check_preview_names(worktree.path(), &change)?;
+                    Ok(preview)
+                });
             repo.discard_worktree(worktree).map_err(|_| Error::GitOps)?;
             let preview = result?;
             if preview.data_diff.is_empty() {
@@ -476,6 +562,31 @@ impl Store {
         forge: &F,
         config: &WorkerConfig,
     ) -> Result<Change> {
+        self.publish_impl(
+            tx,
+            id,
+            actor,
+            &PublicationContext {
+                repo,
+                forge,
+                config,
+            },
+            false,
+        )
+        .await
+    }
+
+    pub(crate) async fn publish_impl<F: ChangeRequests + Comments + BranchPolicies>(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        actor: &str,
+        publication: &PublicationContext<'_, F>,
+        allow_update: bool,
+    ) -> Result<Change> {
+        let repo = publication.repo;
+        let forge = publication.forge;
+        let config = publication.config;
         if actor.trim().is_empty() || actor.len() > 512 || actor.chars().any(char::is_control) {
             return Err(Error::Invalid("invalid actor"));
         }
@@ -493,7 +604,7 @@ impl Store {
                 "change must be validated before publication",
             ));
         }
-        if change.pr_number.is_some() {
+        if change.pr_number.is_some() && !allow_update {
             return Err(Error::Invalid("published update requires verifiable non-bypassable forge review and check protection"));
         }
         if thalamus_gitops::branch_for_change(&id.to_string()).map_err(|_| Error::GitOps)?
@@ -510,27 +621,8 @@ impl Store {
             return Err(Error::Invalid("target base moved; refresh the proposal"));
         }
         if let Some(number) = change.pr_number {
-            // Forge protection must invalidate old approvals when the head changes.
-            // This is only a point-in-time check; operators must prevent policy bypass.
-            let policy = forge
-                .branch_policy(&change.request.target_branch)
-                .await
-                .map_err(|_| Error::Forge)?;
-            let reviews = &policy.protection["required_pull_request_reviews"];
-            let checks = &policy.protection["required_status_checks"];
-            if policy.branch != change.request.target_branch
-                || reviews["dismiss_stale_reviews"].as_bool() != Some(true)
-                || reviews["required_approving_review_count"]
-                    .as_u64()
-                    .unwrap_or(0)
-                    < 1
-                || policy.protection["enforce_admins"]["enabled"].as_bool() != Some(true)
-                || checks["strict"].as_bool() != Some(true)
-                || !(checks["checks"].as_array().is_some_and(|v| !v.is_empty())
-                    || checks["contexts"].as_array().is_some_and(|v| !v.is_empty()))
-            {
-                return Err(Error::Invalid("target must require up-to-date checks and renewed reviews, and dismiss stale approvals"));
-            }
+            // The public update entry point has already verified the complete
+            // non-bypassable upstream policy. Git enforces the old-head lease.
             let number = u64::try_from(number).map_err(|_| Error::Invalid("invalid PR number"))?;
             let pr = forge.get_change(number).await.map_err(|_| Error::Forge)?;
             if pr.state != ChangeState::Open
@@ -730,15 +822,36 @@ impl Store {
         repo: &GitOpsRepo,
         forge: &F,
         config: &PreviewConfig,
-        forge_actor: &str,
+        scope: &AdvisoryScope<'_>,
         number: u64,
     ) -> Result<()> {
-        if forge_actor.is_empty() {
-            return Err(Error::Invalid("forge actor is required"));
+        let repository = scope.repository;
+        let target_branch = scope.target_branch;
+        let service = scope.service;
+        let forge_actor = scope.forge_actor;
+        if forge_actor.is_empty() || service.is_empty() || service.chars().any(char::is_control) {
+            return Err(Error::Invalid("forge actor and service are required"));
         }
+        let mut comment_tx = self.pool.begin().await?;
+        let lock_key = format!("thalamus-pr-preview:{repository:?}:{service}:{number}");
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(lock_key)
+            .execute(&mut *comment_tx)
+            .await?;
         let before = forge.get_change(number).await.map_err(|_| Error::Forge)?;
-        if before.state != ChangeState::Open {
-            return Err(Error::Invalid("PR is not open"));
+        if before.state != ChangeState::Open || before.target_branch != target_branch {
+            return Err(Error::Invalid("PR is not open on the configured target"));
+        }
+        repo.fetch().map_err(|_| Error::GitOps)?;
+        if repo
+            .resolve_base(target_branch)
+            .map_err(|_| Error::GitOps)?
+            != before.base_sha
+            || repo.fetch_pull_head(number).map_err(|_| Error::GitOps)? != before.head_sha
+        {
+            return Err(Error::Invalid(
+                "PR refs do not match the configured repository",
+            ));
         }
         let preview = Self::compare_revisions(repo, config, &before.base_sha, &before.head_sha)?;
         let after = forge.get_change(number).await.map_err(|_| Error::Forge)?;
@@ -746,12 +859,23 @@ impl Store {
             || before.base_sha != after.base_sha
             || before.head_sha != after.head_sha
             || before.target_branch != after.target_branch
+            || before.source_repository != after.source_repository
+            || before.source_branch != after.source_branch
+            || after.target_branch != target_branch
         {
             return Err(Error::Invalid("PR moved while rendering"));
         }
+        // Scope the marker to the service and render command, not only PR SHA.
+        let scope = digest(
+            format!(
+                "{repository:?}:{service}:{:?}:{:?}",
+                config.render.executable, config.render.args
+            )
+            .as_bytes(),
+        );
         let marker = format!(
-            "<!-- thalamus-pr-render:{}:{}:{} -->",
-            number, before.base_sha, before.head_sha
+            "<!-- thalamus-pr-render:{}:{}:{}:{} -->",
+            number, before.base_sha, before.head_sha, scope
         );
         let comments: Vec<forge::Comment> = forge
             .list_comments(number)
@@ -762,6 +886,7 @@ impl Store {
             .iter()
             .any(|c| c.author.eq_ignore_ascii_case(forge_actor) && c.body.contains(&marker))
         {
+            comment_tx.commit().await?;
             return Ok(());
         }
         let excerpt: String = preview.rendered_diff.chars().take(10_000).collect();
@@ -781,11 +906,18 @@ impl Store {
             .create_comment(number, &body)
             .await
             .map_err(|_| Error::Forge)?;
+        comment_tx.commit().await?;
         Ok(())
     }
 
     /// Polling recovers missed webhooks. A webhook handler can invoke this by PR number.
-    pub async fn follow<F: ChangeRequests>(&self, id: Uuid, forge: &F) -> Result<Change> {
+    pub async fn follow<F: ChangeRequests>(
+        &self,
+        id: Uuid,
+        forge: &F,
+        repository: &forge::RepoRef,
+        target_branch: &str,
+    ) -> Result<Change> {
         let mut tx = self.pool.begin().await?;
         let row = sqlx::query("SELECT * FROM thalamus_changes WHERE id=$1 FOR UPDATE")
             .bind(id)
@@ -796,7 +928,11 @@ impl Store {
         let number = u64::try_from(change.pr_number.ok_or(Error::Invalid("change has no PR"))?)
             .map_err(|_| Error::Invalid("invalid PR number"))?;
         let pr = forge.get_change(number).await.map_err(|_| Error::Forge)?;
-        if pr.source_branch != change.branch || pr.target_branch != change.request.target_branch {
+        if pr.source_branch != change.branch
+            || pr.source_repository.as_ref() != Some(repository)
+            || pr.target_branch != target_branch
+            || change.request.target_branch != target_branch
+        {
             return Err(Error::Invalid("PR identity changed"));
         }
         let state = match pr.state {
@@ -809,6 +945,19 @@ impl Store {
         };
         if change.head_sha.as_deref() != Some(pr.head_sha.as_str()) {
             return Err(Error::Invalid("PR head changed; stored render is stale"));
+        }
+        if pr.state == ChangeState::Merged
+            && matches!(&change.request.rollout, Rollout::InPlace { .. })
+        {
+            // Only a GitHub PR's authoritative field supplies the upstream time.
+            // Local observation remains separate, including when it is absent.
+            let upstream = if repository.forge == forge::ForgeKind::Github {
+                parse_upstream_merge_time(pr.merged_at.as_deref())?
+            } else {
+                None
+            };
+            sqlx::query("UPDATE thalamus_rollouts SET merge_observed_at=COALESCE(merge_observed_at,now()),upstream_merged_at=COALESCE(upstream_merged_at,$2),updated_at=now() WHERE change_id=$1")
+                .bind(id).bind(upstream).execute(&mut *tx).await?;
         }
         sqlx::query("UPDATE thalamus_changes SET state=$2,updated_at=now() WHERE id=$1")
             .bind(id)
@@ -824,49 +973,110 @@ impl Store {
     /// Verify a raw forge webhook before looking up records. The caller must
     /// supply the configured repository and secret, not values from the request.
     /// Periodic `follow` calls are still required for missed notifications.
-    pub async fn handle_webhook<F: ChangeRequests + forge::Webhooks>(
+    pub async fn handle_webhook_preview<F: ChangeRequests + Comments + forge::Webhooks>(
         &self,
+        repo: &GitOpsRepo,
         forge: &F,
-        repository: &forge::RepoRef,
-        event: &str,
-        signature: &str,
-        secret: &[u8],
-        body: &[u8],
+        config: &PreviewConfig,
+        scope: &AdvisoryScope<'_>,
+        webhook: &SignedWebhook<'_>,
     ) -> Result<Vec<Change>> {
+        let repository = scope.repository;
+        let target_branch = scope.target_branch;
+        let service = scope.service;
         let event = forge
-            .webhook(event, signature, secret, body)
+            .webhook(
+                webhook.event,
+                webhook.signature,
+                webhook.secret,
+                webhook.body,
+            )
             .map_err(|_| Error::Forge)?;
-        let ids: Vec<Uuid> = match event {
+        let (ids, preview_number): (Vec<Uuid>, Option<u64>) = match event {
             Some(forge::WebhookEvent::ChangeRequest {
                 repository: r,
                 number,
                 ..
-            }) if &r == repository => self
-                .by_pr_number(number)
-                .await?
-                .into_iter()
-                .map(|c| c.id)
-                .collect(),
+            }) if &r == repository => {
+                let ids = self
+                    .by_pr_number(number)
+                    .await?
+                    .into_iter()
+                    .filter(|c| {
+                        c.request.service == service && c.request.target_branch == target_branch
+                    })
+                    .map(|c| c.id)
+                    .collect();
+                (ids, Some(number))
+            }
             Some(forge::WebhookEvent::CheckUpdated { repository: r, sha }) if &r == repository => {
-                sqlx::query_scalar(
-                    "SELECT id FROM thalamus_changes WHERE head_sha=$1 AND state='open'",
-                )
-                .bind(sha)
-                .fetch_all(&self.pool)
-                .await?
+                let ids = sqlx::query_scalar("SELECT id FROM thalamus_changes WHERE head_sha=$1 AND state='open' AND request->>'service'=$2 AND request->>'target_branch'=$3")
+                    .bind(sha).bind(service).bind(target_branch).fetch_all(&self.pool).await?;
+                (ids, None)
             }
             Some(forge::WebhookEvent::Push { repository: r, .. }) if &r == repository => {
-                sqlx::query_scalar("SELECT id FROM thalamus_changes WHERE state='open'")
-                    .fetch_all(&self.pool)
-                    .await?
+                let ids = sqlx::query_scalar("SELECT id FROM thalamus_changes WHERE state='open' AND request->>'service'=$1 AND request->>'target_branch'=$2")
+                    .bind(service).bind(target_branch).fetch_all(&self.pool).await?;
+                (ids, None)
             }
-            _ => Vec::new(),
+            _ => (Vec::new(), None),
         };
         let mut changes = Vec::with_capacity(ids.len());
         for id in ids {
-            changes.push(self.follow(id, forge).await?);
+            changes.push(self.follow(id, forge, repository, target_branch).await?);
+        }
+        if let Some(number) = preview_number {
+            let pr = forge.get_change(number).await.map_err(|_| Error::Forge)?;
+            if pr.state == ChangeState::Open && pr.target_branch == target_branch {
+                self.comment_pr_preview(repo, forge, config, scope, number)
+                    .await?;
+            }
         }
         Ok(changes)
+    }
+
+    /// Enumerate open PRs to recover notifications missed while the controller was down.
+    pub async fn reconcile_pr_previews<F: ChangeRequests + Comments>(
+        &self,
+        repo: &GitOpsRepo,
+        forge: &F,
+        config: &PreviewConfig,
+        scope: &AdvisoryScope<'_>,
+    ) -> Result<()> {
+        let repository = scope.repository;
+        let target_branch = scope.target_branch;
+        let service = scope.service;
+        let prs: Vec<ChangeRequest> = forge
+            .list_changes()
+            .try_collect()
+            .await
+            .map_err(|_| Error::Forge)?;
+        let managed: Vec<Uuid> = sqlx::query_scalar("SELECT c.id FROM thalamus_changes c JOIN thalamus_rollouts r ON r.change_id=c.id WHERE c.pr_number IS NOT NULL AND c.request->>'service'=$1 AND c.request->>'target_branch'=$2 AND (c.state='open' OR ($3 AND c.state='merged' AND c.request->'rollout'->>'mode'='in_place' AND r.upstream_merged_at IS NULL))")
+            .bind(service).bind(target_branch).bind(repository.forge == forge::ForgeKind::Github).fetch_all(&self.pool).await?;
+        let mut first_error = None;
+        for id in managed {
+            if let Err(error) = self.follow(id, forge, repository, target_branch).await {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+        for pr in prs {
+            if pr.state == ChangeState::Open && pr.target_branch == target_branch {
+                if let Err(error) = self
+                    .comment_pr_preview(repo, forge, config, scope, pr.number)
+                    .await
+                {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
     pub async fn by_pr_number(&self, number: u64) -> Result<Vec<Change>> {
         let number = i64::try_from(number).map_err(|_| Error::Invalid("invalid PR number"))?;
@@ -911,6 +1121,29 @@ pub struct WorkerConfig {
     pub forge_actor: String,
 }
 
+/// Borrowed publication resources for one configured GitOps repository.
+pub struct PublicationContext<'a, F> {
+    pub repo: &'a GitOpsRepo,
+    pub forge: &'a F,
+    pub config: &'a WorkerConfig,
+}
+
+/// Operator-configured identities defining one service's advisory PR preview.
+pub struct AdvisoryScope<'a> {
+    pub repository: &'a forge::RepoRef,
+    pub target_branch: &'a str,
+    pub service: &'a str,
+    pub forge_actor: &'a str,
+}
+
+/// Exact signed bytes and headers received from the configured forge webhook.
+pub struct SignedWebhook<'a> {
+    pub event: &'a str,
+    pub signature: &'a str,
+    pub secret: &'a [u8],
+    pub body: &'a [u8],
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -930,6 +1163,17 @@ mod tests {
             validation_tier: "expected".into(),
             rollout: Rollout::Rolling,
         }
+    }
+    #[test]
+    fn parses_only_authoritative_rfc3339_merge_time() {
+        assert_eq!(parse_upstream_merge_time(None).unwrap(), None);
+        let utc = parse_upstream_merge_time(Some("2026-10-28T07:00:00Z")).unwrap();
+        let offset = parse_upstream_merge_time(Some("2026-10-28T09:00:00+02:00")).unwrap();
+        assert_eq!(utc, offset);
+        assert!(matches!(
+            parse_upstream_merge_time(Some("not-a-forge-timestamp")),
+            Err(Error::Invalid(_))
+        ));
     }
     #[test]
     fn validates_commit_and_window() {

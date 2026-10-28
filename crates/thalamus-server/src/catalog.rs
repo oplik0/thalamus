@@ -1,15 +1,9 @@
 //! Read-only views of the GitOps service catalog and live Prometheus samples.
 //!
-//! Catalog intent is not evidence of acceptance, reconciliation, readiness,
-//! validation, or benchmarking. Those observations remain unknown until a
-//! trusted collector can associate evidence with the service's revision.
+//! Catalog intent is presented alongside independently collected observations;
+//! intent by itself is never evidence of reconciliation or runtime readiness.
 
-use std::{
-    collections::BTreeSet,
-    fs,
-    path::{Path as FilePath, PathBuf},
-    sync::Arc,
-};
+use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
 use axum::{
     extract::{rejection::PathRejection, Path, State},
@@ -32,6 +26,8 @@ use crate::{ApiError, AppState, RequestPrincipal};
 pub(crate) struct CatalogService {
     pub name: String,
     pub namespace: String,
+    #[serde(default)]
+    pub pool: Option<String>,
     pub deployments: Vec<CatalogDeployment>,
     #[serde(skip)]
     pub source: PathBuf,
@@ -43,6 +39,13 @@ pub(crate) struct CatalogDeployment {
     pub routing: ServiceDeployment,
     pub artifact: String,
     pub hardware: String,
+    pub image: Option<String>,
+    pub revision: Option<String>,
+    pub role: Option<String>,
+    pub replicas: u32,
+    pub packaged_model: bool,
+    pub rollout_strategy: String,
+    pub pooled: bool,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +53,18 @@ struct RawDeployment {
     name: String,
     artifact: String,
     hardware: String,
+    #[serde(default)]
+    image: Option<String>,
+    #[serde(default)]
+    revision: Option<String>,
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default = "default_weight")]
+    replicas: u32,
+    #[serde(default, rename = "packagedModel")]
+    packaged_model: bool,
+    #[serde(default = "default_rollout_strategy", rename = "rolloutStrategy")]
+    rollout_strategy: String,
     // This is the default from templates/serving/kserve.k, not an observed weight.
     #[serde(default = "default_weight")]
     weight: u32,
@@ -57,6 +72,10 @@ struct RawDeployment {
 
 fn default_weight() -> u32 {
     1
+}
+
+fn default_rollout_strategy() -> String {
+    "RollingUpdate".to_owned()
 }
 
 impl From<RawDeployment> for CatalogDeployment {
@@ -68,14 +87,19 @@ impl From<RawDeployment> for CatalogDeployment {
             },
             artifact: raw.artifact,
             hardware: raw.hardware,
+            image: raw.image,
+            revision: raw.revision,
+            role: raw.role,
+            replicas: raw.replicas,
+            packaged_model: raw.packaged_model,
+            rollout_strategy: raw.rollout_strategy,
+            pooled: false,
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CatalogError {
-    #[error("catalog I/O failed: {0}")]
-    Io(#[from] std::io::Error),
     #[error("invalid catalog service {path:?}: {error}")]
     Yaml {
         path: PathBuf,
@@ -98,6 +122,10 @@ fn parse_service(contents: &[u8], source: PathBuf) -> Result<CatalogService, Cat
             service.source
         )));
     }
+    let pooled = service.pool.is_some();
+    for deployment in &mut service.deployments {
+        deployment.pooled = pooled;
+    }
     let mut names = BTreeSet::new();
     for deployment in &service.deployments {
         let name = &deployment.routing.deployment;
@@ -118,39 +146,6 @@ fn parse_service(contents: &[u8], source: PathBuf) -> Result<CatalogService, Cat
         }
     }
     Ok(service)
-}
-
-/// Load direct `services/*.yaml` or `services/*.yml` files under the configured
-/// catalog root. This does not validate the entire KCL schema or render it.
-pub(crate) fn load_services(root: &FilePath) -> Result<Vec<CatalogService>, CatalogError> {
-    let mut services = Vec::new();
-    let mut names = BTreeSet::new();
-    for entry in fs::read_dir(root.join("services"))? {
-        let entry = entry?;
-        let path = entry.path();
-        if !matches!(
-            path.extension().and_then(|s| s.to_str()),
-            Some("yaml" | "yml")
-        ) {
-            continue;
-        }
-        // GitOps likewise refuses symlinked catalog files.
-        if !entry.file_type()?.is_file() {
-            return Err(CatalogError::Invalid(format!(
-                "service catalog entry is not a regular file: {path:?}"
-            )));
-        }
-        let service = parse_service(&fs::read(&path)?, path)?;
-        if !names.insert(service.name.clone()) {
-            return Err(CatalogError::Invalid(format!(
-                "duplicate service name {:?}",
-                service.name
-            )));
-        }
-        services.push(service);
-    }
-    services.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(services)
 }
 
 fn policy_error(error: thalamus_access::Error) -> ApiError {
@@ -265,12 +260,13 @@ struct DeploymentView {
 }
 
 #[derive(Clone, Serialize, utoipa::ToSchema)]
-struct StatusView {
+pub(crate) struct StatusView {
     #[serde(serialize_with = "serialize_status")]
     #[schema(value_type = String)]
-    state: StatusValue,
-    observed_at: Option<DateTime<Utc>>,
-    reason: Option<&'static str>,
+    pub(crate) state: StatusValue,
+    pub(crate) revision: Option<String>,
+    pub(crate) observed_at: Option<DateTime<Utc>>,
+    pub(crate) reason: Option<&'static str>,
 }
 
 fn serialize_status<S: Serializer>(value: &StatusValue, serializer: S) -> Result<S::Ok, S::Error> {
@@ -283,18 +279,19 @@ fn serialize_status<S: Serializer>(value: &StatusValue, serializer: S) -> Result
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
-struct ServiceStatus {
-    accepted: StatusView,
-    applied: StatusView,
-    running: StatusView,
-    functional: StatusView,
-    measured: StatusView,
+pub(crate) struct ServiceStatus {
+    pub(crate) accepted: StatusView,
+    pub(crate) applied: StatusView,
+    pub(crate) running: StatusView,
+    pub(crate) functional: StatusView,
+    pub(crate) measured: StatusView,
 }
 
 impl ServiceStatus {
-    fn unknown() -> Self {
+    pub(crate) fn unknown() -> Self {
         let unknown = StatusView {
             state: StatusValue::Unknown,
+            revision: None,
             observed_at: None,
             reason: None,
         };
@@ -308,24 +305,37 @@ impl ServiceStatus {
     }
 }
 
-impl From<CatalogService> for ServiceView {
-    fn from(service: CatalogService) -> Self {
+impl ServiceView {
+    fn new(service: CatalogService, status: ServiceStatus) -> Self {
+        let pooled = service.pool.is_some();
         Self {
             name: service.name,
             deployments: service
                 .deployments
                 .into_iter()
-                .map(|deployment| DeploymentView {
-                    name: deployment.routing.deployment,
-                    // The KCL deployment schema does not contain a recipe. The UI
-                    // requires a string, so explicitly show absence rather than
-                    // infer a recipe from its image or from the renderer.
-                    recipe: "Unknown",
-                    artifact: deployment.artifact,
-                    hardware: deployment.hardware,
+                .map(|deployment| {
+                    let recipe = match (
+                        pooled,
+                        deployment.rollout_strategy.as_str(),
+                        deployment.packaged_model,
+                    ) {
+                        (false, "RollingUpdate", false) => "KServe / vLLM",
+                        (false, "RollingUpdate", true) => "KServe / vLLM (packaged model)",
+                        (_, "Recreate", false) | (true, "RollingUpdate", false) => "llm-d / vLLM",
+                        (_, "Recreate", true) | (true, "RollingUpdate", true) => {
+                            "llm-d / vLLM (packaged model)"
+                        }
+                        _ => "Unknown",
+                    };
+                    DeploymentView {
+                        name: deployment.routing.deployment,
+                        recipe,
+                        artifact: deployment.artifact,
+                        hardware: deployment.hardware,
+                    }
                 })
                 .collect(),
-            status: ServiceStatus::unknown(),
+            status,
         }
     }
 }
@@ -339,16 +349,24 @@ pub(crate) async fn list_service_catalog(
         .authenticate_principal(copy_principal(&principal))
         .await?;
     let (policy, services) = committed_catalog(state).await?;
+    let policy = Arc::new(policy);
     let mut visible = Vec::new();
     for service in services {
         match authorize_service(state, &policy, &principal, &service).await {
-            Ok(()) => visible.push(service.into()),
+            Ok(()) => visible.push(service),
             Err(thalamus_access::Error::Forbidden) => {}
             Err(error) => return Err(policy_error(error)),
         }
     }
+    let statuses = crate::service_status::collect(state, policy.clone(), &visible).await;
     policy.committed_services().map_err(policy_error)?;
-    Ok(ServiceList { services: visible })
+    Ok(ServiceList {
+        services: visible
+            .into_iter()
+            .zip(statuses)
+            .map(|(service, status)| ServiceView::new(service, status))
+            .collect(),
+    })
 }
 
 pub(crate) async fn get_service_context(
@@ -361,11 +379,19 @@ pub(crate) async fn get_service_context(
         .authenticate_principal(copy_principal(&principal))
         .await?;
     let (policy, services) = committed_catalog(state).await?;
+    let policy = Arc::new(policy);
     let service = find_service(services, name)?;
     authorize_service(state, &policy, &principal, &service)
         .await
         .map_err(policy_error)?;
-    Ok(service.into())
+    let status =
+        crate::service_status::collect(state, policy.clone(), std::slice::from_ref(&service))
+            .await
+            .into_iter()
+            .next()
+            .unwrap_or_else(ServiceStatus::unknown);
+    policy.committed_services().map_err(policy_error)?;
+    Ok(ServiceView::new(service, status))
 }
 
 #[utoipa::path(
@@ -644,7 +670,7 @@ pub fn router() -> Router<Arc<AppState>> {
 mod tests {
     use super::*;
     use serde_json::{json, Value};
-    use std::time::SystemTime;
+    use std::{fs, time::SystemTime};
     use thalamus_metrics::QueryResult;
 
     fn sample(result_type: &str, result: Value) -> Sample {
@@ -670,7 +696,7 @@ mod tests {
     fn parses_actual_service_catalog_and_reports_independent_unknown_states() {
         let service = fixture();
         assert_eq!(service.name, "example-service");
-        assert_eq!(service.namespace, "example-inference");
+        assert_eq!(service.namespace, "thalamus-inference");
         assert_eq!(service.deployments.len(), 1);
         assert_eq!(
             service.deployments[0].routing.deployment,
@@ -679,13 +705,14 @@ mod tests {
         assert_eq!(service.deployments[0].routing.weight, 1);
         assert_eq!(service.deployments[0].artifact, "example-model");
         assert_eq!(service.deployments[0].hardware, "example-gpu");
-        let view = serde_json::to_value(ServiceView::from(service)).unwrap();
-        assert_eq!(view["deployments"][0]["recipe"], "Unknown");
+        let view =
+            serde_json::to_value(ServiceView::new(service, ServiceStatus::unknown())).unwrap();
+        assert_eq!(view["deployments"][0]["recipe"], "KServe / vLLM");
         for field in ["accepted", "applied", "running", "functional", "measured"] {
             assert_eq!(
                 view["status"][field],
                 json!({
-                    "state": "unknown", "observed_at": null, "reason": null
+                    "state": "unknown", "revision": null, "observed_at": null, "reason": null
                 })
             );
         }
@@ -702,7 +729,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_multiple_inline_deployments_without_inventing_recipe_or_weight() {
+    fn parses_multiple_inline_deployments_and_renderer_recipe() {
         let service = parse_service(
             br#"
 name: my-service
@@ -714,6 +741,7 @@ deployments:
   - name: gpu-two
     artifact: weights-two
     hardware: second-gpu
+    role: candidate
     weight: 7
 "#,
             "service.yaml".into(),
@@ -721,8 +749,11 @@ deployments:
         .unwrap();
         assert_eq!(service.deployments[0].routing.weight, 1); // KCL default
         assert_eq!(service.deployments[1].routing.weight, 7);
-        let view = serde_json::to_value(ServiceView::from(service)).unwrap();
-        assert_eq!(view["deployments"][0]["recipe"], "Unknown");
+        assert_eq!(service.deployments[0].role.as_deref(), None);
+        assert_eq!(service.deployments[1].role.as_deref(), Some("candidate"));
+        let view =
+            serde_json::to_value(ServiceView::new(service, ServiceStatus::unknown())).unwrap();
+        assert_eq!(view["deployments"][0]["recipe"], "KServe / vLLM");
         assert_eq!(view["deployments"][1]["name"], "gpu-two");
         assert_eq!(view["deployments"][1]["artifact"], "weights-two");
         assert_eq!(view["deployments"][1]["hardware"], "second-gpu");
@@ -744,8 +775,31 @@ deployments:
         fn new() -> Self {
             let root =
                 std::env::temp_dir().join(format!("thalamus-catalog-{}", uuid::Uuid::new_v4()));
-            fs::create_dir_all(root.join("services")).unwrap();
+            fs::create_dir_all(root.join("catalog/services")).unwrap();
             Self(root)
+        }
+
+        fn git(&self, args: &[&str]) -> String {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&self.0)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git fixture command failed");
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        }
+
+        fn init_git(&self) {
+            self.git(&["init", "-q"]);
+            self.git(&["config", "user.email", "test@example.invalid"]);
+            self.git(&["config", "user.name", "Test"]);
+        }
+
+        fn commit(&self) -> String {
+            self.git(&["add", "--all"]);
+            self.git(&["commit", "-qm", "catalog"]);
+            self.git(&["rev-parse", "HEAD"])
         }
     }
     impl Drop for TempCatalog {
@@ -802,6 +856,70 @@ deployments:
     }
 
     #[test]
+    fn default_branch_is_observed_from_origin_not_the_local_checkout() {
+        use std::process::Command;
+        let temp = TempCatalog::new();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&temp.0)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git fixture command failed");
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "-q", "--initial-branch=main"]);
+        git(&["config", "user.email", "test@example.invalid"]);
+        git(&["config", "user.name", "Test"]);
+        git(&[
+            "init",
+            "-q",
+            "--bare",
+            "--initial-branch=main",
+            "origin.git",
+        ]);
+        fs::create_dir_all(temp.0.join("catalog/services")).unwrap();
+        fs::write(
+            temp.0.join("catalog/services/model.yaml"),
+            "name: model\nnamespace: tenant-a\naccess: {teams: []}\ndeployments: []\n",
+        )
+        .unwrap();
+        git(&["add", "catalog"]);
+        git(&["commit", "-qm", "initial"]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            temp.0.join("origin.git").to_str().unwrap(),
+        ]);
+        git(&["push", "-q", "origin", "HEAD:refs/heads/main"]);
+        let commit = git(&["rev-parse", "HEAD"]);
+        let policy = thalamus_access::PolicySource::new(&temp.0, "catalog", &commit)
+            .load()
+            .unwrap();
+        assert_eq!(policy.committed_revision().unwrap(), commit);
+        let head = policy.default_branch_head().unwrap();
+        assert_eq!(head.branch, "main");
+        assert_eq!(head.commit, commit);
+
+        // Advance only the remote. The configured checkout and authorized blobs
+        // remain at the original commit, while the default-branch fact changes.
+        let tree = git(&["rev-parse", "HEAD^{tree}"]);
+        let next = git(&[
+            "commit-tree",
+            &tree,
+            "-p",
+            &commit,
+            "-m",
+            "new default head",
+        ]);
+        git(&["push", "-q", "origin", &format!("{next}:refs/heads/main")]);
+        assert_eq!(policy.committed_revision().unwrap(), commit);
+        assert_eq!(policy.default_branch_head().unwrap().commit, next);
+    }
+
+    #[test]
     fn policy_errors_do_not_mask_source_or_identity_failure() {
         use axum::response::IntoResponse;
         assert_eq!(
@@ -827,32 +945,42 @@ deployments:
     }
 
     #[test]
-    fn loads_only_catalog_service_files_and_rejects_duplicate_names() {
+    fn committed_catalog_ignores_other_files_and_rejects_duplicate_names() {
         let temp = TempCatalog::new();
+        temp.init_git();
         let contents = include_str!("../../../catalog/services/example-service.yaml");
-        fs::write(temp.0.join("services/one.yaml"), contents).unwrap();
-        fs::write(temp.0.join("services/ignored.txt"), "not yaml").unwrap();
-        let services = load_services(&temp.0).unwrap();
+        fs::write(temp.0.join("catalog/services/one.yaml"), contents).unwrap();
+        fs::write(temp.0.join("catalog/services/ignored.txt"), "not yaml").unwrap();
+        let revision = temp.commit();
+        let source = thalamus_access::PolicySource::new(&temp.0, "catalog", revision);
+        let policy = source.load().unwrap();
+        let services = parse_committed_services(policy.committed_services().unwrap()).unwrap();
         assert_eq!(services.len(), 1);
-        assert_eq!(services[0].source, temp.0.join("services/one.yaml"));
-        fs::write(temp.0.join("services/two.yml"), contents).unwrap();
+        assert_eq!(services[0].source, PathBuf::from("services/one.yaml"));
+
+        fs::write(temp.0.join("catalog/services/two.yml"), contents).unwrap();
+        let revision = temp.commit();
+        let duplicate = thalamus_access::PolicySource::new(&temp.0, "catalog", revision);
         assert!(matches!(
-            load_services(&temp.0),
-            Err(CatalogError::Invalid(_))
+            duplicate.load(),
+            Err(thalamus_access::Error::Source)
         ));
     }
 
     #[cfg(unix)]
     #[test]
-    fn refuses_symlinked_service_files() {
+    fn committed_catalog_refuses_symlinked_service_files() {
         let temp = TempCatalog::new();
+        temp.init_git();
         fs::write(temp.0.join("real.yaml"), "not important").unwrap();
-        std::os::unix::fs::symlink(temp.0.join("real.yaml"), temp.0.join("services/link.yaml"))
-            .unwrap();
-        assert!(matches!(
-            load_services(&temp.0),
-            Err(CatalogError::Invalid(_))
-        ));
+        std::os::unix::fs::symlink(
+            temp.0.join("real.yaml"),
+            temp.0.join("catalog/services/link.yaml"),
+        )
+        .unwrap();
+        let revision = temp.commit();
+        let source = thalamus_access::PolicySource::new(&temp.0, "catalog", revision);
+        assert!(matches!(source.load(), Err(thalamus_access::Error::Source)));
     }
 
     #[test]

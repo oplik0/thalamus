@@ -3,8 +3,10 @@
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    io::Read,
     path::{Component, Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 use thalamus_identity::{IdentityService, VerifiedPrincipal};
 use uuid::Uuid;
@@ -34,6 +36,13 @@ pub struct PolicySource {
     commit: String,
 }
 
+/// A fresh observation of the origin repository's advertised default branch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DefaultBranchHead {
+    pub branch: String,
+    pub commit: String,
+}
+
 impl PolicySource {
     pub fn new(
         repository: impl Into<PathBuf>,
@@ -51,6 +60,7 @@ impl PolicySource {
         let output = Command::new("git")
             .arg("-C")
             .arg(&self.repository)
+            .env("GIT_TERMINAL_PROMPT", "0")
             .args(args)
             .output()
             .map_err(|_| Error::Source)?;
@@ -58,6 +68,47 @@ impl PolicySource {
             return Err(Error::Source);
         }
         Ok(output.stdout)
+    }
+
+    // The default-branch advertisement is a live network observation. Do not
+    // leave a blocking worker and child process behind when origin is down.
+    fn remote_default_head(&self) -> Result<Vec<u8>, Error> {
+        let mut child = Command::new("git")
+            .arg("-C")
+            .arg(&self.repository)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .args(["ls-remote", "--symref", "origin", "HEAD"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| Error::Source)?;
+        let started = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if !status.success() {
+                        return Err(Error::Source);
+                    }
+                    let mut output = Vec::new();
+                    child
+                        .stdout
+                        .take()
+                        .ok_or(Error::Source)?
+                        .read_to_end(&mut output)
+                        .map_err(|_| Error::Source)?;
+                    return Ok(output);
+                }
+                Ok(None) if started.elapsed() < Duration::from_secs(4) => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(Error::Source);
+                }
+            }
+        }
     }
 
     fn validate_source(&self) -> Result<(), Error> {
@@ -204,6 +255,51 @@ fn copy_principal<'a>(principal: &VerifiedPrincipal<'a>) -> VerifiedPrincipal<'a
 }
 
 impl Policy {
+    /// The commit from which this policy and its catalog blobs were loaded.
+    pub fn committed_revision(&self) -> Result<&str, Error> {
+        self.source.validate_source()?;
+        Ok(&self.source.commit)
+    }
+
+    /// Resolve the actual default branch and its head from the configured
+    /// origin, rather than treating the local checkout or a cached ref as proof
+    /// that a commit has been accepted. Failure is not an authorization error:
+    /// callers may still show the authorized catalog with an unknown status.
+    pub fn default_branch_head(&self) -> Result<DefaultBranchHead, Error> {
+        self.source.validate_source()?;
+        let output = self.source.remote_default_head()?;
+        let output = std::str::from_utf8(&output).map_err(|_| Error::Source)?;
+        let mut branch = None;
+        let mut commit = None;
+        for line in output.lines() {
+            let Some((value, name)) = line.split_once('\t') else {
+                return Err(Error::Source);
+            };
+            if name != "HEAD" {
+                continue;
+            }
+            if let Some(reference) = value.strip_prefix("ref: refs/heads/") {
+                if reference.is_empty() || branch.replace(reference.to_owned()).is_some() {
+                    return Err(Error::Source);
+                }
+            } else if matches!(value.len(), 40 | 64)
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                && commit.replace(value.to_owned()).is_none()
+            {
+                // `HEAD` is an object ID, not the locally checked out ref.
+            } else {
+                return Err(Error::Source);
+            }
+        }
+        self.source.validate_source()?;
+        Ok(DefaultBranchHead {
+            branch: branch.ok_or(Error::Source)?,
+            commit: commit.ok_or(Error::Source)?,
+        })
+    }
+
     /// Return the exact service blobs used to construct this policy, after
     /// checking that its trusted source is still at the configured revision.
     pub fn committed_services(&self) -> Result<&[(String, Vec<u8>)], Error> {
@@ -266,6 +362,20 @@ impl Policy {
             .ok_or(Error::Forbidden)?
             .deployments
             .contains(deployment))
+    }
+
+    /// Check the catalog's team grant. The caller must separately authenticate
+    /// the stored actor and recheck their current membership in this team.
+    pub fn team_allowed(&self, service: &ServiceId, team: Uuid) -> Result<bool, Error> {
+        self.source.validate_source()?;
+        let allowed = self
+            .services
+            .get(service)
+            .ok_or(Error::Forbidden)?
+            .teams
+            .contains(&team);
+        self.source.validate_source()?;
+        Ok(allowed)
     }
 
     async fn permissions(

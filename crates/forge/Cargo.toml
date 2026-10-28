@@ -15,6 +15,7 @@ forgejo = ["dep:forgejo-api", "dep:async-stream", "dep:hmac", "dep:sha2", "dep:h
 async-trait = "0.1"
 futures-core = "0.3"
 serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 serde_json = "1"
 thiserror = "2"
 url = { version = "2", features = ["serde"] }

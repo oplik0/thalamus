@@ -7,4 +7,8 @@
   }
 </script>
 <span class="status {status(observation?.state)}">{labels[status(observation?.state)]}</span>
-<span class="detail">{observation?.reason || 'No reason reported'}<br />{observation?.observed_at ? new Date(observation.observed_at).toLocaleString() : 'Not observed'}</span>
+<span class="detail">{observation?.reason || 'No reason reported'}<br />{observation?.observed_at ? new Date(observation.observed_at).toLocaleString() : 'Not observed'}<br />Revision: {observation?.revision || 'Unknown'}</span>
+
+<style>
+  .detail { overflow-wrap: anywhere; }
+</style>

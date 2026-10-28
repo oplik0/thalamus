@@ -1,10 +1,8 @@
 //! Capability evidence from independently observed routing and immutable run results.
 //!
-//! The observer is an operator-controlled trust boundary. It must read the live
-//! routing configuration and runtime, not the desired catalog or a run request.
-//! It also attests the identity under which each selected run actually executed.
-//! Without such an observer and the worker's artifact store, no provider should be
-//! installed. In particular, run requests alone are not observations.
+//! The observer reads live routing and serving resources independently of the
+//! caller and joins them to durable, independently captured run observations.
+//! A run request or a result uploaded by a runner is not runtime evidence.
 use std::{collections::BTreeSet, future::Future, pin::Pin, sync::Arc};
 
 use chrono::{DateTime, Duration, Utc};
@@ -30,7 +28,7 @@ pub struct RoutingObservation {
     pub deployments: Vec<DeploymentObservation>,
 }
 
-/// Runtime and run attestation supplied by the trusted observer, not the caller.
+/// Runtime observation and the independently captured execution provenance.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeploymentObservation {
     pub observed_at: DateTime<Utc>,
@@ -38,11 +36,18 @@ pub struct DeploymentObservation {
     pub revision: String,
     /// The backend identity independently observed for the actual serving revision.
     pub backend: String,
+    /// Suite verified against the actual route and pinned runner configuration.
+    pub validation_suite: String,
     /// The four independently established current identities.
     pub current_identity: EvidenceIdentity,
     /// The independently established identities at execution of `run_id`.
     pub run_identity: EvidenceIdentity,
     pub run_id: Uuid,
+    /// The Kubernetes Job and owned runner Pod observed at result ingestion.
+    pub job_uid: String,
+    pub runner_pod_uid: String,
+    /// Image ID reported by Kubernetes for that runner Pod, not its requested tag.
+    pub runner_image: String,
     /// Original run request attested by the observer at execution, not supplied by
     /// the caller of client config. It must match the immutable DB record and result.
     pub run_request: RunRequest,
@@ -121,7 +126,7 @@ impl Provider {
             let request: RunRequest = serde_json::from_value(row.try_get("request").ok()?).ok()?;
             if id != target.run_id
                 || state != "succeeded"
-                || job_uid.as_deref().is_none_or(|s| s.trim().is_empty())
+                || job_uid.as_deref() != Some(target.job_uid.as_str())
                 || !fresh(created, now, self.max_age)
                 || !fresh(updated, now, self.max_age)
                 || request != target.run_request
@@ -135,6 +140,9 @@ impl Provider {
             }
             let bytes = self.artifacts.read(id, &refs[0]).await.ok()?;
             let summary: Value = serde_json::from_slice(&bytes).ok()?;
+            if summary.get("suite")?.as_str()? != target.validation_suite {
+                return None;
+            }
             let contract = validated_contract(&summary, id, &request, &target.backend)?;
             eligible.push(EligibleDeployment {
                 deployment: target.deployment.clone(),
@@ -201,13 +209,12 @@ fn valid_target(target: &DeploymentObservation, now: DateTime<Utc>, max_age: Dur
     !target.deployment.trim().is_empty()
         && !target.revision.trim().is_empty()
         && !target.backend.trim().is_empty()
+        && matches!(target.validation_suite.as_str(), "candidate" | "public")
         && !target.run_id.is_nil()
+        && !target.job_uid.trim().is_empty()
+        && !target.runner_pod_uid.trim().is_empty()
+        && digest(&target.runner_image)
         && fresh(target.observed_at, now, max_age)
-        && fresh(
-            target.run_request.evidence.conditions.observed_at,
-            now,
-            max_age,
-        )
         && digest(&runtime.model_content)
         && digest(&runtime.tokenizer_content)
         && digest(&runtime.effective_configuration)
@@ -218,7 +225,7 @@ fn valid_target(target: &DeploymentObservation, now: DateTime<Utc>, max_age: Dur
 
 /// Publish a protocol only when its own authentication, authorization, streaming,
 /// tool loop and context checks passed. Continuation alone is not such evidence.
-fn validated_contract(
+pub(crate) fn validated_contract(
     summary: &Value,
     id: Uuid,
     request: &RunRequest,
@@ -226,7 +233,7 @@ fn validated_contract(
 ) -> Option<CapabilityContract> {
     if summary.get("run_id")?.as_str()? != id.to_string()
         || !summary.get("passed")?.as_bool()?
-        || summary.get("suite")?.as_str()? != "candidate"
+        || !matches!(summary.get("suite")?.as_str()?, "candidate" | "public")
         || serde_json::from_value::<RunRequest>(summary.get("request")?.clone()).ok()? != *request
         || summary.get("runner_version")?.as_str()?.trim().is_empty()
     {
@@ -356,7 +363,7 @@ mod tests {
         assert!(validated_contract(&failed, id, &request, "dep-revision").is_none());
         let mut public = summary;
         public["suite"] = json!("public");
-        assert!(validated_contract(&public, id, &request, "dep-revision").is_none());
+        assert!(validated_contract(&public, id, &request, "dep-revision").is_some());
     }
 
     #[test]
@@ -401,5 +408,62 @@ mod tests {
         assert!(digest(&format!("sha256:{}", "a".repeat(64))));
         assert!(!digest("model:latest"));
         assert!(!digest("sha256:1234"));
+    }
+
+    #[test]
+    fn live_observation_is_fresh_without_requiring_historical_time_to_match_now() {
+        use std::collections::BTreeMap;
+        use thalamus_core::{DesiredIdentity, RunConditions, RuntimeIdentity, TestIdentity};
+
+        let now = Utc::now();
+        let sha = format!("sha256:{}", "a".repeat(64));
+        let identity = EvidenceIdentity {
+            desired: DesiredIdentity {
+                rendered_resources: sha.clone(),
+                resolved_dependencies: sha.clone(),
+            },
+            runtime: RuntimeIdentity {
+                image_digests: BTreeMap::from([("engine".into(), sha.clone())]),
+                model_content: sha.clone(),
+                tokenizer_content: sha.clone(),
+                effective_configuration: sha.clone(),
+                component_versions: BTreeMap::from([("engine".into(), sha.clone())]),
+            },
+            test: TestIdentity {
+                suite: "functional".into(),
+                runner: sha.clone(),
+                client: sha.clone(),
+                workload: sha.clone(),
+                seed: 1,
+            },
+            conditions: RunConditions {
+                hardware: "not observed".into(),
+                replicas: 1,
+                cache_state: "not observed".into(),
+                competing_traffic: "not observed".into(),
+                time: "2026-01-01T00:00:00Z".into(),
+            },
+        };
+        let target = DeploymentObservation {
+            observed_at: now,
+            deployment: "dep".into(),
+            revision: "revision".into(),
+            backend: "dep-revision".into(),
+            validation_suite: "candidate".into(),
+            current_identity: identity.clone(),
+            run_identity: identity,
+            run_id: Uuid::from_u128(2),
+            job_uid: "job-uid".into(),
+            runner_pod_uid: "pod-uid".into(),
+            runner_image: sha,
+            run_request: request(),
+        };
+        assert!(valid_target(&target, now, Duration::seconds(10)));
+        let mut missing_runner = target.clone();
+        missing_runner.runner_image.clear();
+        assert!(!valid_target(&missing_runner, now, Duration::seconds(10)));
+        let mut changed = target;
+        changed.current_identity.runtime.model_content = format!("sha256:{}", "b".repeat(64));
+        assert!(!valid_target(&changed, now, Duration::seconds(10)));
     }
 }

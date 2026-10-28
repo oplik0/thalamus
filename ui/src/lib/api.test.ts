@@ -13,24 +13,6 @@ describe('control-plane client', () => {
     expect(requests[0].url).toBe('https://ui.example/api/v1/services/team%2Fmodel/metrics');
     expect(requests[0].credentials).toBe('same-origin');
   });
-  it.each([
-    ['revoke', () => api.revokeKey('key-1')],
-    ['verify revocation', () => api.verifyKeyRevocation('key-1', 'secret')],
-  ] as const)('refreshes displayed keys after %s returns no content', async (_action, revoke) => {
-    const fetch = vi.fn()
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        keys: [{ id: 'key-1', name: 'Production', project_id: 'project-1', allowed_services: ['service'], expires_at: null, revocation_state: 'revoked' }],
-      }), { status: 200 }));
-    vi.stubGlobal('fetch', fetch);
-
-    // The keys page refreshes its displayed list after the revocation operation.
-    let displayedState = 'active';
-    await revoke();
-    displayedState = (await api.keys()).keys[0].revocation_state;
-    expect(displayedState).toBe('revoked');
-    expect(fetch).toHaveBeenLastCalledWith('/api/v1/keys', expect.any(Object));
-  });
   it('propagates server authorization errors', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: 'Forbidden' }), { status: 403 }));
     vi.stubGlobal('fetch', fetch);

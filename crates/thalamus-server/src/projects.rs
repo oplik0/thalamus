@@ -22,7 +22,16 @@ use crate::{ApiError, AppState, RequestPrincipal};
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/teams", get(list_teams))
         .route("/projects", get(list_projects).post(create_project))
+        .route(
+            "/projects/{id}/traffic-classes",
+            get(project_traffic_classes),
+        )
+        .route(
+            "/projects/{id}/traffic-class",
+            axum::routing::put(set_project_traffic_class),
+        )
         .route("/keys", get(list_keys).post(create_key))
         .route("/keys/{id}", axum::routing::delete(revoke_key))
         .route(
@@ -35,6 +44,36 @@ pub fn router() -> Router<Arc<AppState>> {
 async fn method_not_allowed() -> ApiError {
     ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method not allowed")
 }
+#[derive(Serialize, ToSchema)]
+pub(crate) struct TeamView {
+    id: Uuid,
+    name: String,
+    role: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct TeamsResponse {
+    teams: Vec<TeamView>,
+}
+
+#[utoipa::path(get, path = "/api/v1/teams", responses((status = 200, body = TeamsResponse), (status = 401, description = "Authentication required"), (status = 503, description = "Identity service unavailable")))]
+pub(crate) async fn list_teams(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<RequestPrincipal>,
+) -> Result<Json<TeamsResponse>, ApiError> {
+    let teams = state
+        .identity
+        .list_teams_principal(caller.principal())
+        .await?
+        .into_iter()
+        .map(|team| TeamView {
+            id: team.id,
+            name: team.name,
+            role: team.role,
+        })
+        .collect();
+    Ok(Json(TeamsResponse { teams }))
+}
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct ProjectView {
@@ -42,6 +81,8 @@ pub(crate) struct ProjectView {
     name: String,
     team: String,
     budget: Option<f64>,
+    cost_centre: Option<String>,
+    traffic_class: String,
 }
 
 impl ProjectView {
@@ -51,6 +92,8 @@ impl ProjectView {
             name: project.name,
             team: team.name.clone(),
             budget: project.budget,
+            cost_centre: project.cost_centre,
+            traffic_class: project.traffic_class,
         }
     }
 }
@@ -64,6 +107,7 @@ pub(crate) struct ProjectsResponse {
 pub(crate) struct CreateProject {
     name: String,
     team: String,
+    cost_centre: Option<String>,
     budget: Option<f64>,
 }
 
@@ -130,7 +174,7 @@ pub(crate) async fn create_project_for(
             principal(caller),
             team.id,
             &input.name,
-            None,
+            input.cost_centre.as_deref(),
             input.budget,
             agent,
         )
@@ -142,6 +186,8 @@ pub(crate) async fn create_project_for(
             name: input.name,
             team: team.name,
             budget: input.budget,
+            cost_centre: input.cost_centre,
+            traffic_class: "standard".into(),
         }),
     ))
 }
@@ -150,17 +196,16 @@ pub(crate) async fn create_project_for(
 pub(crate) struct KeyView {
     id: Uuid,
     name: String,
-    project_id: Uuid,
+    team_id: Uuid,
+    kind: String,
+    project_id: Option<Uuid>,
     allowed_services: Vec<String>,
     expires_at: Option<DateTime<Utc>>,
     revocation_state: &'static str,
 }
 
 impl KeyView {
-    // Personal keys do not have a project and cannot be represented by the
-    // project-key UI. The identity service still enforces their ownership.
-    fn from_metadata(key: KeyMetadata, now: DateTime<Utc>) -> Option<Self> {
-        let project_id = key.project_id?;
+    fn from_metadata(key: KeyMetadata, now: DateTime<Utc>) -> Self {
         let revocation_state = if key.revoked_at.is_some() {
             // Verification is added only after a successful gateway probe.
             "revocation pending"
@@ -173,14 +218,16 @@ impl KeyView {
         } else {
             "not revoked"
         };
-        Some(Self {
+        Self {
             id: key.id,
             name: key.name,
-            project_id,
+            team_id: key.team_id,
+            kind: key.kind,
+            project_id: key.project_id,
             allowed_services: key.allowed_services,
             expires_at: key.expires_at,
             revocation_state,
-        })
+        }
     }
 }
 
@@ -189,12 +236,40 @@ pub(crate) struct KeysResponse {
     keys: Vec<KeyView>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SelfServiceKeyKind {
+    Personal,
+    Project,
+}
+
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CreateKey {
     name: String,
-    project_id: Uuid,
+    kind: SelfServiceKeyKind,
+    team_id: Option<Uuid>,
+    project_id: Option<Uuid>,
     allowed_services: Vec<String>,
     expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum KeyScope {
+    Personal(Uuid),
+    Project(Uuid),
+}
+
+fn key_scope(input: &CreateKey) -> Result<KeyScope, ApiError> {
+    match (input.kind, input.team_id, input.project_id) {
+        (SelfServiceKeyKind::Personal, Some(team), None) if !team.is_nil() => {
+            Ok(KeyScope::Personal(team))
+        }
+        (SelfServiceKeyKind::Project, None, Some(project)) if !project.is_nil() => {
+            Ok(KeyScope::Project(project))
+        }
+        _ => Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid key scope")),
+    }
 }
 
 #[derive(Serialize, ToSchema)]
@@ -229,7 +304,7 @@ pub(crate) async fn list_keys_for(
         keys.extend(
             team_keys
                 .into_iter()
-                .filter_map(|key| KeyView::from_metadata(key, now)),
+                .map(|key| KeyView::from_metadata(key, now)),
         );
     }
     let worker_table: Option<String> =
@@ -277,37 +352,143 @@ async fn project_team(
     Err(ApiError::new(StatusCode::NOT_FOUND, "project not found"))
 }
 
-#[utoipa::path(post, path = "/api/v1/keys", request_body = CreateKey, responses((status = 201, body = IssuedKeyView), (status = 400, description = "Invalid request"), (status = 401, description = "Authentication required"), (status = 403, description = "Permission denied"), (status = 404, description = "Project not found"), (status = 503, description = "Identity service unavailable")))]
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ProjectTrafficClasses {
+    classes: Vec<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SetProjectTrafficClass {
+    traffic_class: String,
+}
+
+fn class_policy_error(error: thalamus_identity::Error) -> ApiError {
+    match error {
+        thalamus_identity::Error::Invalid("budget cap unavailable or stale")
+        | thalamus_identity::Error::Invalid("budget exceeds or lacks team cap") => ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "reviewed class policy unavailable",
+        ),
+        other => other.into(),
+    }
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{id}/traffic-classes", params(("id" = Uuid, Path)), responses((status = 200, body = ProjectTrafficClasses), (status = 400, description = "Invalid project id"), (status = 401, description = "Authentication required"), (status = 403, description = "Platform administrator required"), (status = 404, description = "Project not found"), (status = 503, description = "Reviewed policy unavailable")))]
+pub(crate) async fn project_traffic_classes(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<RequestPrincipal>,
+    path: Result<Path<Uuid>, PathRejection>,
+) -> Result<Json<ProjectTrafficClasses>, ApiError> {
+    let Path(id) =
+        path.map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "invalid project id"))?;
+    let caller = caller.principal();
+    let team = project_team(&state.identity, &caller, id).await?;
+    let classes = state
+        .identity
+        .allowed_project_traffic_classes_principal(principal(&caller), team, id)
+        .await
+        .map_err(class_policy_error)?;
+    Ok(Json(ProjectTrafficClasses { classes }))
+}
+
+#[utoipa::path(put, path = "/api/v1/projects/{id}/traffic-class", params(("id" = Uuid, Path)), request_body = SetProjectTrafficClass, responses((status = 204, description = "Traffic class updated"), (status = 400, description = "Invalid class"), (status = 401, description = "Authentication required"), (status = 403, description = "Platform administrator and reviewed class required"), (status = 404, description = "Project not found"), (status = 503, description = "Reviewed policy unavailable")))]
+pub(crate) async fn set_project_traffic_class(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<RequestPrincipal>,
+    path: Result<Path<Uuid>, PathRejection>,
+    body: Result<Json<SetProjectTrafficClass>, JsonRejection>,
+) -> Result<StatusCode, ApiError> {
+    let Path(id) =
+        path.map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "invalid project id"))?;
+    let Json(input) = body.map_err(json_error)?;
+    let caller = caller.principal();
+    let team = project_team(&state.identity, &caller, id).await?;
+    state
+        .identity
+        .set_project_traffic_class_principal(
+            principal(&caller),
+            team,
+            id,
+            &input.traffic_class,
+            None,
+        )
+        .await
+        .map_err(class_policy_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(post, path = "/api/v1/keys", request_body = CreateKey, responses((status = 201, body = IssuedKeyView), (status = 400, description = "Invalid key scope or request"), (status = 401, description = "Authentication required"), (status = 403, description = "Permission denied"), (status = 404, description = "Team, project or service not found"), (status = 503, description = "Identity service or committed access policy unavailable")))]
 pub(crate) async fn create_key(
     State(state): State<Arc<AppState>>,
     Extension(caller): Extension<RequestPrincipal>,
     body: Result<Json<CreateKey>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
     let Json(input) = body.map_err(json_error)?;
-    create_key_for(&state.identity, &caller.principal(), input, None).await
+    create_key_for(&state, &caller.principal(), input, None).await
 }
 
 pub(crate) async fn create_key_for(
-    identity: &IdentityService,
+    state: &AppState,
     caller: &VerifiedPrincipal<'_>,
     input: CreateKey,
     agent: Option<&str>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let team_id = project_team(identity, caller, input.project_id).await?;
+    let identity = &state.identity;
+    let (team_id, kind) = match key_scope(&input)? {
+        KeyScope::Personal(team) => {
+            let authorized = identity
+                .list_teams_principal(principal(caller))
+                .await?
+                .into_iter()
+                .any(|candidate| candidate.id == team);
+            if !authorized {
+                return Err(ApiError::new(StatusCode::NOT_FOUND, "team not found"));
+            }
+            (team, KeyKind::Personal)
+        }
+        KeyScope::Project(project) => (
+            project_team(identity, caller, project).await?,
+            KeyKind::Project,
+        ),
+    };
     if input.allowed_services.is_empty() {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "at least one allowed service is required",
         ));
     }
-    let issued = identity
-        .issue_key_principal(
-            principal(caller),
+    let source = state.policy_source.clone().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "service access policy unavailable",
+        )
+    })?;
+    let policy = tokio::task::spawn_blocking(move || source.load())
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "service access policy unavailable",
+            )
+        })?
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "service access policy unavailable",
+            )
+        })?;
+    authorize_key_services(&policy, team_id, &input.allowed_services)?;
+    let mut guard = identity
+        .begin_authorized(principal(caller), team_id, false)
+        .await?;
+    let issued = guard
+        .issue_key(
             NewKey {
                 name: input.name,
                 team_id,
-                project_id: Some(input.project_id),
-                kind: KeyKind::Project,
+                project_id: input.project_id,
+                kind,
                 allowed_services: input.allowed_services,
                 budget: None,
                 expires_at: input.expires_at,
@@ -315,12 +496,16 @@ pub(crate) async fn create_key_for(
             agent,
         )
         .await?;
-    let key = KeyView::from_metadata(issued.key, Utc::now()).ok_or_else(|| {
+    // Do not commit the key or its audit if the published policy moved while
+    // the identity lock was acquired or issuance was in progress.
+    policy.committed_revision().map_err(|_| {
         ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "issued key has no project",
+            StatusCode::SERVICE_UNAVAILABLE,
+            "service access policy unavailable",
         )
     })?;
+    guard.commit().await?;
+    let key = KeyView::from_metadata(issued.key, Utc::now());
     // A secret is returned only by this response and must not be cached.
     Ok((
         StatusCode::CREATED,
@@ -330,6 +515,34 @@ pub(crate) async fn create_key_for(
             secret: issued.secret,
         }),
     ))
+}
+
+fn authorize_key_services(
+    policy: &thalamus_access::Policy,
+    team_id: Uuid,
+    services: &[String],
+) -> Result<(), ApiError> {
+    for service in services {
+        let id = policy
+            .service_id(service)
+            .map_err(|_| {
+                ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "service access policy unavailable",
+                )
+            })?
+            .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "service not found"))?;
+        let allowed = policy.team_allowed(&id, team_id).map_err(|_| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "service access policy unavailable",
+            )
+        })?;
+        if !allowed {
+            return Err(ApiError::new(StatusCode::NOT_FOUND, "service not found"));
+        }
+    }
+    Ok(())
 }
 
 #[utoipa::path(delete, path = "/api/v1/keys/{id}", params(("id" = Uuid, Path)), responses((status = 204, description = "Key revoked"), (status = 400, description = "Invalid key id"), (status = 401, description = "Authentication required"), (status = 403, description = "Permission denied"), (status = 404, description = "Key not found"), (status = 503, description = "Identity service unavailable")))]
@@ -547,7 +760,12 @@ mod tests {
             creator_id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
             project_id,
-            kind: "project".into(),
+            kind: if project_id.is_some() {
+                "project"
+            } else {
+                "personal"
+            }
+            .into(),
             allowed_services: vec!["chat".into(), "code".into()],
             budget: None,
             expires_at: None,
@@ -568,13 +786,14 @@ mod tests {
             id,
             team_id: team.id,
             name: "benchmarks".into(),
-            cost_centre: None,
+            cost_centre: Some("research-42".into()),
             budget: Some(12.5),
+            traffic_class: "standard".into(),
         };
         assert_eq!(
             serde_json::to_value(ProjectView::new(project, &team)).unwrap(),
             json!({
-                "id": id, "name": "benchmarks", "team": "research", "budget": 12.5
+                "id": id, "name": "benchmarks", "team": "research", "budget": 12.5, "cost_centre": "research-42", "traffic_class": "standard"
             })
         );
         let input: CreateProject = serde_json::from_value(json!({
@@ -583,6 +802,12 @@ mod tests {
         .unwrap();
         assert_eq!(input.team, "research");
         assert_eq!(input.budget, None);
+        assert_eq!(input.cost_centre, None);
+        let supplied: CreateProject = serde_json::from_value(json!({
+            "name": "benchmarks", "team": "research", "budget": null, "cost_centre": "research-42"
+        }))
+        .unwrap();
+        assert_eq!(supplied.cost_centre.as_deref(), Some("research-42"));
     }
 
     #[test]
@@ -590,12 +815,13 @@ mod tests {
         let project_id = Uuid::new_v4();
         let metadata = key_metadata(Some(project_id));
         let id = metadata.id;
-        let key = KeyView::from_metadata(metadata, Utc::now()).unwrap();
+        let team_id = metadata.team_id;
+        let key = KeyView::from_metadata(metadata, Utc::now());
         let value = serde_json::to_value(&key).unwrap();
         assert_eq!(
             value,
             json!({
-                "id": id, "name": "CI key", "project_id": project_id,
+                "id": id, "name": "CI key", "team_id": team_id, "kind": "project", "project_id": project_id,
                 "allowed_services": ["chat", "code"], "expires_at": null,
                 "revocation_state": "not revoked"
             })
@@ -617,20 +843,108 @@ mod tests {
     fn key_request_accepts_optional_expiry_and_preserves_names() {
         let project_id = Uuid::new_v4();
         let body: CreateKey = serde_json::from_value(json!({
-            "name": "CI key", "project_id": project_id,
+            "name": "CI key", "kind": "project", "project_id": project_id,
             "allowed_services": ["chat"], "expires_at": null
         }))
         .unwrap();
         assert_eq!(body.name, "CI key");
-        assert_eq!(body.project_id, project_id);
+        assert_eq!(body.project_id, Some(project_id));
+        assert_eq!(key_scope(&body).unwrap(), KeyScope::Project(project_id));
         assert_eq!(body.allowed_services, vec!["chat"]);
         assert!(body.expires_at.is_none());
         let dated: CreateKey = serde_json::from_value(json!({
-            "name": "dated", "project_id": project_id,
+            "name": "dated", "kind": "project", "project_id": project_id,
             "allowed_services": ["chat"], "expires_at": "2030-01-01T00:00:00Z"
         }))
         .unwrap();
         assert!(dated.expires_at.is_some());
+        let team_id = Uuid::new_v4();
+        let personal: CreateKey = serde_json::from_value(json!({
+            "name": "personal", "kind": "personal", "team_id": team_id,
+            "project_id": null, "allowed_services": ["chat"], "expires_at": null
+        }))
+        .unwrap();
+        assert_eq!(key_scope(&personal).unwrap(), KeyScope::Personal(team_id));
+        for kind in ["job", "debug"] {
+            assert!(serde_json::from_value::<CreateKey>(json!({
+                "name": "forged", "kind": kind, "team_id": team_id,
+                "allowed_services": ["chat"]
+            }))
+            .is_err());
+        }
+        let confused: CreateKey = serde_json::from_value(json!({
+            "name": "confused", "kind": "personal", "team_id": team_id,
+            "project_id": project_id, "allowed_services": ["chat"]
+        }))
+        .unwrap();
+        assert!(key_scope(&confused).is_err());
+        let unscoped: CreateKey = serde_json::from_value(json!({
+            "name": "unscoped", "kind": "personal", "allowed_services": ["chat"]
+        }))
+        .unwrap();
+        assert!(key_scope(&unscoped).is_err());
+    }
+
+    #[test]
+    fn key_services_are_limited_to_the_selected_teams_committed_policy() {
+        use std::{fs, path::PathBuf, process::Command};
+        struct TempRepo(PathBuf);
+        impl Drop for TempRepo {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root =
+            TempRepo(std::env::temp_dir().join(format!("thalamus-key-policy-{}", Uuid::new_v4())));
+        fs::create_dir_all(root.0.join("catalog/services")).unwrap();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&root.0)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git fixture failed");
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "test@example.invalid"]);
+        git(&["config", "user.name", "Test"]);
+        let team = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let first = root.0.join("catalog/services/one.yaml");
+        fs::write(
+            &first,
+            format!("name: one\nnamespace: models\naccess: {{teams: [{team}]}}\ndeployments: []\n"),
+        )
+        .unwrap();
+        fs::write(
+            root.0.join("catalog/services/two.yaml"),
+            format!(
+                "name: two\nnamespace: models\naccess: {{teams: [{other}]}}\ndeployments: []\n"
+            ),
+        )
+        .unwrap();
+        git(&["add", "catalog"]);
+        git(&["commit", "-qm", "publish"]);
+        let commit = git(&["rev-parse", "HEAD"]);
+        let policy = thalamus_access::PolicySource::new(&root.0, "catalog", commit)
+            .load()
+            .unwrap();
+        assert!(authorize_key_services(&policy, team, &["one".into()]).is_ok());
+        assert!(authorize_key_services(&policy, team, &["two".into()]).is_err());
+        assert!(authorize_key_services(&policy, team, &["one".into(), "two".into()]).is_err());
+        assert!(authorize_key_services(&policy, team, &["missing".into()]).is_err());
+        fs::write(
+            first,
+            format!(
+                "name: one\nnamespace: models\naccess: {{teams: [{other}]}}\ndeployments: []\n"
+            ),
+        )
+        .unwrap();
+        git(&["add", "catalog"]);
+        git(&["commit", "-qm", "advance"]);
+        assert!(authorize_key_services(&policy, team, &["one".into()]).is_err());
     }
 
     #[test]
@@ -640,16 +954,15 @@ mod tests {
         key.revoked_at = Some(now);
         key.expires_at = Some(now - chrono::Duration::seconds(1));
         assert_eq!(
-            KeyView::from_metadata(key, now).unwrap().revocation_state,
+            KeyView::from_metadata(key, now).revocation_state,
             "revocation pending"
         );
         let mut key = key_metadata(Some(Uuid::new_v4()));
         key.expires_at = Some(now - chrono::Duration::seconds(1));
-        assert_eq!(
-            KeyView::from_metadata(key, now).unwrap().revocation_state,
-            "expired"
-        );
-        assert!(KeyView::from_metadata(key_metadata(None), now).is_none());
+        assert_eq!(KeyView::from_metadata(key, now).revocation_state, "expired");
+        let personal = KeyView::from_metadata(key_metadata(None), now);
+        assert!(personal.project_id.is_none());
+        assert_eq!(personal.kind, "personal");
     }
 
     #[test]
@@ -710,7 +1023,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         for expires_at in [json!("not a date"), json!(42)] {
             let result = serde_json::from_value::<CreateKey>(json!({
-                "name": "key", "project_id": project_id,
+                "name": "key", "kind": "project", "project_id": project_id,
                 "allowed_services": ["chat"], "expires_at": expires_at
             }));
             assert!(result.is_err());

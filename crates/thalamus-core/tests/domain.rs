@@ -160,6 +160,33 @@ fn fragmented_gpu_headroom_and_fillers_choose_correct_mode() {
     ));
 }
 
+#[test]
+fn rollout_rejects_zero_unit_size_and_overflowing_node_headroom() {
+    assert_eq!(
+        select_rollout_mode(&profile(), &[], 0, 1, false),
+        Err(CapacityError::InvalidGpuCount)
+    );
+
+    let mut largest_profile = profile();
+    largest_profile.gpus_per_node = u32::MAX;
+    let mut node = NodeGpuCapacity {
+        node: "largest".into(),
+        free_gpus: u32::MAX,
+        preemptible_filler_gpus: 0,
+    };
+    assert_eq!(
+        select_rollout_mode(&largest_profile, &[node.clone()], 1, 1, true)
+            .unwrap()
+            .available_units,
+        u64::from(u32::MAX)
+    );
+    node.preemptible_filler_gpus = 1;
+    assert_eq!(
+        select_rollout_mode(&largest_profile, &[node], 1, 1, true),
+        Err(CapacityError::ExceedsNodeCapacity("largest".into()))
+    );
+}
+
 fn evidence() -> EvidenceIdentity {
     EvidenceIdentity {
         desired: DesiredIdentity {
@@ -326,5 +353,94 @@ proptest! {
         let result = select_rollout_mode(&profile(), &nodes, size, 1, true).unwrap();
         prop_assert_eq!(result.available_units, u64::from(a / size + b / size));
         prop_assert_eq!(result.mode == RolloutMode::Gated, a / size + b / size >= 1);
+    }
+
+    #[test]
+    fn capacity_respects_per_node_filler_headroom(
+        headrooms in proptest::collection::vec((0u32..=8, 0u32..=8), 0..=5),
+        size in 1u32..=8,
+        replicas in 1u32..=10,
+        requires_gate in any::<bool>(),
+    ) {
+        let nodes: Vec<_> = headrooms
+            .iter()
+            .enumerate()
+            .map(|(index, &(free, reclaimable))| NodeGpuCapacity {
+                node: format!("node-{index}"),
+                free_gpus: free,
+                preemptible_filler_gpus: reclaimable,
+            })
+            .collect();
+        let result = select_rollout_mode(&profile(), &nodes, size, replicas, requires_gate);
+
+        if let Some(index) = headrooms
+            .iter()
+            .position(|&(free, reclaimable)| free + reclaimable > 8)
+        {
+            prop_assert_eq!(
+                result,
+                Err(CapacityError::ExceedsNodeCapacity(format!("node-{index}")))
+            );
+        } else {
+            let decision = result.unwrap();
+            // Enumerate how many positive unit counts fit on each node;
+            // this deliberately does not repeat the implementation's division.
+            let expected_units: u64 = headrooms
+                .iter()
+                .map(|&(free, reclaimable)| {
+                    (1..=8u32)
+                        .filter(|units| *units * size <= free + reclaimable)
+                        .count() as u64
+                })
+                .sum();
+            prop_assert_eq!(decision.available_units, expected_units);
+            let expected_mode = if requires_gate && expected_units >= u64::from(replicas) {
+                RolloutMode::Gated
+            } else if !requires_gate && expected_units > 0 {
+                RolloutMode::Rolling
+            } else {
+                RolloutMode::InPlace
+            };
+            prop_assert_eq!(decision.mode, expected_mode);
+
+            // Moving reclaimable GPUs to the free pool must not change the decision.
+            let redistributed: Vec<_> = nodes
+                .iter()
+                .map(|node| NodeGpuCapacity {
+                    node: node.node.clone(),
+                    free_gpus: node.free_gpus + node.preemptible_filler_gpus,
+                    preemptible_filler_gpus: 0,
+                })
+                .collect();
+            let redistributed_decision =
+                select_rollout_mode(&profile(), &redistributed, size, replicas, requires_gate)
+                    .unwrap();
+            prop_assert_eq!(decision, redistributed_decision);
+        }
+    }
+
+    #[test]
+    fn headroom_is_rejected_on_widened_sum_over_capacity(
+        physical in 1u32..=u32::MAX,
+        free in any::<u32>(),
+        reclaimable in any::<u32>(),
+    ) {
+        let mut profile = profile();
+        profile.gpus_per_node = physical;
+        let node = NodeGpuCapacity {
+            node: "node".into(),
+            free_gpus: free,
+            preemptible_filler_gpus: reclaimable,
+        };
+        let result = select_rollout_mode(&profile, &[node], 1, 1, true);
+        let total = u64::from(free) + u64::from(reclaimable);
+        if total > u64::from(physical) {
+            prop_assert_eq!(
+                result,
+                Err(CapacityError::ExceedsNodeCapacity("node".into()))
+            );
+        } else {
+            prop_assert_eq!(result.unwrap().available_units, total);
+        }
     }
 }

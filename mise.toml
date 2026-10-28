@@ -3,6 +3,7 @@ rust = "1.94.1"
 node = "24"
 pnpm = "10"
 kcl = "0.13.2"
+go = "1.27.3"
 hk = "1.48.0"
 "aqua:editorconfig-checker/editorconfig-checker" = "latest"
 
@@ -11,15 +12,20 @@ HK_PKL_BACKEND = "pklr"
 
 [tasks.build]
 description = "Build the v2 Rust workspace"
-run = "cargo build --workspace --all-targets"
+run = "cargo build --workspace --all-targets --all-features"
 
 [tasks.test]
 description = "Test the v2 Rust workspace"
-run = "cargo test --workspace"
+run = '''
+  set -eu
+  kcl="$(mise which kcl)"
+  python="$(python3 -c 'import os,sys; print(os.path.realpath(sys.executable))')"
+  PATH="$(dirname "$kcl"):$(dirname "$python"):$PATH" cargo test --workspace --all-features
+'''
 
 [tasks.check]
 description = "Check the v2 Rust workspace"
-run = "cargo check --workspace --all-targets"
+run = "cargo check --workspace --all-targets --all-features"
 
 [tasks.fmt]
 description = "Format the v2 Rust workspace"
@@ -55,16 +61,40 @@ dir = "ui"
 run = "pnpm run test"
 
 [tasks."kcl:render"]
-description = "Render the illustrative KCL service example"
+description = "Render the baseline service catalog"
 run = "kcl main.k -D service_file=catalog/services/example-service.yaml"
 
+[tasks."kcl:schema"]
+description = "Regenerate the Service JSON Schema from KCL"
+run = "python3 scripts/generate-service-schema.py"
+
+[tasks."deployment:render"]
+description = "Render the offline fresh-installation fixture"
+run = "kcl deploy/install.k -D config_file=install.fixture.yaml"
+
 [tasks.ci]
-description = "Run v2 Rust, UI and illustrative KCL checks"
+description = "Run Rust, UI, catalog and offline deployment checks"
 run = '''
+  set -eu
+  kcl="$(mise which kcl)"
+  python="$(python3 -c 'import os,sys; print(os.path.realpath(sys.executable))')"
+  export PATH="$(dirname "$kcl"):$(dirname "$python"):$PATH"
   cargo fmt --all -- --check
-  cargo build --workspace --all-targets
-  cargo test --workspace
+  cargo build --workspace --all-targets --all-features
+  cargo test --workspace --all-features
+  cargo clippy --workspace --all-targets --all-features -- -D warnings
+  python3 -m unittest discover -s scripts/inference-perf -p 'test_*.py'
+  python3 scripts/generate-service-schema.py --check
+  python3 scripts/render-catalog.py --check --workload-namespace thalamus-inference
+  python3 -B -m unittest discover -s scripts -p 'test_render_catalog.py'
   kcl main.k -D service_file=catalog/services/example-service.yaml
+  kcl deploy/install.k -D config_file=install.fixture.yaml
+  kcl limits.k -D limit_file=catalog/limits/example-shared.yaml
+  kcl pool.k -D pool_file=catalog/pools/example-pool.yaml
+  kcl test ./templates/serving
+  kcl test ./templates/features
+  kcl test ./templates/gateway
+  kcl test ./templates/platform
   pnpm --dir ui run check
   pnpm --dir ui run build
   pnpm --dir ui run test

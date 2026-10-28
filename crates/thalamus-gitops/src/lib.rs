@@ -1,8 +1,10 @@
-//! Git-backed previews and changes to existing YAML catalog files.
+//! Git-backed previews and changes to YAML catalog source files.
 //!
-//! Git and KCL are invoked directly, without a shell. The caller supplies the
-//! exact KCL arguments used by its CI and is responsible for credentials,
-//! repository trust, worktree lifecycle, and serializing access to a worktree.
+//! Git and the operator-configured catalog renderer are invoked directly,
+//! without a shell. The renderer runs in each worktree and owns the derived
+//! inference and pool output trees. The caller supplies credentials, manages
+//! worktree lifecycle, and serializes access to a worktree. Publication
+//! requires an operator-configured forge repository and target branch binding.
 //!
 //! To regenerate a preview after the base moves, fetch and resolve the base,
 //! create a new worktree at that commit, and reapply the requested patches.
@@ -12,12 +14,14 @@ use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use sha2::{Digest, Sha256};
 use similar::TextDiff;
-use std::collections::BTreeMap;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use thiserror::Error;
+use url::{Host, Url};
 
 #[cfg(test)]
 mod tests;
@@ -36,6 +40,8 @@ pub enum Error {
     },
     #[error("invalid input: {0}")]
     Invalid(String),
+    #[error("service not found in pinned catalog")]
+    ServiceNotFound,
     #[error("command output was not UTF-8")]
     Utf8(#[from] std::string::FromUtf8Error),
 }
@@ -57,7 +63,7 @@ pub enum Operation {
     Remove,
 }
 
-/// KCL executable and arguments, run from the root of each worktree.
+/// Renderer executable and arguments, run from the root of each worktree.
 #[derive(Clone, Debug)]
 pub struct RenderCommand {
     pub executable: OsString,
@@ -87,6 +93,7 @@ pub struct PublishedCommit {
 #[derive(Clone, Debug)]
 pub struct GitOpsRepo {
     bare: PathBuf,
+    binding: Option<OriginBinding>,
 }
 
 #[derive(Debug)]
@@ -95,8 +102,28 @@ pub struct ChangeWorktree {
     base: String,
     changed_files: Vec<PathBuf>,
     preview_hashes: BTreeMap<PathBuf, Option<[u8; 32]>>,
+    generated_hashes: BTreeMap<PathBuf, [u8; 32]>,
     repository: PathBuf,
+    binding: Option<OriginBinding>,
     owned: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RepositoryIdentity {
+    host: String,
+    port: Option<u16>,
+    path: String,
+}
+
+#[derive(Clone, Debug)]
+struct OriginBinding {
+    repository: RepositoryIdentity,
+    target_ref: String,
+}
+
+struct RemoteUrls {
+    fetch: String,
+    push: String,
 }
 
 fn run(
@@ -126,12 +153,249 @@ fn run(
 
 fn git(cwd: &Path, args: &[OsString]) -> Result<String> {
     Ok(String::from_utf8(
-        run(OsStr::new("git"), args, Some(cwd), &[])?.stdout,
+        run(
+            OsStr::new("git"),
+            args,
+            Some(cwd),
+            &[("GIT_NO_REPLACE_OBJECTS", "1")],
+        )?
+        .stdout,
     )?)
+}
+
+// Apply an inverse source-only patch with Git's three-way conflict checks.
+// Derived files are regenerated rather than reverted as independent inputs.
+fn git_apply_inverse(cwd: &Path, patch: &[u8]) -> Result<()> {
+    use std::io::Write;
+
+    let mut child = Command::new("git")
+        .args(["apply", "--3way", "--index", "-"])
+        .current_dir(cwd)
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| Error::Invalid("cannot pipe inverse patch to Git".into()))?;
+    let (write_result, output) = std::thread::scope(|scope| {
+        let writer = scope.spawn(move || stdin.write_all(patch));
+        let output = child.wait_with_output();
+        (writer.join(), output)
+    });
+    let output = output?;
+    if !output.status.success() {
+        return Err(Error::Process {
+            program: "git".into(),
+            status: output.status.to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        });
+    }
+    write_result.map_err(|_| Error::Invalid("inverse patch writer failed".into()))??;
+    Ok(())
 }
 
 fn args(values: &[&str]) -> Vec<OsString> {
     values.iter().map(OsString::from).collect()
+}
+
+fn verify_commit(cwd: &Path, commit: &str) -> Result<()> {
+    if !matches!(commit.len(), 40 | 64) || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(Error::Invalid(
+            "commit must be a full hexadecimal ID".into(),
+        ));
+    }
+    let resolved = run(
+        OsStr::new("git"),
+        &args(&["rev-parse", "--verify", &format!("{commit}^{{commit}}")]),
+        Some(cwd),
+        &[("GIT_NO_REPLACE_OBJECTS", "1")],
+    )?;
+    if !String::from_utf8(resolved.stdout)?
+        .trim()
+        .eq_ignore_ascii_case(commit)
+    {
+        return Err(Error::Invalid(
+            "ID must identify a commit, not a tag".into(),
+        ));
+    }
+    Ok(())
+}
+
+// Match the forge's host, optional port and repository path, not merely a
+// suffix of a URL. Reject URL normalization and credential ambiguities.
+fn repository_identity(input: &str) -> Result<RepositoryIdentity> {
+    let invalid = || Error::Invalid("invalid forge repository URL".into());
+    if input.is_empty()
+        || !input.is_ascii()
+        || input
+            .bytes()
+            .any(|b| b.is_ascii_whitespace() || b.is_ascii_control() || b"%\\?#".contains(&b))
+    {
+        return Err(invalid());
+    }
+    let address = if input.starts_with("https://") || input.starts_with("ssh://") {
+        Cow::Borrowed(input)
+    } else if !input.contains("://") {
+        let (authority, path) = input.split_once(':').ok_or_else(invalid)?;
+        if authority.is_empty() || path.is_empty() || path.starts_with('/') {
+            return Err(invalid());
+        }
+        Cow::Owned(format!("ssh://{authority}/{path}"))
+    } else {
+        return Err(invalid());
+    };
+    let (scheme, rest) = address.split_once("://").ok_or_else(invalid)?;
+    let (authority, path) = rest.split_once('/').ok_or_else(invalid)?;
+    if authority.is_empty() || path.is_empty() || authority.matches('@').count() > 1 {
+        return Err(invalid());
+    }
+    if let Some((user, host)) = authority.split_once('@')
+        && (scheme != "ssh"
+            || user.is_empty()
+            || host.is_empty()
+            || !user
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)))
+    {
+        return Err(invalid());
+    }
+    if !path.contains('/')
+        || path.split('/').any(|segment| {
+            segment.is_empty()
+                || segment == "."
+                || segment == ".."
+                || !segment
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        })
+    {
+        return Err(invalid());
+    }
+    let canonical_path = path.strip_suffix(".git").unwrap_or(path);
+    let name = canonical_path.rsplit('/').next().unwrap_or("");
+    if name.is_empty() || name == "." || name == ".." {
+        return Err(invalid());
+    }
+    let url = Url::parse(&address).map_err(|_| invalid())?;
+    if !matches!(url.scheme(), "https" | "ssh")
+        || url.password().is_some()
+        || (url.scheme() == "https" && !url.username().is_empty())
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path().strip_prefix('/') != Some(path)
+    {
+        return Err(invalid());
+    }
+    match url.host().ok_or_else(invalid)? {
+        Host::Domain(host) => {
+            if host.split('.').any(|label| {
+                label.is_empty()
+                    || label.len() > 63
+                    || label.starts_with('-')
+                    || label.ends_with('-')
+                    || !label
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            }) {
+                return Err(invalid());
+            }
+        }
+        Host::Ipv4(_) | Host::Ipv6(_) => {}
+    }
+    Ok(RepositoryIdentity {
+        host: url.host_str().ok_or_else(invalid)?.to_ascii_lowercase(),
+        port: url.port(),
+        path: canonical_path.to_owned(),
+    })
+}
+
+// Git expands insteadOf/pushInsteadOf when resolving origin. We use the
+// resolved URL as an explicit transport argument, so it must not itself be
+// rewritten a second time. Also forbid per-URL redirect settings that could
+// override the redirect-disabled command-line setting.
+fn ensure_stable_transport_urls(cwd: &Path, urls: &[&str]) -> Result<()> {
+    let output = Command::new("git")
+        .args([
+            "config",
+            "--null",
+            "--get-regexp",
+            r"^(url\..*\.(insteadof|pushinsteadof)|http\..*\.followredirects)$",
+        ])
+        .current_dir(cwd)
+        .output()?;
+    if !output.status.success() {
+        if output.status.code() == Some(1) && output.stdout.is_empty() {
+            return Ok(());
+        }
+        return Err(Error::Process {
+            program: "git".into(),
+            status: output.status.to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        });
+    }
+    let config = String::from_utf8(output.stdout)?;
+    for entry in config.split_terminator('\0') {
+        let (key, value) = entry
+            .split_once('\n')
+            .ok_or_else(|| Error::Invalid("invalid Git URL configuration".into()))?;
+        if key.starts_with("url.") {
+            if value.is_empty() || urls.iter().any(|url| url.starts_with(value)) {
+                return Err(Error::Invalid(
+                    "resolved Git URL would be rewritten again".into(),
+                ));
+            }
+        } else if !value.eq_ignore_ascii_case("false")
+            && urls.iter().any(|url| url.starts_with("https://"))
+        {
+            return Err(Error::Invalid(
+                "per-URL Git HTTP redirects must be disabled".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn verified_origin(cwd: &Path, binding: &OriginBinding) -> Result<RemoteUrls> {
+    let fetch = git(cwd, &args(&["remote", "get-url", "--all", "origin"]))?;
+    let push = git(
+        cwd,
+        &args(&["remote", "get-url", "--push", "--all", "origin"]),
+    )?;
+    let fetch = fetch
+        .strip_suffix('\n')
+        .ok_or_else(|| Error::Invalid("missing origin fetch URL".into()))?;
+    let push = push
+        .strip_suffix('\n')
+        .ok_or_else(|| Error::Invalid("missing origin push URL".into()))?;
+    let mut fetch_urls = fetch.split('\n');
+    let mut push_urls = push.split('\n');
+    let fetch_url = fetch_urls.next().unwrap_or("");
+    let push_url = push_urls.next().unwrap_or("");
+    let matches_repository =
+        |url: &str| repository_identity(url).ok().as_ref() == Some(&binding.repository);
+    if !matches_repository(fetch_url)
+        || fetch_urls.any(|url| !matches_repository(url))
+        || push_urls.next().is_some()
+        || !matches_repository(push_url)
+    {
+        return Err(Error::Invalid(
+            "origin fetch and sole push URL must match the configured forge repository".into(),
+        ));
+    }
+    ensure_stable_transport_urls(cwd, &[fetch_url, push_url])?;
+    Ok(RemoteUrls {
+        fetch: fetch_url.to_owned(),
+        push: push_url.to_owned(),
+    })
+}
+
+fn transport_git(cwd: &Path, command: &[OsString]) -> Result<String> {
+    let mut args = args(&["-c", "http.followRedirects=false"]);
+    args.extend_from_slice(command);
+    git(cwd, &args)
 }
 
 impl GitOpsRepo {
@@ -158,22 +422,78 @@ impl GitOpsRepo {
         if git(&bare, &args(&["rev-parse", "--is-bare-repository"]))?.trim() != "true" {
             return Err(Error::Invalid("repository must be bare".into()));
         }
-        Ok(Self { bare })
+        Ok(Self {
+            bare,
+            binding: None,
+        })
+    }
+
+    /// Bind this handle to operator-owned forge configuration. Both effective
+    /// origin fetch URLs and exactly one push URL must identify this repository.
+    /// The returned handle and its worktrees recheck the binding before network
+    /// operations; a handle opened or cloned without binding cannot publish.
+    pub fn bind_origin(&self, repository_url: &str, target_branch: &str) -> Result<Self> {
+        if target_branch.is_empty()
+            || target_branch.starts_with('-')
+            || target_branch.starts_with("refs/heads/")
+        {
+            return Err(Error::Invalid("invalid configured target branch".into()));
+        }
+        let target_ref = format!("refs/heads/{target_branch}");
+        git(&self.bare, &args(&["check-ref-format", &target_ref]))?;
+        let binding = OriginBinding {
+            repository: repository_identity(repository_url)?,
+            target_ref,
+        };
+        verified_origin(&self.bare, &binding)?;
+        Ok(Self {
+            bare: self.bare.clone(),
+            binding: Some(binding),
+        })
     }
 
     /// Refresh refs before choosing a base. Existing worktrees remain pinned.
     pub fn fetch(&self) -> Result<()> {
-        git(
+        let destination = match &self.binding {
+            Some(binding) => verified_origin(&self.bare, binding)?.fetch,
+            None => "origin".to_owned(),
+        };
+        transport_git(
             &self.bare,
             &args(&[
                 "fetch",
                 "--prune",
-                "origin",
+                &destination,
                 "+refs/heads/*:refs/heads/*",
                 "+refs/tags/*:refs/tags/*",
             ]),
         )?;
         Ok(())
+    }
+
+    /// Fetch a GitHub pull request's synthetic head from the bound origin.
+    /// Compare the returned commit with fresh forge evidence before rendering.
+    pub fn fetch_pull_head(&self, number: u64) -> Result<String> {
+        if number == 0 {
+            return Err(Error::Invalid("invalid pull request number".into()));
+        }
+        let binding = self
+            .binding
+            .as_ref()
+            .ok_or_else(|| Error::Invalid("repository is not bound to a forge".into()))?;
+        let destination = verified_origin(&self.bare, binding)?.fetch;
+        let reference = format!("refs/thalamus/pull/{number}");
+        let refspec = format!("+refs/pull/{number}/head:{reference}");
+        transport_git(
+            &self.bare,
+            &args(&["fetch", "--no-tags", &destination, &refspec]),
+        )?;
+        Ok(git(
+            &self.bare,
+            &args(&["rev-parse", "--verify", &format!("{reference}^{{commit}}")]),
+        )?
+        .trim()
+        .to_owned())
     }
 
     /// Resolve a configured branch or full ref to its current commit after fetching.
@@ -183,6 +503,15 @@ impl GitOpsRepo {
         } else {
             format!("refs/heads/{reference}")
         };
+        if self
+            .binding
+            .as_ref()
+            .is_some_and(|binding| binding.target_ref != reference)
+        {
+            return Err(Error::Invalid(
+                "target branch differs from configured binding".into(),
+            ));
+        }
         git(&self.bare, &args(&["check-ref-format", &reference]))?;
         Ok(git(
             &self.bare,
@@ -190,6 +519,126 @@ impl GitOpsRepo {
         )?
         .trim()
         .to_owned())
+    }
+
+    /// Check a full commit against the bound target branch's locally fetched
+    /// tip. Fetch immediately beforehand and compare the tip with forge evidence;
+    /// this point-in-time check is not an atomic guarantee about later updates.
+    pub fn is_ancestor(&self, commit: &str, target_branch: &str) -> Result<bool> {
+        let binding = self
+            .binding
+            .as_ref()
+            .ok_or_else(|| Error::Invalid("repository is not bound to a forge".into()))?;
+        let reference = if target_branch.starts_with("refs/heads/") {
+            target_branch.to_owned()
+        } else {
+            format!("refs/heads/{target_branch}")
+        };
+        if reference != binding.target_ref {
+            return Err(Error::Invalid(
+                "target branch differs from configured binding".into(),
+            ));
+        }
+        verified_origin(&self.bare, binding)?;
+        verify_commit(&self.bare, commit)?;
+        let target = run(
+            OsStr::new("git"),
+            &args(&["rev-parse", "--verify", &format!("{reference}^{{commit}}")]),
+            Some(&self.bare),
+            &[("GIT_NO_REPLACE_OBJECTS", "1")],
+        )?;
+        let target = String::from_utf8(target.stdout)?;
+        let output = Command::new("git")
+            .args(["merge-base", "--is-ancestor", commit, target.trim()])
+            .current_dir(&self.bare)
+            .env("GIT_NO_REPLACE_OBJECTS", "1")
+            .output()?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(Error::Process {
+                program: "git".into(),
+                status: output.status.to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            }),
+        }
+    }
+
+    /// Locate a uniquely named service in an immutable commit's catalog.
+    /// Only regular YAML blobs directly under catalog/services are considered;
+    /// malformed entries and duplicate matches for the requested name fail closed.
+    pub fn service_file(&self, base: &str, service: &str) -> Result<PathBuf> {
+        if service.is_empty()
+            || service.len() > 253
+            || service.starts_with('.')
+            || service.ends_with('.')
+            || !service
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+        {
+            return Err(Error::Invalid("invalid service or base commit".into()));
+        }
+        verify_commit(&self.bare, base)?;
+        let env = [("GIT_NO_REPLACE_OBJECTS", "1")];
+        let tree = format!("{base}:catalog/services");
+        let listing = run(
+            OsStr::new("git"),
+            &args(&["ls-tree", "-z", &tree]),
+            Some(&self.bare),
+            &env,
+        )?;
+        let mut selected = None;
+        for entry in listing
+            .stdout
+            .split(|b| *b == 0)
+            .filter(|entry| !entry.is_empty())
+        {
+            let tab = entry
+                .iter()
+                .position(|byte| *byte == b'\t')
+                .ok_or_else(|| Error::Invalid("invalid catalog tree entry".into()))?;
+            let metadata = std::str::from_utf8(&entry[..tab])
+                .map_err(|_| Error::Invalid("invalid catalog tree entry".into()))?;
+            let filename = std::str::from_utf8(&entry[tab + 1..])
+                .map_err(|_| Error::Invalid("invalid catalog filename".into()))?;
+            let file = Path::new("catalog/services").join(filename);
+            if !matches!(
+                file.extension().and_then(|s| s.to_str()),
+                Some("yaml" | "yml")
+            ) {
+                continue;
+            }
+            let mut parts = metadata.split(' ');
+            let mode = parts.next();
+            let kind = parts.next();
+            let object = parts.next().unwrap_or("");
+            let mut components = file.components();
+            if parts.next().is_some()
+                || !matches!(mode, Some("100644" | "100755"))
+                || kind != Some("blob")
+                || !matches!(object.len(), 40 | 64)
+                || !object.bytes().all(|b| b.is_ascii_hexdigit())
+                || !matches!(components.next(), Some(Component::Normal(s)) if s == "catalog")
+                || !matches!(components.next(), Some(Component::Normal(s)) if s == "services")
+                || !matches!(components.next(), Some(Component::Normal(_)))
+                || components.next().is_some()
+            {
+                return Err(Error::Invalid("invalid catalog service blob".into()));
+            }
+            let blob = run(
+                OsStr::new("git"),
+                &args(&["cat-file", "blob", object]),
+                Some(&self.bare),
+                &env,
+            )?;
+            let value: Value = serde_yaml::from_slice(&blob.stdout)?;
+            if value.get("name").and_then(Value::as_str) == Some(service)
+                && selected.replace(file).is_some()
+            {
+                return Err(Error::Invalid("duplicate service name in catalog".into()));
+            }
+        }
+        selected.ok_or(Error::ServiceNotFound)
     }
 
     /// Discard only a worktree created by this repository handle.
@@ -210,6 +659,23 @@ impl GitOpsRepo {
         command.push(worktree.path.into_os_string());
         git(&self.bare, &command)?;
         Ok(())
+    }
+
+    /// Render an explicit commit in an isolated, temporary worktree. The path
+    /// must not exist, and is removed on either successful or failed rendering.
+    pub fn render_ref(&self, commit: &str, path: &Path, render: &RenderCommand) -> Result<String> {
+        let binding = self
+            .binding
+            .as_ref()
+            .ok_or_else(|| Error::Invalid("repository is not bound to a forge".into()))?;
+        verified_origin(&self.bare, binding)?;
+        let worktree = self.create_worktree(commit, path)?;
+        let result = worktree.render(render);
+        let cleanup = self.discard_worktree(worktree);
+        match (result, cleanup) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+        }
     }
 
     /// Render two approved commit IDs in isolated worktrees. Paths must not exist.
@@ -283,7 +749,9 @@ impl GitOpsRepo {
             base: resolved,
             changed_files: Vec::new(),
             preview_hashes: BTreeMap::new(),
+            generated_hashes: BTreeMap::new(),
             repository: self.bare.clone(),
+            binding: self.binding.clone(),
             owned: true,
         })
     }
@@ -317,23 +785,34 @@ impl GitOpsRepo {
         }
         let names = git(
             &path,
-            &args(&["diff", "--name-only", "-z", base, "HEAD", "--"]),
+            &args(&[
+                "diff",
+                "--no-renames",
+                "--name-only",
+                "-z",
+                base,
+                "HEAD",
+                "--",
+            ]),
         )?;
-        let changed_files: Vec<PathBuf> = names
-            .split('\0')
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-            .collect();
-        for file in &changed_files {
-            validate_catalog_path(&path, file)?;
+        let mut changed_files = Vec::new();
+        for name in names.split('\0').filter(|s| !s.is_empty()) {
+            let file = PathBuf::from(name);
+            if !is_generated_path(&file) {
+                validate_catalog_path(&path, &file)?;
+                changed_files.push(file);
+            }
         }
         let preview_hashes = file_hashes(&path, &changed_files)?;
+        let generated_hashes = generated_tree_hashes(&path)?;
         Ok(ChangeWorktree {
             path,
             base: base.to_owned(),
             changed_files,
             preview_hashes,
+            generated_hashes,
             repository: self.bare.clone(),
+            binding: self.binding.clone(),
             owned: false,
         })
     }
@@ -369,6 +848,62 @@ fn file_hashes(root: &Path, paths: &[PathBuf]) -> Result<BTreeMap<PathBuf, Optio
         .collect()
 }
 
+const GENERATED_ROOTS: [&str; 2] = ["rendered/inference", "rendered/pools"];
+
+fn is_generated_path(path: &Path) -> bool {
+    GENERATED_ROOTS.iter().any(|root| path.starts_with(root))
+}
+
+/// Capture the entire renderer-owned tree so files added or changed after the
+/// preview cannot be included in a publication. Never follow output symlinks.
+fn generated_tree_hashes(root: &Path) -> Result<BTreeMap<PathBuf, [u8; 32]>> {
+    fn visit(root: &Path, path: &Path, hashes: &mut BTreeMap<PathBuf, [u8; 32]>) -> Result<()> {
+        let absolute = root.join(path);
+        let metadata = fs::symlink_metadata(&absolute)?;
+        if metadata.is_dir() {
+            for entry in fs::read_dir(absolute)? {
+                visit(root, &path.join(entry?.file_name()), hashes)?;
+            }
+        } else if metadata.is_file() {
+            let mut digest = Sha256::new();
+            digest.update(fs::read(absolute)?);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                digest.update([(metadata.permissions().mode() & 0o111 != 0) as u8]);
+            }
+            hashes.insert(path.to_path_buf(), digest.finalize().into());
+        } else {
+            return Err(Error::Invalid(
+                "generated paths must be regular files or directories, not symlinks".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    let mut hashes = BTreeMap::new();
+    match fs::symlink_metadata(root.join("rendered")) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(hashes),
+        Ok(_) => return Err(Error::Invalid("rendered must be a real directory".into())),
+        Err(error) => return Err(error.into()),
+    }
+    for name in GENERATED_ROOTS {
+        let path = Path::new(name);
+        match fs::symlink_metadata(root.join(path)) {
+            Ok(metadata) if metadata.is_dir() => visit(root, path, &mut hashes)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(_) => {
+                return Err(Error::Invalid(
+                    "generated root must be a real directory".into(),
+                ));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(hashes)
+}
+
 impl ChangeWorktree {
     pub fn path(&self) -> &Path {
         &self.path
@@ -386,10 +921,86 @@ impl ChangeWorktree {
         Ok(())
     }
 
-    fn render(&self, command: &RenderCommand) -> Result<String> {
-        Ok(String::from_utf8(
-            run(&command.executable, &command.args, Some(&self.path), &[])?.stdout,
-        )?)
+    /// Render in an isolated worktree without inheriting Git or service secrets.
+    /// Python renderers must be trusted, absolute files outside the checkout.
+    pub fn render(&self, command: &RenderCommand) -> Result<String> {
+        if command.executable.as_os_str() == OsStr::new("python3") {
+            let script = match command.args.as_slice() {
+                [isolation, script, ..] if isolation == OsStr::new("-I") => Path::new(script),
+                _ => {
+                    return Err(Error::Invalid(
+                        "untrusted renderer: Python requires an isolated absolute script".into(),
+                    ));
+                }
+            };
+            if !script.is_absolute() {
+                return Err(Error::Invalid(
+                    "untrusted renderer: script path must be absolute".into(),
+                ));
+            }
+            let metadata = fs::symlink_metadata(script)?;
+            let resolved = fs::canonicalize(script)?;
+            if !metadata.is_file()
+                || resolved != script
+                || resolved.starts_with(&self.path)
+                || resolved.starts_with(&self.repository)
+            {
+                return Err(Error::Invalid(
+                    "untrusted renderer: script must be a canonical regular file outside the checkout".into(),
+                ));
+            }
+        }
+
+        let configured_path = std::env::var_os("PATH")
+            .ok_or_else(|| Error::Invalid("renderer PATH is not configured".into()))?;
+        let mut trusted_paths = Vec::new();
+        for entry in std::env::split_paths(&configured_path) {
+            if !entry.is_absolute() {
+                continue;
+            }
+            if let Ok(resolved) = fs::canonicalize(entry)
+                && !resolved.starts_with(&self.path)
+                && !resolved.starts_with(&self.repository)
+            {
+                trusted_paths.push(resolved);
+            }
+        }
+        if trusted_paths.is_empty() {
+            return Err(Error::Invalid(
+                "renderer PATH contains no trusted directories".into(),
+            ));
+        }
+        let path = std::env::join_paths(trusted_paths)
+            .map_err(|_| Error::Invalid("renderer PATH is invalid".into()))?;
+        let temporary = tempfile::Builder::new()
+            .prefix("thalamus-render-")
+            .tempdir()?;
+        let temporary_path = fs::canonicalize(temporary.path())?;
+        if temporary_path.starts_with(&self.path) || temporary_path.starts_with(&self.repository) {
+            return Err(Error::Invalid(
+                "renderer temporary directory must be outside the checkout".into(),
+            ));
+        }
+        let output = Command::new(&command.executable)
+            .args(&command.args)
+            .current_dir(&self.path)
+            .env_clear()
+            .env("PATH", path)
+            .env("HOME", &temporary_path)
+            .env("TMPDIR", &temporary_path)
+            .env("KCL_CACHE_PATH", &temporary_path)
+            .env("KCL_PKG_PATH", &temporary_path)
+            .env("LANG", "C.UTF-8")
+            .env("LC_ALL", "C.UTF-8")
+            .output()?;
+        if !output.status.success() {
+            return Err(Error::Process {
+                program: command.executable.to_string_lossy().into_owned(),
+                status: output.status.to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            });
+        }
+        Ok(String::from_utf8(output.stdout)?)
     }
 
     /// Preview the inverse of a single-parent commit against this worktree's base.
@@ -435,9 +1046,12 @@ impl ChangeWorktree {
             .split('\0')
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
+            .filter(|path| !is_generated_path(path))
             .collect();
         if changed_files.is_empty() {
-            return Err(Error::Invalid("revert commit has no changes".into()));
+            return Err(Error::Invalid(
+                "revert commit has no catalog changes".into(),
+            ));
         }
         let mut created_files = Vec::new();
         for path in &changed_files {
@@ -461,16 +1075,19 @@ impl ChangeWorktree {
             }
         }
         let base_render = self.render(render)?;
-        git(
-            &self.path,
-            &args(&[
-                "-c",
-                "core.hooksPath=/dev/null",
-                "revert",
-                "--no-commit",
-                commit,
-            ]),
-        )?;
+        let mut inverse = args(&[
+            "diff",
+            "--binary",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            commit,
+            fields[1],
+            "--",
+        ]);
+        inverse.extend(changed_files.iter().map(|path| path.as_os_str().to_owned()));
+        let patch = git(&self.path, &inverse)?;
+        git_apply_inverse(&self.path, patch.as_bytes())?;
         git(&self.path, &args(&["reset", "--quiet", "HEAD", "--"]))?;
         for path in &changed_files {
             validate_catalog_path(&self.path, path)?;
@@ -485,6 +1102,7 @@ impl ChangeWorktree {
         command.extend(changed_files.iter().map(|p| p.as_os_str().to_owned()));
         let data_diff = git(&self.path, &command)?;
         self.preview_hashes = file_hashes(&self.path, &changed_files)?;
+        self.generated_hashes = generated_tree_hashes(&self.path)?;
         self.changed_files = changed_files;
         let rendered_diff = TextDiff::from_lines(&base_render, &proposed_render)
             .unified_diff()
@@ -580,6 +1198,7 @@ impl ChangeWorktree {
         command.extend(changed_files.iter().map(|p| p.as_os_str().to_owned()));
         let data_diff = git(&self.path, &command)?;
         self.preview_hashes = file_hashes(&self.path, &changed_files)?;
+        self.generated_hashes = generated_tree_hashes(&self.path)?;
         self.changed_files = changed_files;
         let rendered_diff = TextDiff::from_lines(&base_render, &proposed_render)
             .unified_diff()
@@ -593,9 +1212,8 @@ impl ChangeWorktree {
         })
     }
 
-    /// Commit the previewed files and push without force. Repeating the same
-    /// change from the same base with the same contents, message and author
-    /// creates the same commit and safely reuses its deterministic branch.
+    /// Create this change's deterministic branch only if it is absent.
+    /// Retrying an already-published identical commit is a read-only success.
     pub fn commit_and_push(
         &self,
         change_id: &str,
@@ -644,6 +1262,11 @@ impl ChangeWorktree {
                 "previewed files changed after rendering".into(),
             ));
         }
+        if generated_tree_hashes(&self.path)? != self.generated_hashes {
+            return Err(Error::Invalid(
+                "generated files changed after rendering".into(),
+            ));
+        }
         let branch = branch_for_change(change_id)?;
         let reference = format!("refs/heads/{branch}");
         if let Some(expected) = expected_old_head
@@ -655,6 +1278,11 @@ impl ChangeWorktree {
                 "expected old head must be a nonzero full hexadecimal commit ID".into(),
             ));
         }
+        let binding = self
+            .binding
+            .as_ref()
+            .ok_or_else(|| Error::Invalid("repository is not bound to a forge".into()))?;
+        verified_origin(&self.path, binding)?;
         let env = [
             ("GIT_AUTHOR_NAME", author.name.as_str()),
             ("GIT_AUTHOR_EMAIL", author.email.as_str()),
@@ -662,6 +1290,7 @@ impl ChangeWorktree {
             ("GIT_COMMITTER_EMAIL", author.email.as_str()),
             ("GIT_AUTHOR_DATE", "2000-01-01T00:00:00Z"),
             ("GIT_COMMITTER_DATE", "2000-01-01T00:00:00Z"),
+            ("GIT_NO_REPLACE_OBJECTS", "1"),
         ];
         let mut commit = git(&self.path, &args(&["rev-parse", "HEAD"]))?
             .trim()
@@ -673,6 +1302,31 @@ impl ChangeWorktree {
             let mut add = args(&["add", "--"]);
             add.extend(self.changed_files.iter().map(|p| p.as_os_str().to_owned()));
             git(&self.path, &add)?;
+            // Stage only the renderer's captured files and tracked removals.
+            // In particular, do not sweep unrelated worktree files into a PR.
+            let tracked = git(
+                &self.path,
+                &args(&[
+                    "ls-files",
+                    "-z",
+                    "--",
+                    GENERATED_ROOTS[0],
+                    GENERATED_ROOTS[1],
+                ]),
+            )?;
+            let mut generated: BTreeSet<&Path> =
+                self.generated_hashes.keys().map(PathBuf::as_path).collect();
+            generated.extend(
+                tracked
+                    .split('\0')
+                    .filter(|name| !name.is_empty())
+                    .map(Path::new),
+            );
+            if !generated.is_empty() {
+                let mut add = args(&["add", "--all", "--force", "--"]);
+                add.extend(generated.iter().map(|path| path.as_os_str().to_owned()));
+                git(&self.path, &add)?;
+            }
             run(
                 OsStr::new("git"),
                 &args(&[
@@ -731,63 +1385,63 @@ impl ChangeWorktree {
                 ));
             }
         }
-        let refspec = format!("HEAD:{reference}");
-        if let Some(expected) = expected_old_head {
-            let destinations = git(
-                &self.path,
-                &args(&["remote", "get-url", "--push", "--all", "origin"]),
-            )?;
-            let mut destinations = destinations.lines();
-            let destination = destinations.next().filter(|url| !url.is_empty());
-            if destination.is_none() || destinations.next().is_some() {
-                return Err(Error::Invalid(
-                    "updating a branch requires exactly one push destination".into(),
-                ));
+        let destination = verified_origin(&self.path, binding)?.push;
+        let remote = transport_git(
+            &self.path,
+            &args(&["ls-remote", "--refs", "--", &destination, &reference]),
+        )?;
+        let mut lines = remote.lines();
+        let remote_head = match lines.next() {
+            Some(line) => {
+                let (head, name) = line
+                    .split_once('\t')
+                    .ok_or_else(|| Error::Invalid("invalid remote branch evidence".into()))?;
+                if name != reference
+                    || head.len() != self.base.len()
+                    || !head.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    || lines.next().is_some()
+                {
+                    return Err(Error::Invalid("invalid remote branch evidence".into()));
+                }
+                Some(head)
             }
-            let remote = git(
-                &self.path,
-                &args(&[
-                    "ls-remote",
-                    "--refs",
-                    "--",
-                    destination.unwrap(),
-                    &reference,
-                ]),
-            )?;
-            let remote_head = remote.lines().find_map(|line| {
-                line.split_once('\t')
-                    .and_then(|(head, name)| (name == reference).then_some(head))
-            });
-            // A previous attempt may have pushed successfully before its
-            // caller persisted the result. No update is needed in that case.
-            if remote_head.is_some_and(|head| head.eq_ignore_ascii_case(&commit)) {
-                return Ok(PublishedCommit { branch, commit });
+            None => None,
+        };
+        // A previous attempt may have succeeded before its result was saved.
+        // No push occurs when the remote already has the exact same commit.
+        if remote_head.is_some_and(|head| head.eq_ignore_ascii_case(&commit)) {
+            return Ok(PublishedCommit { branch, commit });
+        }
+        match (expected_old_head, remote_head) {
+            (None, None) => {}
+            (Some(expected), Some(head)) if head.eq_ignore_ascii_case(expected) => {}
+            (None, Some(_)) => {
+                return Err(Error::Invalid("remote branch already exists".into()));
             }
-            if !remote_head.is_some_and(|head| head.eq_ignore_ascii_case(expected)) {
+            _ => {
                 return Err(Error::Invalid(
                     "remote branch does not match expected old head".into(),
                 ));
             }
-            // The preflight check is not the lease: Git checks this exact
-            // expected remote head atomically when it performs the update.
-            let lease = format!(
-                "--force-with-lease={reference}:{}",
-                expected.to_ascii_lowercase()
-            );
-            git(
-                &self.path,
-                &args(&[
-                    "push",
-                    "--no-follow-tags",
-                    "--recurse-submodules=no",
-                    &lease,
-                    "origin",
-                    &refspec,
-                ]),
-            )?;
-        } else {
-            git(&self.path, &args(&["push", "origin", &refspec]))?;
         }
+        // Preflight is not the lease: the server must still compare the ref
+        // with the exact old head (or absence) during the push itself.
+        let lease = format!(
+            "--force-with-lease={reference}:{}",
+            expected_old_head.unwrap_or("").to_ascii_lowercase()
+        );
+        let refspec = format!("HEAD:{reference}");
+        transport_git(
+            &self.path,
+            &args(&[
+                "push",
+                "--no-follow-tags",
+                "--recurse-submodules=no",
+                &lease,
+                &destination,
+                &refspec,
+            ]),
+        )?;
         Ok(PublishedCommit { branch, commit })
     }
 }

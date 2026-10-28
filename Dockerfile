@@ -28,11 +28,17 @@ RUN case "$TARGETARCH" in \
     && echo "$digest  /tmp/kcl.tar.gz" | sha256sum -c - \
     && tar -xzf /tmp/kcl.tar.gz -C /usr/local/bin kcl
 
-FROM debian:bookworm-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git libssl3 \
+FROM debian:bookworm-slim AS runtime-base
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git libssl3 python3 \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --uid 10001 thalamus
+    && useradd --create-home --uid 10001 thalamus \
+    && install -d -m 0755 /usr/local/lib/thalamus
 COPY --from=kcl-download /usr/local/bin/kcl /usr/local/bin/kcl
+COPY --chmod=0444 scripts/render-catalog.py /usr/local/lib/thalamus/render-catalog.py
+# Runtime pods mount /tmp writable while the root filesystem is read-only.
+ENV HOME=/tmp KCL_CACHE_PATH=/tmp
+
+FROM runtime-base AS runtime
 COPY --from=rust-build /src/target/release/thalamus-server /usr/local/bin/thalamus-server
 COPY --from=rust-build /src/target/release/thalamus-worker /usr/local/bin/thalamus-worker
 COPY --from=ui-build /src/ui/build /app/ui

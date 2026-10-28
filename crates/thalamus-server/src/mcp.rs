@@ -276,7 +276,10 @@ impl ControlPlane for McpControlPlane {
                     principal,
                     input.service,
                     input.base_commit,
-                    patch,
+                    crate::workflows::ChangePatches {
+                        service: patch,
+                        new_artifact: None,
+                    },
                     &input.idempotency_key,
                     Some("mcp"),
                 )
@@ -318,6 +321,7 @@ mod tests {
             issuer: "https://issuer.example".into(),
             audience: "https://api.example/mcp".into(),
             required_scopes: vec![],
+            ca_pem: None,
         })
         .unwrap();
         let db = sqlx::postgres::PgPoolOptions::new()

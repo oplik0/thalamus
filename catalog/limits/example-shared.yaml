@@ -1,0 +1,26 @@
+# Illustrative platform Redis; provision its TLS and authentication Secrets.
+# Team budgets and windows come from the shared catalog/budget-caps.json file.
+name: example-shared
+service: example-ratelimit
+namespace: thalamus-inference
+port: 8081
+domain: example-shared
+deployment:
+  # Upstream 3e085e5b image used by the pinned agentgateway v1.7.0 e2e suite.
+  image: docker.io/envoyproxy/ratelimit@sha256:70453d5ca820dce0c2939d95a3eeb0f3e64ac083749bc021401c13e4233d1595
+  gatewayName: inference-serving
+  gatewayNamespace: thalamus-inference
+  gatewayPodSelector:
+    gateway.networking.k8s.io/gateway-name: inference-serving
+  agenticGatewayPodSelector:
+    gateway.networking.k8s.io/gateway-name: agentic-internal
+  # Secret keys url (example-redis.thalamus-inference.svc.cluster.local:6379)
+  # and auth (a base64url/hex password of at least 32 characters).
+  redisSecret: example-redis
+  redisPort: 6379
+  redisPodSelector:
+    app.kubernetes.io/name: example-redis
+    app.kubernetes.io/component: global-rate-limit-store
+  # ca.crt trusts the server certificate in the separately provisioned
+  # example-redis-tls Secret. External Redis may instead use redisCidrs.
+  redisCASecret: example-redis-ca

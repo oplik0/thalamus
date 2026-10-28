@@ -19,7 +19,7 @@ pub struct Config {
     pub model: String,
     pub forbidden_model: String,
     pub suite: Suite,
-    /// Required for a candidate gate; must be injected by a trusted gateway, not a client.
+    /// Required when enforcing an expected backend; injected by a trusted gateway, not a client.
     pub backend_header: Option<String>,
     pub expected_backend: Option<String>,
     pub old_backend: Option<String>,
@@ -140,6 +140,13 @@ impl<'a> Runner<'a> {
                     return Err("answering backend is not the candidate".into());
                 }
             }
+            if matches!(self.config.suite, Suite::Public) && self.config.expected_backend.is_some()
+            {
+                let id = identity.ok_or("missing answering backend identity")?;
+                if Some(id) != self.config.expected_backend.as_deref() {
+                    return Err("answering backend is not the expected backend".into());
+                }
+            }
         }
         let mut bytes = Vec::new();
         response
@@ -257,11 +264,26 @@ pub fn run(
             || config
                 .old_backend
                 .as_ref()
-                .is_none_or(|s| s.trim().is_empty())
+                .is_some_and(|s| s.trim().is_empty())
             || config.expected_backend == config.old_backend)
     {
         return Err(
-            "candidate requires distinct old and expected backends and an identity header".into(),
+            "candidate requires an expected backend and identity header; any old backend must be nonempty and distinct".into(),
+        );
+    }
+    if matches!(config.suite, Suite::Public)
+        && config.expected_backend.is_some()
+        && (config
+            .expected_backend
+            .as_ref()
+            .is_some_and(|s| s.trim().is_empty())
+            || config
+                .backend_header
+                .as_ref()
+                .is_none_or(|h| reqwest::header::HeaderName::from_bytes(h.as_bytes()).is_err()))
+    {
+        return Err(
+            "public expected backend requires a nonempty identity and valid identity header".into(),
         );
     }
     let url = reqwest::Url::parse(&config.base_url).map_err(|_| "invalid base URL")?;

@@ -4,44 +4,105 @@ use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
 use sha2::Sha256;
 
+#[path = "github_guard.rs"]
+mod guard;
+
 type HmacSha256 = Hmac<Sha256>;
 
 pub struct Github {
     client: octocrab::Octocrab,
+    graphql_client: octocrab::Octocrab,
+    graphql_uses_installation_token: bool,
     repo: RepoRef,
+}
+
+fn graphql_api_base(repo: &RepoRef, api_base: &str) -> Result<String> {
+    let u = Url::parse(api_base).map_err(|e| Error::InvalidInput(e.to_string()))?;
+    let host = match u.port() {
+        Some(p) => format!("{}:{p}", u.host_str().unwrap_or_default()),
+        None => u.host_str().unwrap_or_default().to_owned(),
+    };
+    if u.scheme() != "https"
+        || !u.username().is_empty()
+        || u.password().is_some()
+        || u.query().is_some()
+        || u.fragment().is_some()
+        || !(host == repo.host || (repo.host == "github.com" && host == "api.github.com"))
+    {
+        return Err(Error::InvalidInput(
+            "API base must be HTTPS on the repository host".into(),
+        ));
+    }
+    if repo.host == "github.com" {
+        Ok(api_base.trim_end_matches('/').to_owned())
+    } else {
+        api_base
+            .trim_end_matches('/')
+            .strip_suffix("/api/v3")
+            .map(|prefix| format!("{prefix}/api"))
+            .ok_or_else(|| Error::InvalidInput("enterprise API base must end in /api/v3".into()))
+    }
 }
 impl Github {
     /// `api_base` is the actual GitHub API root, e.g. https://github.example.com/api/v3.
     /// HTTPS is required; credentials never travel to a different repository host.
     pub fn new(repo: RepoRef, api_base: &str, token: String) -> Result<Self> {
-        let u = Url::parse(api_base).map_err(|e| Error::InvalidInput(e.to_string()))?;
-        let host = match u.port() {
-            Some(p) => format!("{}:{p}", u.host_str().unwrap_or_default()),
-            None => u.host_str().unwrap_or_default().to_owned(),
-        };
-        if u.scheme() != "https"
-            || !u.username().is_empty()
-            || u.password().is_some()
-            || u.query().is_some()
-            || u.fragment().is_some()
-            || !(host == repo.host || (repo.host == "github.com" && host == "api.github.com"))
-        {
-            return Err(Error::InvalidInput(
-                "API base must be HTTPS on the repository host".into(),
-            ));
-        }
+        let graphql_base = graphql_api_base(&repo, api_base)?;
         if token.is_empty() {
             return Err(Error::InvalidInput("empty GitHub token".into()));
         }
         let client = octocrab::Octocrab::builder()
             .base_uri(api_base)?
+            .personal_token(token.clone())
+            .build()?;
+        // Enterprise serves GraphQL at /api/graphql, not /api/v3/graphql.
+        let graphql_client = octocrab::Octocrab::builder()
+            .base_uri(graphql_base)?
             .personal_token(token)
             .build()?;
-        Self::from_client(repo, client)
+        Self::from_clients(repo, client, graphql_client)
+    }
+    /// Construct an installation client from durable App credentials. Octocrab
+    /// lazily mints and caches tokens and refreshes them before expiration.
+    /// Keep this client alive rather than rebuilding it for each reconciliation.
+    pub fn new_app(
+        repo: RepoRef,
+        api_base: &str,
+        app_id: u64,
+        installation_id: u64,
+        private_key_pem: &[u8],
+    ) -> Result<Self> {
+        if app_id == 0 || installation_id == 0 || private_key_pem.is_empty() {
+            return Err(Error::InvalidInput(
+                "GitHub App credentials are incomplete".into(),
+            ));
+        }
+        let graphql_base = graphql_api_base(&repo, api_base)?;
+        let app = octocrab::Octocrab::builder()
+            .base_uri(api_base)?
+            .app_from_rsa_pem(octocrab::models::AppId(app_id), private_key_pem)?
+            .build()?;
+        let client = app.installation(octocrab::models::InstallationId(installation_id))?;
+        // Token minting must use the REST base even when GraphQL uses /api.
+        let graphql_client = octocrab::Octocrab::builder()
+            .base_uri(graphql_base)?
+            .build()?;
+        let mut github = Self::from_clients(repo, client, graphql_client)?;
+        github.graphql_uses_installation_token = true;
+        Ok(github)
     }
     /// Accept a preconfigured client, including GitHub App installation authentication.
     /// The caller is responsible for binding its base URL to the intended host.
+    /// For Enterprise, use `from_clients` with a separate /api GraphQL base.
     pub fn from_client(repo: RepoRef, client: octocrab::Octocrab) -> Result<Self> {
+        Self::from_clients(repo, client.clone(), client)
+    }
+    /// Accept REST and GraphQL clients bound to the same trusted repository host.
+    pub fn from_clients(
+        repo: RepoRef,
+        client: octocrab::Octocrab,
+        graphql_client: octocrab::Octocrab,
+    ) -> Result<Self> {
         let parsed = RepoRef::parse(
             ForgeKind::Github,
             &format!("https://{}/{}/{}", repo.host, repo.namespace, repo.name),
@@ -49,10 +110,39 @@ impl Github {
         if repo.forge != ForgeKind::Github || parsed != repo {
             return Err(Error::InvalidRepo("invalid GitHub repository".into()));
         }
-        Ok(Self { client, repo })
+        Ok(Self {
+            client,
+            graphql_client,
+            graphql_uses_installation_token: false,
+            repo,
+        })
     }
     pub fn client(&self) -> &octocrab::Octocrab {
         &self.client
+    }
+    /// Obtain a currently valid cached installation token for immediate use.
+    /// The returned secret must never be logged or persisted.
+    pub async fn installation_token(&self) -> Result<String> {
+        use octocrab::secrecy::ExposeSecret;
+        Ok(self
+            .client
+            .installation_token()
+            .await?
+            .expose_secret()
+            .to_owned())
+    }
+    /// Send GraphQL through the host-bound client, including refreshed App credentials.
+    pub async fn graphql(&self, payload: &Value) -> Result<Value> {
+        if self.graphql_uses_installation_token {
+            let token = self.client.installation_token().await?;
+            Ok(self
+                .graphql_client
+                .user_access_token(token)?
+                .graphql(payload)
+                .await?)
+        } else {
+            Ok(self.graphql_client.graphql(payload).await?)
+        }
     }
     pub fn repository(&self) -> &RepoRef {
         &self.repo
@@ -148,6 +238,7 @@ fn change(v: &Value, host: &str) -> Result<ChangeRequest> {
             None => Mergeability::Unknown,
         },
         merge_commit: optional(v, "merge_commit_sha"),
+        merged_at: optional(v, "merged_at"),
         source_repository,
         author: text(nested(v, "user")?, "login")?.into(),
         labels,
@@ -363,13 +454,21 @@ impl BranchPolicies for Github {
             return Err(Error::InvalidInput("invalid branch".into()));
         }
         let encoded: String = url::form_urlencoded::byte_serialize(branch.as_bytes()).collect();
-        // A 404, including an unprotected branch or insufficient visibility, is an error.
-        let protection = self
+        // Ruleset-only branches have no classic protection endpoint. A 404 is not
+        // evidence of safety: callers must independently validate active rulesets.
+        let protection = match self
             .get(&self.route(&format!("/branches/{encoded}/protection")))
-            .await?;
-        if !protection.is_object() {
-            return Err(Error::Malformed("invalid branch protection".into()));
-        }
+            .await
+        {
+            Ok(value) if value.is_object() => value,
+            Ok(_) => return Err(Error::Malformed("invalid branch protection".into())),
+            Err(Error::Github(octocrab::Error::GitHub { source, .. }))
+                if source.status_code.as_u16() == 404 =>
+            {
+                Value::Null
+            }
+            Err(error) => return Err(error),
+        };
         let mut stream = pages(
             self,
             self.route(&format!("/rules/branches/{encoded}")),
@@ -410,26 +509,6 @@ impl BranchPolicies for Github {
             protection,
             rules,
             rulesets,
-        })
-    }
-    async fn policy_actor(&self) -> Result<PolicyActor> {
-        let user = self.get("/user").await?;
-        let id = number(&user, "id")?;
-        let login = text(&user, "login")?;
-        if login.is_empty() || login.chars().any(char::is_control) {
-            return Err(Error::Malformed("invalid authenticated user login".into()));
-        }
-        let encoded: String = url::form_urlencoded::byte_serialize(login.as_bytes()).collect();
-        let repository_permission = self
-            .get(&self.route(&format!("/collaborators/{encoded}/permission")))
-            .await?;
-        if number(nested(&repository_permission, "user")?, "id")? != id {
-            return Err(Error::Malformed("collaborator identity mismatch".into()));
-        }
-        text(&repository_permission, "permission")?;
-        Ok(PolicyActor {
-            user,
-            repository_permission,
         })
     }
 }
@@ -581,6 +660,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn app_endpoints_are_bound_to_the_repository_host() {
+        let enterprise =
+            RepoRef::parse(ForgeKind::Github, "https://github.example/team/catalog").unwrap();
+        assert_eq!(
+            graphql_api_base(&enterprise, "https://github.example/api/v3").unwrap(),
+            "https://github.example/api"
+        );
+        assert!(graphql_api_base(&enterprise, "http://github.example/api/v3").is_err());
+        assert!(graphql_api_base(&enterprise, "https://attacker.example/api/v3").is_err());
+        assert!(graphql_api_base(&enterprise, "https://github.example/wrong").is_err());
+        assert!(graphql_api_base(&enterprise, "https://user@github.example/api/v3").is_err());
+        let cloud = RepoRef::parse(ForgeKind::Github, "https://github.com/team/catalog").unwrap();
+        assert_eq!(
+            graphql_api_base(&cloud, "https://api.github.com").unwrap(),
+            "https://api.github.com"
+        );
+    }
+
+    #[test]
     fn ruleset_requires_identity_and_visible_bypass_actors() {
         assert!(validate_ruleset_detail(&json!({"id": 42, "bypass_actors": []}), 42).is_ok());
         assert!(validate_ruleset_detail(&json!({"id": 42}), 42).is_err());
@@ -616,7 +714,7 @@ mod tests {
 
     #[test]
     fn translates_example_pull_and_check_responses() {
-        let pull = json!({
+        let mut pull = json!({
             "number": 23, "title": "Example", "body": null, "state": "closed",
             "merged_at": "2026-01-01T00:00:00Z", "draft": false, "mergeable": null,
             "merge_commit_sha": "merge", "html_url": "https://github.example/team/catalog/pull/23",
@@ -626,9 +724,14 @@ mod tests {
         });
         let result = change(&pull, "github.example").unwrap();
         assert_eq!(result.state, ChangeState::Merged);
+        assert_eq!(result.merged_at.as_deref(), Some("2026-01-01T00:00:00Z"));
         assert_eq!(result.mergeability, Mergeability::Unknown);
         assert_eq!(result.source_repository.unwrap().namespace, "alice");
         assert_eq!(result.labels, vec!["review"]);
+        pull["merged_at"] = Value::Null;
+        assert!(change(&pull, "github.example").unwrap().merged_at.is_none());
+        pull.as_object_mut().unwrap().remove("merged_at");
+        assert!(change(&pull, "github.example").unwrap().merged_at.is_none());
         let run = check(&json!({"name": "CI", "status": "completed", "conclusion": "timed_out", "output": {"summary": "late"}}), true).unwrap();
         assert!(matches!(run.status, CheckStatus::Completed));
         assert!(matches!(run.conclusion, Some(Conclusion::TimedOut)));

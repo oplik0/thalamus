@@ -1,9 +1,10 @@
 //! Postgres-backed, owner- and team-isolated debug sessions.
 //!
 //! `DebugIdentity` must come from an authenticated trusted transport, never from
-//! request JSON. Each operation checks the current enabled user and team role
-//! while holding the identity user row lock, then checks the session owner and
-//! team. The identity migrations must have been applied first. When using an
+//! request JSON. Owner operations check the current enabled user and team role
+//! while holding the identity user row lock, then check the session owner and
+//! team. The fixed-payload collector-gap hook is a trusted system operation and
+//! also works after offboarding. Apply identity migrations first. When using an
 //! `IdentityService` authorization guard, use the `_in_transaction` methods on
 //! that guard's transaction and commit only on success; calling a pool method
 //! while holding the same user's guard in another transaction can deadlock.
@@ -21,12 +22,15 @@ use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sqlx::{postgres::PgRow, PgPool, Postgres, Row, Transaction};
+use sqlx::{postgres::PgRow, Connection, PgConnection, PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
 const MAX_JSON_BYTES: usize = 128 * 1024;
 const MAX_PAGE_SIZE: i64 = 1000;
 const CREDENTIAL_PREFIX: &str = "thld_";
+const MAX_PROMPT_BYTES: usize = 1024 * 1024;
+const LAUNCH_LOCK: &str = "launch";
+const COLLECTOR_LOCK: &str = "collector";
 
 pub type Result<T, E = StoreError> = std::result::Result<T, E>;
 
@@ -38,6 +42,8 @@ pub enum StoreError {
     Invalid(&'static str),
     #[error("principal is not authorized for this team")]
     Forbidden,
+    #[error("managed identity projection is stale")]
+    IdentityProjectionStale,
     #[error("session or credential not found")]
     NotFound,
     #[error("client request key was already used for different input")]
@@ -142,6 +148,9 @@ pub struct NewDebugSession {
 #[derive(Clone, Serialize)]
 pub struct DebugSession {
     pub id: Uuid,
+    /// Operator-controlled resource association marker; not an isolation boundary.
+    #[serde(skip)]
+    pub ownership_nonce: Uuid,
     pub user_id: Uuid,
     pub team_id: Uuid,
     pub project_id: Uuid,
@@ -152,6 +161,8 @@ pub struct DebugSession {
     pub checkout_revision: String,
     pub job_namespace: String,
     pub job_name: String,
+    #[serde(skip)]
+    pub job_uid: Option<String>,
     pub deadline: DateTime<Utc>,
     pub model_budget: i64,
     pub tool_budget: i64,
@@ -171,6 +182,28 @@ pub struct DebugSession {
     last_transition_from: Option<SessionState>,
 }
 
+/// Owner-authorized control metadata without context, evidence or transcript.
+/// Used by the server's frequent authorization and collector checks.
+#[derive(Clone)]
+pub struct DebugSessionAccess {
+    pub id: Uuid,
+    pub ownership_nonce: Uuid,
+    pub user_id: Uuid,
+    pub team_id: Uuid,
+    pub project_id: Uuid,
+    pub service_id: String,
+    pub model: String,
+    pub job_namespace: String,
+    pub job_name: String,
+    pub job_uid: Option<String>,
+    pub deadline: DateTime<Utc>,
+    pub model_budget: i64,
+    pub tool_budget: i64,
+    pub tool_calls_used: i64,
+    pub state: SessionState,
+    pub upstream_session_id: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct NewDebugEvent {
     pub client_request_key: String,
@@ -186,6 +219,40 @@ pub struct DebugEvent {
     pub kind: String,
     pub payload: Value,
     pub created_at: DateTime<Utc>,
+}
+
+/// Seed and browser replies have separate idempotency-key namespaces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PromptKind {
+    Seed,
+    Reply,
+}
+
+impl PromptKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Seed => "seed",
+            Self::Reply => "reply",
+        }
+    }
+}
+
+/// An acquired claim authorizes only this caller to dispatch. An indeterminate
+/// claim may already have reached OpenCode and must never be sent again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PromptClaim {
+    Acquired,
+    Accepted,
+    Indeterminate,
+}
+
+/// Owns a PostgreSQL session advisory lock on a dedicated connection. Dropping
+/// it closes the connection rather than returning a still-locked one to a
+/// pool. It is a coordination mechanism, not a fence for external operations.
+pub struct SessionLock {
+    connection: PgConnection,
+    id: Uuid,
+    purpose: &'static str,
 }
 
 /// Returned only at issuance. Never log, serialize, or persist `secret` in
@@ -216,6 +283,7 @@ pub struct DebugStore {
 #[derive(Clone, Debug)]
 pub struct WorkerSessionRef {
     pub id: Uuid,
+    pub ownership_nonce: Uuid,
     pub user_id: Uuid,
     pub team_id: Uuid,
     pub state: SessionState,
@@ -223,6 +291,7 @@ pub struct WorkerSessionRef {
     pub created_at: DateTime<Utc>,
     pub job_namespace: String,
     pub job_name: String,
+    pub job_uid: Option<String>,
     pub cleanup_required: bool,
 }
 
@@ -249,8 +318,8 @@ pub enum WorkerFinalizationReason {
 }
 
 /// Cross-tenant capability for the trusted worker process only. Never expose
-/// its methods as user-facing endpoints. It returns only cleanup metadata and
-/// can finalize solely after verifying expiry or loss of owner authorization.
+/// its methods as user-facing endpoints. The sweep returns cleanup metadata,
+/// and finalization verifies expiry or loss of owner authorization.
 #[derive(Clone)]
 pub struct WorkerStore {
     pool: PgPool,
@@ -413,10 +482,28 @@ fn validate_event(input: &NewDebugEvent) -> Result<()> {
     json_object(&input.payload, "event payload")
 }
 
+fn validate_prompt_key(kind: PromptKind, key: &str, claim: Uuid) -> Result<()> {
+    non_nil(claim, "prompt claim")?;
+    printable(key, 256, "prompt request key")?;
+    if kind == PromptKind::Seed && key != "seed" {
+        return Err(StoreError::Invalid("seed request key"));
+    }
+    Ok(())
+}
+
+fn prompt_digest(kind: PromptKind, key: &str, text: &str, claim: Uuid) -> Result<[u8; 32]> {
+    validate_prompt_key(kind, key, claim)?;
+    if text.trim().is_empty() || text.len() > MAX_PROMPT_BYTES || contains_known_credential(text) {
+        return Err(StoreError::Invalid("prompt text"));
+    }
+    Ok(Sha256::digest(text.as_bytes()).into())
+}
+
 fn decode_session(row: &PgRow) -> Result<DebugSession> {
     let from: Option<&str> = row.try_get("last_transition_from")?;
     Ok(DebugSession {
         id: row.try_get("id")?,
+        ownership_nonce: row.try_get("ownership_nonce")?,
         user_id: row.try_get("user_id")?,
         team_id: row.try_get("team_id")?,
         project_id: row.try_get("project_id")?,
@@ -427,6 +514,7 @@ fn decode_session(row: &PgRow) -> Result<DebugSession> {
         checkout_revision: row.try_get("checkout_revision")?,
         job_namespace: row.try_get("job_namespace")?,
         job_name: row.try_get("job_name")?,
+        job_uid: row.try_get("job_uid")?,
         deadline: row.try_get("deadline")?,
         model_budget: row.try_get("model_budget")?,
         tool_budget: row.try_get("tool_budget")?,
@@ -442,6 +530,27 @@ fn decode_session(row: &PgRow) -> Result<DebugSession> {
         updated_at: row.try_get("updated_at")?,
         initialization_claim: row.try_get("initialization_claim")?,
         last_transition_from: from.map(SessionState::parse).transpose()?,
+    })
+}
+
+fn decode_session_access(row: &PgRow) -> Result<DebugSessionAccess> {
+    Ok(DebugSessionAccess {
+        id: row.try_get("id")?,
+        ownership_nonce: row.try_get("ownership_nonce")?,
+        user_id: row.try_get("user_id")?,
+        team_id: row.try_get("team_id")?,
+        project_id: row.try_get("project_id")?,
+        service_id: row.try_get("service_id")?,
+        model: row.try_get("model")?,
+        job_namespace: row.try_get("job_namespace")?,
+        job_name: row.try_get("job_name")?,
+        job_uid: row.try_get("job_uid")?,
+        deadline: row.try_get("deadline")?,
+        model_budget: row.try_get("model_budget")?,
+        tool_budget: row.try_get("tool_budget")?,
+        tool_calls_used: row.try_get("tool_calls_used")?,
+        state: SessionState::parse(row.try_get("state")?)?,
+        upstream_session_id: row.try_get("upstream_session_id")?,
     })
 }
 
@@ -474,8 +583,14 @@ async fn authorize(tx: &mut Transaction<'_, Postgres>, identity: &DebugIdentity)
     non_nil(identity.user_id, "user ID")?;
     non_nil(identity.team_id, "team ID")?;
     // Identity's membership/offboarding writers lock this same user row first.
-    let row = sqlx::query("SELECT issuer, subject, platform_admin FROM identity_users WHERE id=$1 AND NOT disabled FOR SHARE")
+    let row = sqlx::query("SELECT issuer, subject, platform_admin, disabled FROM identity_users WHERE id=$1 FOR SHARE")
         .bind(identity.user_id).fetch_optional(&mut **tx).await?.ok_or(StoreError::Forbidden)?;
+    if projection_stale(tx, row.try_get("issuer")?).await? {
+        return Err(StoreError::IdentityProjectionStale);
+    }
+    if row.try_get::<bool, _>("disabled")? {
+        return Err(StoreError::Forbidden);
+    }
     let admin: bool = row.try_get("platform_admin")?;
     let allowed: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM identity_teams t WHERE t.id=$2 AND ($3 OR EXISTS (SELECT 1 FROM identity_memberships m WHERE m.user_id=$1 AND m.team_id=t.id)))")
         .bind(identity.user_id).bind(identity.team_id).bind(admin).fetch_one(&mut **tx).await?;
@@ -483,6 +598,33 @@ async fn authorize(tx: &mut Transaction<'_, Postgres>, identity: &DebugIdentity)
         return Err(StoreError::Forbidden);
     }
     Ok(row)
+}
+
+async fn projection_stale(tx: &mut Transaction<'_, Postgres>, issuer: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM identity_idp_projection WHERE issuer=$1 AND observed_at <= clock_timestamp()-interval '10 minutes')")
+        .bind(issuer)
+        .fetch_one(&mut **tx)
+        .await?)
+}
+
+// Trusted cleanup/recovery hooks may need to persist fixed lifecycle facts
+// after offboarding. They still lock the identity row before the session row
+// and verify the exact stored owner and team; they never read transcript data.
+async fn lock_identity_for_recovery(
+    tx: &mut Transaction<'_, Postgres>,
+    identity: &DebugIdentity,
+) -> Result<()> {
+    non_nil(identity.user_id, "user ID")?;
+    non_nil(identity.team_id, "team ID")?;
+    let user: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM identity_users WHERE id=$1 FOR SHARE")
+            .bind(identity.user_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+    if user.is_none() {
+        return Err(StoreError::NotFound);
+    }
+    Ok(())
 }
 
 async fn session_row(
@@ -514,7 +656,7 @@ async fn session_guard_row(
     id: Uuid,
 ) -> Result<PgRow> {
     non_nil(id, "session ID")?;
-    sqlx::query("SELECT state,deadline,deadline > clock_timestamp() AS before_deadline,tool_calls_used,tool_budget,next_event_sequence FROM thalamus_debug_sessions WHERE id=$1 AND user_id=$2 AND team_id=$3 FOR UPDATE")
+    sqlx::query("SELECT state,deadline,deadline > clock_timestamp() AS before_deadline,tool_calls_used,tool_budget,next_event_sequence,ownership_nonce,job_uid,initialization_claim,upstream_session_id,collector_generation,collector_gap_generation FROM thalamus_debug_sessions WHERE id=$1 AND user_id=$2 AND team_id=$3 FOR UPDATE")
         .bind(id).bind(identity.user_id).bind(identity.team_id)
         .fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)
 }
@@ -524,6 +666,115 @@ fn active(row: &PgRow, state: SessionState) -> Result<bool> {
         matches!(state, SessionState::Pending | SessionState::Running)
             && row.try_get::<bool, _>("before_deadline")?,
     )
+}
+
+// The caller holds the identity and session locks, in that order. The two
+// terminal exceptions are known prompt outcomes and fixed collector gaps.
+async fn append_locked_event(
+    tx: &mut Transaction<'_, Postgres>,
+    identity: &DebugIdentity,
+    id: Uuid,
+    row: &PgRow,
+    input: NewDebugEvent,
+    allow_terminal: bool,
+) -> Result<DebugEvent> {
+    validate_event(&input)?;
+    let previous = sqlx::query(
+        "SELECT * FROM thalamus_debug_events WHERE session_id=$1 AND client_request_key=$2",
+    )
+    .bind(id)
+    .bind(&input.client_request_key)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if let Some(row) = previous {
+        let event = decode_event(&row)?;
+        if event.kind != input.kind || event.payload != input.payload {
+            return Err(StoreError::IdempotencyConflict);
+        }
+        return Ok(event);
+    }
+    if !allow_terminal && SessionState::parse(row.try_get("state")?)?.is_terminal() {
+        return Err(StoreError::Inactive);
+    }
+    if row.try_get::<i64, _>("next_event_sequence")? == i64::MAX {
+        return Err(StoreError::SequenceExhausted);
+    }
+    let row = sqlx::query("UPDATE thalamus_debug_sessions SET next_event_sequence=next_event_sequence+1,updated_at=clock_timestamp() WHERE id=$1 AND user_id=$2 AND team_id=$3 AND next_event_sequence < 9223372036854775807 RETURNING next_event_sequence-1 AS sequence")
+        .bind(id).bind(identity.user_id).bind(identity.team_id).fetch_optional(&mut **tx).await?.ok_or(StoreError::SequenceExhausted)?;
+    let sequence: i64 = row.try_get("sequence")?;
+    let row = sqlx::query("INSERT INTO thalamus_debug_events(session_id,sequence,client_request_key,kind,payload) VALUES ($1,$2,$3,$4,$5) RETURNING *")
+        .bind(id).bind(sequence).bind(&input.client_request_key).bind(&input.kind).bind(&input.payload)
+        .fetch_one(&mut **tx).await?;
+    decode_event(&row)
+}
+
+async fn append_gap_locked(
+    tx: &mut Transaction<'_, Postgres>,
+    identity: &DebugIdentity,
+    id: Uuid,
+    row: &PgRow,
+    generation: i64,
+) -> Result<()> {
+    append_locked_event(
+        tx,
+        identity,
+        id,
+        row,
+        NewDebugEvent {
+            client_request_key: format!("collector.gap.{generation}"),
+            kind: "transcript.gap".to_owned(),
+            payload: serde_json::json!({
+                "reason": "upstream_event_stream_disconnected",
+                "generation": generation,
+            }),
+        },
+        true,
+    )
+    .await?;
+    sqlx::query("UPDATE thalamus_debug_sessions SET collector_gap_generation=$4,updated_at=clock_timestamp() WHERE id=$1 AND user_id=$2 AND team_id=$3")
+        .bind(id).bind(identity.user_id).bind(identity.team_id).bind(generation)
+        .execute(&mut **tx).await?;
+    Ok(())
+}
+
+async fn append_initialization_gap_locked(
+    tx: &mut Transaction<'_, Postgres>,
+    identity: &DebugIdentity,
+    id: Uuid,
+    row: &PgRow,
+) -> Result<()> {
+    if row
+        .try_get::<Option<Uuid>, _>("initialization_claim")?
+        .is_none()
+        || row
+            .try_get::<Option<String>, _>("upstream_session_id")?
+            .is_some()
+    {
+        return Ok(());
+    }
+    let previous: Option<String> = sqlx::query_scalar("SELECT kind FROM thalamus_debug_events WHERE session_id=$1 AND client_request_key='collector.gap.initialization'")
+        .bind(id).fetch_optional(&mut **tx).await?;
+    if let Some(kind) = previous {
+        return if kind == "transcript.gap" {
+            Ok(())
+        } else {
+            Err(StoreError::CorruptData)
+        };
+    }
+    append_locked_event(
+        tx,
+        identity,
+        id,
+        row,
+        NewDebugEvent {
+            client_request_key: "collector.gap.initialization".to_owned(),
+            kind: "transcript.gap".to_owned(),
+            payload: serde_json::json!({"reason": "upstream_initialization_indeterminate"}),
+        },
+        true,
+    )
+    .await?;
+    Ok(())
 }
 
 fn credential_digest(secret: &str) -> Result<[u8; 32]> {
@@ -629,6 +880,7 @@ async fn check_credential(
 fn decode_worker_session(row: &PgRow) -> Result<WorkerSessionRef> {
     Ok(WorkerSessionRef {
         id: row.try_get("id")?,
+        ownership_nonce: row.try_get("ownership_nonce")?,
         user_id: row.try_get("user_id")?,
         team_id: row.try_get("team_id")?,
         state: SessionState::parse(row.try_get("state")?)?,
@@ -636,6 +888,7 @@ fn decode_worker_session(row: &PgRow) -> Result<WorkerSessionRef> {
         created_at: row.try_get("created_at")?,
         job_namespace: row.try_get("job_namespace")?,
         job_name: row.try_get("job_name")?,
+        job_uid: row.try_get("job_uid")?,
         cleanup_required: row.try_get("cleanup_required")?,
     })
 }
@@ -650,10 +903,199 @@ async fn revoke_session_credentials(
     Ok(())
 }
 
+fn session_lock_key(purpose: &str, id: Uuid) -> String {
+    format!("thalamus/debug/{purpose}/{id}")
+}
+
+async fn try_session_lock(
+    pool: &PgPool,
+    id: Uuid,
+    purpose: &'static str,
+) -> Result<Option<SessionLock>> {
+    non_nil(id, "session ID")?;
+    let key = session_lock_key(purpose, id);
+    // Most probes find a live collector. A transaction-scoped probe avoids
+    // discarding a pooled connection on every contention; the actual session
+    // lock is acquired again below, so the intervening race is harmless.
+    let mut probe = pool.begin().await?;
+    let available: bool =
+        sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(&key)
+            .fetch_one(&mut *probe)
+            .await?;
+    probe.rollback().await?;
+    if !available {
+        return Ok(None);
+    }
+    let mut connection = pool.acquire().await?;
+    // A cancelled acquisition query may already have acquired the lock.
+    connection.close_on_drop();
+    let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtextextended($1,0))")
+        .bind(&key)
+        .fetch_one(&mut *connection)
+        .await?;
+    if !acquired {
+        return Ok(None);
+    }
+    // A held collector must not consume a slot needed for its own event writes.
+    // Detached connections are closed on drop and are not returned to the pool.
+    Ok(Some(SessionLock {
+        connection: connection.detach(),
+        id,
+        purpose,
+    }))
+}
+
+impl SessionLock {
+    /// Verify the lock-owning connection is still usable. Supervisors must
+    /// stop on errors/timeouts and check before external mutations.
+    pub async fn check(&mut self) -> Result<()> {
+        sqlx::query("SELECT 1")
+            .execute(&mut self.connection)
+            .await?;
+        Ok(())
+    }
+
+    /// Allocate a durable collector fencing generation before each attempt to
+    /// connect, on the same connection that owns the advisory lock. If the
+    /// previous attempt did not record a gap, its crash or disconnection is
+    /// conservatively recorded now; OpenCode's event stream has no replay.
+    pub async fn begin_attempt(&mut self, identity: &DebugIdentity) -> Result<i64> {
+        if self.purpose != COLLECTOR_LOCK {
+            return Err(StoreError::InvalidTransition);
+        }
+        let id = self.id;
+        let mut tx = self.connection.begin().await?;
+        authorize(&mut tx, identity).await?;
+        let row = session_guard_row(&mut tx, identity, id).await?;
+        let state = SessionState::parse(row.try_get("state")?)?;
+        if state != SessionState::Running
+            || !row.try_get::<bool, _>("before_deadline")?
+            || row
+                .try_get::<Option<String>, _>("upstream_session_id")?
+                .is_none()
+        {
+            return Err(StoreError::Inactive);
+        }
+        let previous: i64 = row.try_get("collector_generation")?;
+        let gap: i64 = row.try_get("collector_gap_generation")?;
+        if gap > previous {
+            return Err(StoreError::CorruptData);
+        }
+        if previous == i64::MAX {
+            return Err(StoreError::SequenceExhausted);
+        }
+        if previous > 0 && gap < previous {
+            append_gap_locked(&mut tx, identity, id, &row, previous).await?;
+        }
+        let generation = previous + 1;
+        sqlx::query("UPDATE thalamus_debug_sessions SET collector_generation=$4,updated_at=clock_timestamp() WHERE id=$1 AND user_id=$2 AND team_id=$3")
+            .bind(id).bind(identity.user_id).bind(identity.team_id).bind(generation)
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(generation)
+    }
+
+    /// Recovery-only hook for a collector connection lost before it could mark
+    /// its final gap. This runs under the newly acquired collector lock, even
+    /// when the session is terminal or its owner has been offboarded.
+    pub async fn record_abandoned_attempt(&mut self, identity: &DebugIdentity) -> Result<()> {
+        if self.purpose != COLLECTOR_LOCK {
+            return Err(StoreError::InvalidTransition);
+        }
+        let id = self.id;
+        let mut tx = self.connection.begin().await?;
+        lock_identity_for_recovery(&mut tx, identity).await?;
+        let row = session_guard_row(&mut tx, identity, id).await?;
+        let generation: i64 = row.try_get("collector_generation")?;
+        let gap: i64 = row.try_get("collector_gap_generation")?;
+        if gap > generation {
+            return Err(StoreError::CorruptData);
+        }
+        let unresolved_initialization = row
+            .try_get::<Option<Uuid>, _>("initialization_claim")?
+            .is_some()
+            && row
+                .try_get::<Option<String>, _>("upstream_session_id")?
+                .is_none();
+        if unresolved_initialization && generation > 0 {
+            return Err(StoreError::CorruptData);
+        }
+        if unresolved_initialization {
+            append_initialization_gap_locked(&mut tx, identity, id, &row).await?;
+        }
+        if generation > 0 && gap < generation {
+            append_gap_locked(&mut tx, identity, id, &row, generation).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Explicit release is optional; dropping the dedicated connection also
+    /// releases the lock. It is never returned to the shared connection pool.
+    pub async fn release(mut self) -> Result<()> {
+        let released: bool =
+            sqlx::query_scalar("SELECT pg_advisory_unlock(hashtextextended($1,0))")
+                .bind(session_lock_key(self.purpose, self.id))
+                .fetch_one(&mut self.connection)
+                .await?;
+        self.connection.close().await?;
+        if !released {
+            return Err(StoreError::InvalidTransition);
+        }
+        Ok(())
+    }
+}
+
 impl WorkerStore {
     /// This capability is for a trusted worker only, never a tenant endpoint.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Coordinate launch and cleanup for one session across trusted workers.
+    /// This lock is not a fence for Kubernetes writes; callers must validate
+    /// ownership, use resource-version preconditions, and check the connection.
+    pub async fn try_lock_session(&self, id: Uuid) -> Result<Option<SessionLock>> {
+        try_session_lock(&self.pool, id, LAUNCH_LOCK).await
+    }
+
+    /// Bind the Kubernetes UID before resuming a staged Job. The exact
+    /// persisted owner and resource marker must match; once written a UID can
+    /// never be replaced, including after worker restart or finalization.
+    pub async fn bind_job_uid(
+        &self,
+        identity: &DebugIdentity,
+        id: Uuid,
+        ownership_nonce: Uuid,
+        uid: &str,
+    ) -> Result<()> {
+        non_nil(ownership_nonce, "ownership nonce")?;
+        printable(uid, 256, "Job UID")?;
+        let mut tx = self.pool.begin().await?;
+        authorize(&mut tx, identity).await?;
+        let row = session_guard_row(&mut tx, identity, id).await?;
+        if row.try_get::<Uuid, _>("ownership_nonce")? != ownership_nonce {
+            return Err(StoreError::NotFound);
+        }
+        if let Some(existing) = row.try_get::<Option<String>, _>("job_uid")? {
+            if existing != uid {
+                return Err(StoreError::InvalidTransition);
+            }
+            tx.commit().await?;
+            return Ok(());
+        }
+        if !active(&row, SessionState::parse(row.try_get("state")?)?)? {
+            return Err(StoreError::Inactive);
+        }
+        let bound: Option<String> = sqlx::query_scalar("UPDATE thalamus_debug_sessions SET job_uid=$5,updated_at=clock_timestamp() WHERE id=$1 AND user_id=$2 AND team_id=$3 AND ownership_nonce=$4 AND job_uid IS NULL AND state IN ('pending','running') AND deadline>clock_timestamp() RETURNING job_uid")
+            .bind(id).bind(identity.user_id).bind(identity.team_id).bind(ownership_nonce).bind(uid)
+            .fetch_optional(&mut *tx).await?;
+        if bound.is_none() {
+            return Err(StoreError::Inactive);
+        }
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Pending/running sessions plus terminal sessions awaiting confirmed
@@ -670,7 +1112,7 @@ impl WorkerStore {
         if let Some(cursor) = &after {
             non_nil(cursor.id, "worker cursor ID")?;
         }
-        let rows = sqlx::query("SELECT id,user_id,team_id,state,deadline,created_at,job_namespace,job_name,cleanup_required FROM thalamus_debug_sessions WHERE (state IN ('pending','running') OR cleanup_required) AND ($1::timestamptz IS NULL OR (created_at,id)>($1,$2)) ORDER BY created_at,id LIMIT $3")
+        let rows = sqlx::query("SELECT id,ownership_nonce,user_id,team_id,state,deadline,created_at,job_namespace,job_name,job_uid,cleanup_required FROM thalamus_debug_sessions WHERE (state IN ('pending','running') OR cleanup_required) AND ($1::timestamptz IS NULL OR (created_at,id)>($1,$2)) ORDER BY created_at,id LIMIT $3")
             .bind(after.as_ref().map(|cursor| cursor.created_at))
             .bind(after.as_ref().map(|cursor| cursor.id))
             .bind(i64::from(limit))
@@ -690,12 +1132,13 @@ impl WorkerStore {
         non_nil(identity.user_id, "user ID")?;
         non_nil(identity.team_id, "team ID")?;
         let mut tx = self.pool.begin().await?;
-        let user =
-            sqlx::query("SELECT disabled,platform_admin FROM identity_users WHERE id=$1 FOR SHARE")
-                .bind(identity.user_id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or(StoreError::NotFound)?;
+        let user = sqlx::query(
+            "SELECT issuer,disabled,platform_admin FROM identity_users WHERE id=$1 FOR SHARE",
+        )
+        .bind(identity.user_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(StoreError::NotFound)?;
         let disabled: bool = user.try_get("disabled")?;
         let admin: bool = user.try_get("platform_admin")?;
         let allowed: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM identity_teams t WHERE t.id=$2 AND ($3 OR EXISTS (SELECT 1 FROM identity_memberships m WHERE m.user_id=$1 AND m.team_id=t.id)))")
@@ -706,11 +1149,16 @@ impl WorkerStore {
             tx.commit().await?;
             return Ok(None);
         }
-        let reason = if disabled {
+        let before_deadline: bool = row.try_get("before_deadline")?;
+        let stale = projection_stale(&mut tx, user.try_get("issuer")?).await?;
+        if stale && before_deadline {
+            return Err(StoreError::IdentityProjectionStale);
+        }
+        let reason = if !stale && disabled {
             Some(WorkerFinalizationReason::OwnerDisabled)
-        } else if !allowed {
+        } else if !stale && !allowed {
             Some(WorkerFinalizationReason::TeamMembershipRevoked)
-        } else if !row.try_get::<bool, _>("before_deadline")? {
+        } else if !before_deadline {
             Some(WorkerFinalizationReason::DeadlineExpired)
         } else {
             None
@@ -729,7 +1177,7 @@ impl WorkerStore {
             }
         };
         let outcome = serde_json::json!({"reason": label});
-        let row = sqlx::query("UPDATE thalamus_debug_sessions SET last_transition_from=state,state=$4,outcome=$5,cleanup_required=true,updated_at=clock_timestamp() WHERE id=$1 AND user_id=$2 AND team_id=$3 AND state IN ('pending','running') RETURNING id,user_id,team_id,state,deadline,created_at,job_namespace,job_name,cleanup_required")
+        let row = sqlx::query("UPDATE thalamus_debug_sessions SET last_transition_from=state,state=$4,outcome=$5,cleanup_required=true,updated_at=clock_timestamp() WHERE id=$1 AND user_id=$2 AND team_id=$3 AND state IN ('pending','running') RETURNING id,ownership_nonce,user_id,team_id,state,deadline,created_at,job_namespace,job_name,job_uid,cleanup_required")
             .bind(id).bind(identity.user_id).bind(identity.team_id).bind(next.as_str()).bind(outcome)
             .fetch_optional(&mut *tx).await?.ok_or(StoreError::InvalidTransition)?;
         revoke_session_credentials(&mut tx, identity, id).await?;
@@ -776,7 +1224,38 @@ impl DebugStore {
         sqlx::raw_sql(include_str!("../migrations/0001_debug.sql"))
             .execute(&self.pool)
             .await?;
+        sqlx::raw_sql(include_str!("../migrations/0002_debug_lifecycle.sql"))
+            .execute(&self.pool)
+            .await?;
         Ok(())
+    }
+
+    /// One trusted server collector per session. Each successful attempt must
+    /// call `begin_attempt` before opening the non-replayable upstream feed.
+    pub async fn try_collector_leadership(&self, id: Uuid) -> Result<Option<SessionLock>> {
+        try_session_lock(&self.pool, id, COLLECTOR_LOCK).await
+    }
+
+    /// Trusted supervisor discovery, including terminal/offboarded sessions.
+    /// An unmarked generation is only evidence of a possible gap: acquire the
+    /// collector lock before recording it, since an active leader holds it.
+    pub async fn list_collector_recovery(
+        &self,
+        after: Option<WorkerSessionCursor>,
+        limit: u32,
+    ) -> Result<Vec<WorkerSessionRef>> {
+        if !(1..=100).contains(&limit) {
+            return Err(StoreError::Invalid("collector page limit"));
+        }
+        if let Some(cursor) = &after {
+            non_nil(cursor.id, "collector cursor ID")?;
+        }
+        let rows = sqlx::query("SELECT s.id,s.ownership_nonce,s.user_id,s.team_id,s.state,s.deadline,s.created_at,s.job_namespace,s.job_name,s.job_uid,s.cleanup_required FROM thalamus_debug_sessions s WHERE (s.collector_generation > s.collector_gap_generation OR (s.initialization_claim IS NOT NULL AND s.upstream_session_id IS NULL AND NOT EXISTS (SELECT 1 FROM thalamus_debug_events e WHERE e.session_id=s.id AND e.client_request_key='collector.gap.initialization'))) AND ($1::timestamptz IS NULL OR (s.created_at,s.id)>($1,$2)) ORDER BY s.created_at,s.id LIMIT $3")
+            .bind(after.as_ref().map(|cursor| cursor.created_at))
+            .bind(after.as_ref().map(|cursor| cursor.id))
+            .bind(i64::from(limit))
+            .fetch_all(&self.pool).await?;
+        rows.iter().map(decode_worker_session).collect()
     }
 
     pub async fn create(
@@ -830,6 +1309,31 @@ impl DebugStore {
         Ok(session)
     }
 
+    /// Serialize creation of a client request key before deriving mutable
+    /// server-side context/deadlines. Keep this transaction open through
+    /// `create_in_transaction` and compare the original caller inputs when a
+    /// previous session is returned.
+    pub async fn get_by_request_key_in_transaction(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        identity: &DebugIdentity,
+        key: &str,
+    ) -> Result<Option<DebugSession>> {
+        printable(key, 256, "client request key")?;
+        authorize(tx, identity).await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!(
+                "thalamus/debug/create/{}/{}/{}",
+                identity.user_id, identity.team_id, key
+            ))
+            .execute(&mut **tx)
+            .await?;
+        let row = sqlx::query("SELECT * FROM thalamus_debug_sessions WHERE user_id=$1 AND team_id=$2 AND client_request_key=$3")
+            .bind(identity.user_id).bind(identity.team_id).bind(key)
+            .fetch_optional(&mut **tx).await?;
+        row.as_ref().map(decode_session).transpose()
+    }
+
     pub async fn get(&self, identity: &DebugIdentity, id: Uuid) -> Result<DebugSession> {
         let mut tx = self.pool.begin().await?;
         let session = self.get_in_transaction(&mut tx, identity, id).await?;
@@ -845,6 +1349,49 @@ impl DebugStore {
     ) -> Result<DebugSession> {
         authorize(tx, identity).await?;
         decode_session(&session_row(tx, identity, id, false).await?)
+    }
+
+    /// Lightweight equivalent of `get` for frequent trusted-host checks.
+    pub async fn get_access(
+        &self,
+        identity: &DebugIdentity,
+        id: Uuid,
+    ) -> Result<DebugSessionAccess> {
+        let mut tx = self.pool.begin().await?;
+        let session = self
+            .get_access_in_transaction(&mut tx, identity, id)
+            .await?;
+        tx.commit().await?;
+        Ok(session)
+    }
+
+    pub async fn get_access_in_transaction(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        identity: &DebugIdentity,
+        id: Uuid,
+    ) -> Result<DebugSessionAccess> {
+        authorize(tx, identity).await?;
+        non_nil(id, "session ID")?;
+        let row = sqlx::query("SELECT id,ownership_nonce,user_id,team_id,project_id,service_id,model,job_namespace,job_name,job_uid,deadline,model_budget,tool_budget,tool_calls_used,state,upstream_session_id FROM thalamus_debug_sessions WHERE id=$1 AND user_id=$2 AND team_id=$3")
+            .bind(id).bind(identity.user_id).bind(identity.team_id)
+            .fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)?;
+        decode_session_access(&row)
+    }
+
+    /// Read seed readiness from the durable claim, not from upstream readiness
+    /// or a separately maintained flag. The session row lock serializes this
+    /// decision with prompt acceptance and owner/session transitions.
+    pub async fn seed_accepted_in_transaction(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        identity: &DebugIdentity,
+        id: Uuid,
+    ) -> Result<bool> {
+        authorize(tx, identity).await?;
+        session_guard_row(tx, identity, id).await?;
+        Ok(sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM thalamus_debug_prompts WHERE session_id=$1 AND kind='seed' AND client_request_key='seed' AND state='accepted')")
+            .bind(id).fetch_one(&mut **tx).await?)
     }
 
     /// Compare-and-set. Terminal outcomes are required, nonterminal outcomes are
@@ -936,37 +1483,86 @@ impl DebugStore {
         id: Uuid,
         input: NewDebugEvent,
     ) -> Result<DebugEvent> {
-        validate_event(&input)?;
         authorize(tx, identity).await?;
         let row = session_guard_row(tx, identity, id).await?;
-        let state = SessionState::parse(row.try_get("state")?)?;
-        let previous = sqlx::query(
-            "SELECT * FROM thalamus_debug_events WHERE session_id=$1 AND client_request_key=$2",
-        )
-        .bind(id)
-        .bind(&input.client_request_key)
-        .fetch_optional(&mut **tx)
-        .await?;
-        if let Some(row) = previous {
-            let event = decode_event(&row)?;
-            if event.kind != input.kind || event.payload != input.payload {
-                return Err(StoreError::IdempotencyConflict);
-            }
-            return Ok(event);
+        append_locked_event(tx, identity, id, &row, input, false).await
+    }
+
+    /// Append an upstream event only for the current, still-open collector
+    /// generation. Generation changes and appends serialize on the session
+    /// row, so a stale replica cannot write after a successor takes over.
+    pub async fn append_collector_event(
+        &self,
+        identity: &DebugIdentity,
+        id: Uuid,
+        generation: i64,
+        input: NewDebugEvent,
+    ) -> Result<DebugEvent> {
+        if generation <= 0 {
+            return Err(StoreError::Invalid("collector generation"));
         }
-        if state.is_terminal() {
+        let mut tx = self.pool.begin().await?;
+        authorize(&mut tx, identity).await?;
+        let row = session_guard_row(&mut tx, identity, id).await?;
+        let current: i64 = row.try_get("collector_generation")?;
+        let gap: i64 = row.try_get("collector_gap_generation")?;
+        if current != generation || gap >= generation {
+            return Err(StoreError::InvalidTransition);
+        }
+        if SessionState::parse(row.try_get("state")?)? != SessionState::Running
+            || !row.try_get::<bool, _>("before_deadline")?
+        {
             return Err(StoreError::Inactive);
         }
-        if row.try_get::<i64, _>("next_event_sequence")? == i64::MAX {
-            return Err(StoreError::SequenceExhausted);
+        let event = append_locked_event(&mut tx, identity, id, &row, input, false).await?;
+        tx.commit().await?;
+        Ok(event)
+    }
+
+    /// Trusted collector-only fixed-payload operation. Never accept a generation
+    /// or identity from an untrusted client. It remains available after deadline,
+    /// termination or offboarding, and cannot append arbitrary transcript data.
+    pub async fn record_collector_gap(
+        &self,
+        identity: &DebugIdentity,
+        id: Uuid,
+        generation: i64,
+    ) -> Result<()> {
+        if generation <= 0 {
+            return Err(StoreError::Invalid("collector generation"));
         }
-        let row = sqlx::query("UPDATE thalamus_debug_sessions SET next_event_sequence=next_event_sequence+1,updated_at=clock_timestamp() WHERE id=$1 AND user_id=$2 AND team_id=$3 AND next_event_sequence < 9223372036854775807 RETURNING next_event_sequence-1 AS sequence")
-            .bind(id).bind(identity.user_id).bind(identity.team_id).fetch_optional(&mut **tx).await?.ok_or(StoreError::SequenceExhausted)?;
-        let sequence: i64 = row.try_get("sequence")?;
-        let row = sqlx::query("INSERT INTO thalamus_debug_events(session_id,sequence,client_request_key,kind,payload) VALUES ($1,$2,$3,$4,$5) RETURNING *")
-            .bind(id).bind(sequence).bind(&input.client_request_key).bind(&input.kind).bind(&input.payload)
-            .fetch_one(&mut **tx).await?;
-        decode_event(&row)
+        let mut tx = self.pool.begin().await?;
+        lock_identity_for_recovery(&mut tx, identity).await?;
+        let row = session_guard_row(&mut tx, identity, id).await?;
+        let current: i64 = row.try_get("collector_generation")?;
+        let gap: i64 = row.try_get("collector_gap_generation")?;
+        if gap > current {
+            return Err(StoreError::CorruptData);
+        }
+        if current != generation {
+            return Err(StoreError::InvalidTransition);
+        }
+        if gap < generation {
+            append_gap_locked(&mut tx, identity, id, &row, generation).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Trusted supervisor callback for an upstream create with an unknown
+    /// outcome. It writes only a fixed gap event and does not disclose session
+    /// data. A bound upstream already has its own initial-gap event.
+    pub async fn record_initialization_gap(
+        &self,
+        identity: &DebugIdentity,
+        id: Uuid,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        lock_identity_for_recovery(&mut tx, identity).await?;
+        let row = session_guard_row(&mut tx, identity, id).await?;
+        append_initialization_gap_locked(&mut tx, identity, id, &row).await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Ascending events strictly after `after_sequence`; zero starts at the first.
@@ -1006,6 +1602,187 @@ impl DebugStore {
         let rows = sqlx::query("SELECT e.* FROM thalamus_debug_events e JOIN thalamus_debug_sessions s ON s.id=e.session_id WHERE s.id=$1 AND s.user_id=$2 AND s.team_id=$3 AND e.sequence>$4 ORDER BY e.sequence LIMIT $5")
             .bind(id).bind(identity.user_id).bind(identity.team_id).bind(after_sequence).bind(limit).fetch_all(&mut **tx).await?;
         rows.iter().map(decode_event).collect()
+    }
+
+    /// Atomically reserve a seed or client-keyed reply and persist its
+    /// requested event. Only `Acquired` may dispatch. Existing pending claims
+    /// are always indeterminate, even if retried with the same claim token.
+    /// Claims never expire, because the upstream has no idempotency support.
+    pub async fn claim_prompt(
+        &self,
+        identity: &DebugIdentity,
+        id: Uuid,
+        kind: PromptKind,
+        key: &str,
+        text: &str,
+        claim: Uuid,
+    ) -> Result<PromptClaim> {
+        let digest = prompt_digest(kind, key, text, claim)?;
+        let mut tx = self.pool.begin().await?;
+        authorize(&mut tx, identity).await?;
+        let session = session_guard_row(&mut tx, identity, id).await?;
+        let previous = sqlx::query("SELECT text_digest,state FROM thalamus_debug_prompts WHERE session_id=$1 AND kind=$2 AND client_request_key=$3")
+            .bind(id).bind(kind.as_str()).bind(key).fetch_optional(&mut *tx).await?;
+        if let Some(previous) = &previous {
+            let saved: Vec<u8> = previous.try_get("text_digest")?;
+            if saved.as_slice() != digest.as_slice() {
+                return Err(StoreError::IdempotencyConflict);
+            }
+            match previous.try_get::<&str, _>("state")? {
+                "accepted" => {
+                    tx.commit().await?;
+                    return Ok(PromptClaim::Accepted);
+                }
+                "claimed" => {
+                    tx.commit().await?;
+                    return Ok(PromptClaim::Indeterminate);
+                }
+                "released" => {}
+                _ => return Err(StoreError::CorruptData),
+            }
+        }
+        if SessionState::parse(session.try_get("state")?)? != SessionState::Running
+            || !session.try_get::<bool, _>("before_deadline")?
+            || session
+                .try_get::<Option<String>, _>("upstream_session_id")?
+                .is_none()
+        {
+            return Err(StoreError::Inactive);
+        }
+        if session.try_get::<i64, _>("tool_calls_used")?
+            >= session.try_get::<i64, _>("tool_budget")?
+        {
+            return Err(StoreError::BudgetExhausted);
+        }
+        if kind == PromptKind::Reply {
+            let seeded: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM thalamus_debug_prompts WHERE session_id=$1 AND kind='seed' AND client_request_key='seed' AND state='accepted')")
+                .bind(id).fetch_one(&mut *tx).await?;
+            if !seeded {
+                return Err(StoreError::InvalidTransition);
+            }
+        }
+        if previous.is_none() {
+            let payload = match kind {
+                // The seed is derived from persisted context/evidence. It need
+                // not be duplicated in the transcript and can exceed 128 KiB.
+                PromptKind::Seed => serde_json::json!({"request_key": key}),
+                PromptKind::Reply => serde_json::json!({"request_key": key, "text": text}),
+            };
+            let event = NewDebugEvent {
+                client_request_key: format!("prompt.requested.{}", Uuid::new_v4()),
+                kind: format!("{}.requested", kind.as_str()),
+                payload,
+            };
+            validate_event(&event)?;
+            sqlx::query("INSERT INTO thalamus_debug_prompts(session_id,kind,client_request_key,text_digest,claim_token,state) VALUES ($1,$2,$3,$4,$5,'claimed')")
+                .bind(id).bind(kind.as_str()).bind(key).bind(digest.as_slice()).bind(claim)
+                .execute(&mut *tx).await?;
+            append_locked_event(&mut tx, identity, id, &session, event, false).await?;
+        } else {
+            sqlx::query("UPDATE thalamus_debug_prompts SET claim_token=$4,state='claimed',updated_at=clock_timestamp() WHERE session_id=$1 AND kind=$2 AND client_request_key=$3 AND state='released'")
+                .bind(id).bind(kind.as_str()).bind(key).bind(claim)
+                .execute(&mut *tx).await?;
+        }
+        // Never reuse a token, including after a safe release: a delayed
+        // completion from the old attempt must not affect the next one.
+        let inserted = sqlx::query("INSERT INTO thalamus_debug_prompt_attempts(claim_token,session_id,kind,client_request_key) VALUES ($1,$2,$3,$4) ON CONFLICT (claim_token) DO NOTHING")
+            .bind(claim).bind(id).bind(kind.as_str()).bind(key)
+            .execute(&mut *tx).await?;
+        if inserted.rows_affected() != 1 {
+            return Err(StoreError::IdempotencyConflict);
+        }
+        tx.commit().await?;
+        Ok(PromptClaim::Acquired)
+    }
+
+    /// Record a known upstream acceptance and its event atomically. This
+    /// trusted dispatch callback accepts only the original server-generated
+    /// token and still records a success racing deadline or offboarding.
+    pub async fn accept_prompt(
+        &self,
+        identity: &DebugIdentity,
+        id: Uuid,
+        kind: PromptKind,
+        key: &str,
+        claim: Uuid,
+    ) -> Result<()> {
+        validate_prompt_key(kind, key, claim)?;
+        let mut tx = self.pool.begin().await?;
+        lock_identity_for_recovery(&mut tx, identity).await?;
+        let session = session_guard_row(&mut tx, identity, id).await?;
+        let prompt = sqlx::query("SELECT claim_token,state FROM thalamus_debug_prompts WHERE session_id=$1 AND kind=$2 AND client_request_key=$3")
+            .bind(id).bind(kind.as_str()).bind(key)
+            .fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        if prompt.try_get::<Uuid, _>("claim_token")? != claim {
+            return Err(StoreError::InvalidTransition);
+        }
+        match prompt.try_get::<&str, _>("state")? {
+            "accepted" => {
+                tx.commit().await?;
+                return Ok(());
+            }
+            "claimed" => {}
+            "released" => return Err(StoreError::InvalidTransition),
+            _ => return Err(StoreError::CorruptData),
+        }
+        sqlx::query("UPDATE thalamus_debug_prompts SET state='accepted',updated_at=clock_timestamp() WHERE session_id=$1 AND kind=$2 AND client_request_key=$3 AND claim_token=$4 AND state='claimed'")
+            .bind(id).bind(kind.as_str()).bind(key).bind(claim)
+            .execute(&mut *tx).await?;
+        append_locked_event(
+            &mut tx,
+            identity,
+            id,
+            &session,
+            NewDebugEvent {
+                client_request_key: format!("prompt.accepted.{}", Uuid::new_v4()),
+                kind: format!("{}.accepted", kind.as_str()),
+                payload: serde_json::json!({"request_key": key}),
+            },
+            true,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Release only if the trusted caller knows no HTTP dispatch was made.
+    /// A timeout, cancellation, upstream error, or lost response after send is
+    /// not proof of non-dispatch. The key remains bound to the original text.
+    pub async fn release_prompt(
+        &self,
+        identity: &DebugIdentity,
+        id: Uuid,
+        kind: PromptKind,
+        key: &str,
+        text: &str,
+        claim: Uuid,
+    ) -> Result<()> {
+        let digest = prompt_digest(kind, key, text, claim)?;
+        let mut tx = self.pool.begin().await?;
+        lock_identity_for_recovery(&mut tx, identity).await?;
+        session_guard_row(&mut tx, identity, id).await?;
+        let prompt = sqlx::query("SELECT text_digest,claim_token,state FROM thalamus_debug_prompts WHERE session_id=$1 AND kind=$2 AND client_request_key=$3")
+            .bind(id).bind(kind.as_str()).bind(key)
+            .fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        let saved: Vec<u8> = prompt.try_get("text_digest")?;
+        if saved.as_slice() != digest.as_slice() {
+            return Err(StoreError::IdempotencyConflict);
+        }
+        if prompt.try_get::<Uuid, _>("claim_token")? != claim {
+            return Err(StoreError::InvalidTransition);
+        }
+        match prompt.try_get::<&str, _>("state")? {
+            "claimed" => {
+                sqlx::query("UPDATE thalamus_debug_prompts SET state='released',updated_at=clock_timestamp() WHERE session_id=$1 AND kind=$2 AND client_request_key=$3 AND claim_token=$4 AND state='claimed'")
+                    .bind(id).bind(kind.as_str()).bind(key).bind(claim)
+                    .execute(&mut *tx).await?;
+            }
+            "released" => {}
+            "accepted" => return Err(StoreError::InvalidTransition),
+            _ => return Err(StoreError::CorruptData),
+        }
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Reserve creation of the upstream session before the external request.
@@ -1076,11 +1853,23 @@ impl DebugStore {
         claim: Uuid,
         upstream_id: &str,
     ) -> Result<DebugSession> {
+        authorize(tx, identity).await?;
+        self.bind_upstream_locked_in_transaction(tx, identity, id, claim, upstream_id)
+            .await
+    }
+
+    async fn bind_upstream_locked_in_transaction(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        identity: &DebugIdentity,
+        id: Uuid,
+        claim: Uuid,
+        upstream_id: &str,
+    ) -> Result<DebugSession> {
         non_nil(claim, "initialization claim")?;
         if !valid_upstream_id(upstream_id) {
             return Err(StoreError::Invalid("upstream session ID"));
         }
-        authorize(tx, identity).await?;
         let row = session_row(tx, identity, id, true).await?;
         let session = decode_session(&row)?;
         if session.initialization_claim != Some(claim) {
@@ -1096,7 +1885,45 @@ impl DebugStore {
         let row = sqlx::query("UPDATE thalamus_debug_sessions SET upstream_session_id=$5,updated_at=clock_timestamp() WHERE id=$1 AND user_id=$2 AND team_id=$3 AND initialization_claim=$4 AND upstream_session_id IS NULL RETURNING *")
             .bind(id).bind(identity.user_id).bind(identity.team_id).bind(claim).bind(upstream_id)
             .fetch_optional(&mut **tx).await?.ok_or(StoreError::InitializationBusy)?;
-        decode_session(&row)
+        // OpenCode's creation request happens before subscription to its hot
+        // event feed. Record the potentially missing creation events in the
+        // same transaction as the upstream ID, including a bind racing finish.
+        append_locked_event(
+            tx,
+            identity,
+            id,
+            &row,
+            NewDebugEvent {
+                client_request_key: "collector.gap.0".to_owned(),
+                kind: "transcript.gap".to_owned(),
+                payload: serde_json::json!({
+                    "reason": "upstream_session_created_before_subscription",
+                    "generation": 0,
+                }),
+            },
+            true,
+        )
+        .await?;
+        decode_session(&session_row(tx, identity, id, false).await?)
+    }
+
+    /// Trusted post-dispatch callback. The original private claim and exact
+    /// owner/team binding are required; no session or transcript is returned.
+    /// Unlike the owner-facing bind API this can persist a known result and
+    /// initial transcript gap after offboarding or session termination.
+    pub async fn bind_upstream_session_after_dispatch(
+        &self,
+        identity: &DebugIdentity,
+        id: Uuid,
+        claim: Uuid,
+        upstream_id: &str,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        lock_identity_for_recovery(&mut tx, identity).await?;
+        self.bind_upstream_locked_in_transaction(&mut tx, identity, id, claim, upstream_id)
+            .await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Release only when the host knows no upstream session was created. An
@@ -1216,6 +2043,42 @@ impl DebugStore {
             id: credential_id,
             secret,
         })
+    }
+
+    /// Trusted launch verification for a Secret already provisioned by the
+    /// worker. Unlike bearer authentication this accepts a pending session;
+    /// it checks the exact issuer record, owner, audience and expiry without
+    /// spending a tool call or exposing credential material.
+    pub async fn verify_tool_credential_for_launch(
+        &self,
+        identity: &DebugIdentity,
+        id: Uuid,
+        secret: &str,
+        audience: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<Uuid> {
+        printable(audience, 256, "credential audience")?;
+        let digest = credential_digest(secret)?;
+        let expires_at = db_timestamp(expires_at)?;
+        let mut tx = self.pool.begin().await?;
+        authorize(&mut tx, identity).await?;
+        let row = session_guard_row(&mut tx, identity, id).await?;
+        let state = SessionState::parse(row.try_get("state")?)?;
+        if !active(&row, state)? {
+            return Err(StoreError::Inactive);
+        }
+        if row.try_get::<i64, _>("tool_calls_used")? >= row.try_get::<i64, _>("tool_budget")? {
+            return Err(StoreError::BudgetExhausted);
+        }
+        if expires_at > row.try_get::<DateTime<Utc>, _>("deadline")? {
+            return Err(StoreError::InvalidCredential);
+        }
+        let credential: Option<Uuid> = sqlx::query_scalar("SELECT id FROM thalamus_debug_tool_credentials WHERE session_id=$1 AND user_id=$2 AND team_id=$3 AND digest=$4 AND audience=$5 AND expires_at=$6 AND expires_at>clock_timestamp() AND revoked_at IS NULL FOR UPDATE")
+            .bind(id).bind(identity.user_id).bind(identity.team_id).bind(digest.as_slice())
+            .bind(audience).bind(expires_at).fetch_optional(&mut *tx).await?;
+        let credential = credential.ok_or(StoreError::InvalidCredential)?;
+        tx.commit().await?;
+        Ok(credential)
     }
 
     pub async fn revoke_tool_credential(
@@ -1486,12 +2349,14 @@ mod tests {
         pool: &PgPool,
         tool_budget: i64,
     ) -> (DebugStore, DebugIdentity, NewDebugSession, DebugSession) {
-        sqlx::raw_sql(include_str!(
-            "../../thalamus-identity/migrations/0001_identity.sql"
-        ))
-        .execute(pool)
-        .await
-        .unwrap();
+        for migration in [
+            include_str!("../../thalamus-identity/migrations/0001_identity.sql"),
+            include_str!("../../thalamus-identity/migrations/0002_worker_keys.sql"),
+            include_str!("../../thalamus-identity/migrations/0003_budget_caps.sql"),
+            include_str!("../../thalamus-identity/migrations/0004_identity_binding.sql"),
+        ] {
+            sqlx::raw_sql(migration).execute(pool).await.unwrap();
+        }
         let store = DebugStore::new(pool.clone());
         store.migrate().await.unwrap();
         let identity = DebugIdentity {

@@ -52,7 +52,12 @@ fn fixture(
                 header,
                 serde_json::from_slice(&bytes[end..end + length]).unwrap(),
             ));
-            write!(stream, "HTTP/1.1 {status} fixture\r\nContent-Length: {}\r\nX-Backend: {identity}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            let backend_header = if identity.is_empty() {
+                String::new()
+            } else {
+                format!("X-Backend: {identity}\r\n")
+            };
+            write!(stream, "HTTP/1.1 {status} fixture\r\nContent-Length: {}\r\n{backend_header}Connection: close\r\n\r\n{body}", body.len()).unwrap();
         }
         received
     });
@@ -131,6 +136,132 @@ fn candidate_never_passes_on_old_or_missing_identity() {
             .any(|c| c.detail.contains("missing answering backend"))
     );
     server.join().unwrap();
+}
+#[test]
+fn candidate_without_old_backend_still_enforces_expected_identity() {
+    let (url, server) = fixture(vec![
+        (401, "", "{}"),
+        (403, "", "{}"),
+        (200, "new", CHAT),
+        (200, "new", STREAM),
+        (200, "new", CHAT),
+    ]);
+    let mut c = config(url);
+    c.old_backend = None;
+    let summary = run(&c, request(), "candidate-no-old".into(), "secret").unwrap();
+    assert!(summary.passed);
+    assert_eq!(summary.answering_backends, vec!["new"]);
+    server.join().unwrap();
+
+    let (url, server) = fixture(vec![
+        (401, "", "{}"),
+        (403, "", "{}"),
+        (200, "other", CHAT),
+        (200, "", STREAM),
+        (200, "new", CHAT),
+    ]);
+    c.base_url = url;
+    let summary = run(&c, request(), "candidate-no-old-bad".into(), "secret").unwrap();
+    assert!(!summary.passed);
+    assert!(summary.checks.iter().any(|check| check.name == "chat"
+        && matches!(check.status, Status::Failed)
+        && check.detail.contains("not the candidate")));
+    assert!(summary.checks.iter().any(|check| check.name == "streaming"
+        && matches!(check.status, Status::Failed)
+        && check.detail.contains("missing answering backend")));
+    server.join().unwrap();
+
+    c.old_backend = Some("new".into());
+    assert!(run(&c, request(), "candidate-same-old".into(), "secret").is_err());
+    c.old_backend = Some(" ".into());
+    assert!(run(&c, request(), "candidate-empty-old".into(), "secret").is_err());
+}
+#[test]
+fn public_expected_backend_accepts_matching_identity() {
+    let (url, server) = fixture(vec![
+        (401, "", "{}"),
+        (403, "", "{}"),
+        (200, "new", CHAT),
+        (200, "new", STREAM),
+        (200, "new", CHAT),
+    ]);
+    let mut c = config(url);
+    c.suite = Suite::Public;
+    let summary = run(&c, request(), "public-match".into(), "secret").unwrap();
+    assert!(summary.passed);
+    assert_eq!(summary.answering_backends, vec!["new"]);
+    server.join().unwrap();
+}
+
+#[test]
+fn public_expected_backend_rejects_missing_identity() {
+    let (url, server) = fixture(vec![
+        (401, "", "{}"),
+        (403, "", "{}"),
+        (200, "new", CHAT),
+        (200, "", STREAM),
+        (200, "new", CHAT),
+    ]);
+    let mut c = config(url);
+    c.suite = Suite::Public;
+    let summary = run(&c, request(), "public-missing".into(), "secret").unwrap();
+    assert!(!summary.passed);
+    assert_eq!(summary.answering_backends, vec!["new"]);
+    assert!(summary.checks.iter().any(|check| check.name == "streaming"
+        && matches!(check.status, Status::Failed)
+        && check.detail.contains("missing answering backend identity")));
+    server.join().unwrap();
+}
+
+#[test]
+fn public_expected_backend_rejects_other_identity() {
+    let (url, server) = fixture(vec![
+        (401, "", "{}"),
+        (403, "", "{}"),
+        (200, "new", CHAT),
+        (200, "other", STREAM),
+        (200, "new", CHAT),
+    ]);
+    let mut c = config(url);
+    c.suite = Suite::Public;
+    let summary = run(&c, request(), "public-mismatch".into(), "secret").unwrap();
+    assert!(!summary.passed);
+    assert_eq!(summary.answering_backends, vec!["new", "other"]);
+    assert!(summary.checks.iter().any(|check| check.name == "streaming"
+        && matches!(check.status, Status::Failed)
+        && check.detail.contains("not the expected backend")));
+    server.join().unwrap();
+}
+
+#[test]
+fn public_without_expected_backend_allows_multiple_or_missing_identities() {
+    let (url, server) = fixture(vec![
+        (401, "", "{}"),
+        (403, "", "{}"),
+        (200, "new", CHAT),
+        (200, "other", STREAM),
+        (200, "", CHAT),
+    ]);
+    let mut c = config(url);
+    c.suite = Suite::Public;
+    c.expected_backend = None;
+    let summary = run(&c, request(), "public-multiple".into(), "secret").unwrap();
+    assert!(summary.passed);
+    assert_eq!(summary.answering_backends, vec!["new", "other"]);
+    server.join().unwrap();
+}
+
+#[test]
+fn public_expected_backend_requires_valid_configuration() {
+    let mut c = config("http://127.0.0.1:1/v1".into());
+    c.suite = Suite::Public;
+    for header in [None, Some("".into()), Some("invalid header".into())] {
+        c.backend_header = header;
+        assert!(run(&c, request(), "public-invalid".into(), "secret").is_err());
+    }
+    c.backend_header = Some("x-backend".into());
+    c.expected_backend = Some("  ".into());
+    assert!(run(&c, request(), "public-invalid".into(), "secret").is_err());
 }
 #[test]
 fn enabled_tool_reasoning_and_responses_are_exercised() {

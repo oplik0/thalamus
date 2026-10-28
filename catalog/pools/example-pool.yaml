@@ -1,0 +1,26 @@
+# Illustrative only. Install and verify the pinned controllers, Kueue plain-Pod
+# integration and quota strategy; replace capacity and node labels with measured
+# values. Configure the EPP metrics scrape with the namespace, service and
+# endpoint labels used below. {{deployment}} selects the actual revision's EPP
+# and pool. An absent idle queue becomes zero only while that exact scrape is
+# healthy; a missing or unhealthy scrape remains an error.
+name: example-pool
+hardwareProfile: example-gpu
+nodeSelector:
+  accelerator: example-gpu
+gpuPerNode: 1
+totalGpu: 2
+members:
+  - name: example-pool-deployment
+    service: example-pool-service
+    namespace: thalamus-inference
+    gpuPerReplica: 1
+    prometheusQuery: 'sum(llm_d_epp_flow_control_queue_size{inference_pool="{{deployment}}-inference-pool"}) or (0 * max(up{namespace="thalamus-inference",service="{{deployment}}-epp",endpoint="http-metrics"} == 1))'
+    threshold: "4"
+prometheusAddress: http://prometheus.monitoring.svc.cluster.local:9090
+quotaCheckStrategy: IgnoreUndeclared
+scaleDownSeconds: 600
+versions:
+  kueue: v0.18.0
+  keda: 2.20.2
+  llm-d-router: v1.0.0
