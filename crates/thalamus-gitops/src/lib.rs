@@ -3,6 +3,10 @@
 //! Git and KCL are invoked directly, without a shell. The caller supplies the
 //! exact KCL arguments used by its CI and is responsible for credentials,
 //! repository trust, worktree lifecycle, and serializing access to a worktree.
+//!
+//! To regenerate a preview after the base moves, fetch and resolve the base,
+//! create a new worktree at that commit, and reapply the requested patches.
+//! Existing worktrees remain pinned to their original bases.
 
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
@@ -90,7 +94,9 @@ pub struct ChangeWorktree {
     path: PathBuf,
     base: String,
     changed_files: Vec<PathBuf>,
-    preview_hashes: BTreeMap<PathBuf, [u8; 32]>,
+    preview_hashes: BTreeMap<PathBuf, Option<[u8; 32]>>,
+    repository: PathBuf,
+    owned: bool,
 }
 
 fn run(
@@ -170,6 +176,85 @@ impl GitOpsRepo {
         Ok(())
     }
 
+    /// Resolve a configured branch or full ref to its current commit after fetching.
+    pub fn resolve_base(&self, reference: &str) -> Result<String> {
+        let reference = if reference.starts_with("refs/heads/") {
+            reference.to_owned()
+        } else {
+            format!("refs/heads/{reference}")
+        };
+        git(&self.bare, &args(&["check-ref-format", &reference]))?;
+        Ok(git(
+            &self.bare,
+            &args(&["rev-parse", "--verify", &format!("{reference}^{{commit}}")]),
+        )?
+        .trim()
+        .to_owned())
+    }
+
+    /// Discard only a worktree created by this repository handle.
+    pub fn discard_worktree(&self, worktree: ChangeWorktree) -> Result<()> {
+        if !worktree.owned || worktree.repository != self.bare {
+            return Err(Error::Invalid(
+                "worktree is not owned by this repository".into(),
+            ));
+        }
+        if fs::canonicalize(&worktree.path)? != worktree.path {
+            return Err(Error::Invalid("worktree path changed".into()));
+        }
+        let common = git(&worktree.path, &args(&["rev-parse", "--git-common-dir"]))?;
+        if fs::canonicalize(worktree.path.join(common.trim()))? != self.bare {
+            return Err(Error::Invalid("worktree repository changed".into()));
+        }
+        let mut command = args(&["worktree", "remove", "--force", "--"]);
+        command.push(worktree.path.into_os_string());
+        git(&self.bare, &command)?;
+        Ok(())
+    }
+
+    /// Render two approved commit IDs in isolated worktrees. Paths must not exist.
+    pub fn preview_refs(
+        &self,
+        base: &str,
+        head: &str,
+        base_path: &Path,
+        head_path: &Path,
+        render: &RenderCommand,
+    ) -> Result<Preview> {
+        let base_tree = self.create_worktree(base, base_path)?;
+        let result = (|| {
+            let head_tree = self.create_worktree(head, head_path)?;
+            let result = (|| {
+                let base_render = base_tree.render(render)?;
+                let proposed_render = head_tree.render(render)?;
+                let data_diff = git(
+                    &self.bare,
+                    &args(&["diff", "--no-ext-diff", "--no-textconv", base, head, "--"]),
+                )?;
+                let rendered_diff = TextDiff::from_lines(&base_render, &proposed_render)
+                    .unified_diff()
+                    .header("base-render", "proposed-render")
+                    .to_string();
+                Ok(Preview {
+                    base_render,
+                    proposed_render,
+                    data_diff,
+                    rendered_diff,
+                })
+            })();
+            let cleanup = self.discard_worktree(head_tree);
+            match (result, cleanup) {
+                (Ok(value), Ok(())) => Ok(value),
+                (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+            }
+        })();
+        let cleanup = self.discard_worktree(base_tree);
+        match (result, cleanup) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+        }
+    }
+
     /// Create a detached, independent worktree at an explicit full commit ID.
     pub fn create_worktree(&self, base: &str, path: &Path) -> Result<ChangeWorktree> {
         if !matches!(base.len(), 40 | 64) || !base.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -198,6 +283,8 @@ impl GitOpsRepo {
             base: resolved,
             changed_files: Vec::new(),
             preview_hashes: BTreeMap::new(),
+            repository: self.bare.clone(),
+            owned: true,
         })
     }
 
@@ -238,7 +325,7 @@ impl GitOpsRepo {
             .map(PathBuf::from)
             .collect();
         for file in &changed_files {
-            validate_file(&path, file)?;
+            validate_catalog_path(&path, file)?;
         }
         let preview_hashes = file_hashes(&path, &changed_files)?;
         Ok(ChangeWorktree {
@@ -246,6 +333,8 @@ impl GitOpsRepo {
             base: base.to_owned(),
             changed_files,
             preview_hashes,
+            repository: self.bare.clone(),
+            owned: false,
         })
     }
 
@@ -266,11 +355,15 @@ fn absolute(path: &Path) -> Result<PathBuf> {
     }
 }
 
-fn file_hashes(root: &Path, paths: &[PathBuf]) -> Result<BTreeMap<PathBuf, [u8; 32]>> {
+fn file_hashes(root: &Path, paths: &[PathBuf]) -> Result<BTreeMap<PathBuf, Option<[u8; 32]>>> {
     paths
         .iter()
         .map(|path| {
-            let hash: [u8; 32] = Sha256::digest(fs::read(root.join(path))?).into();
+            let hash = match fs::read(root.join(path)) {
+                Ok(bytes) => Some(Sha256::digest(bytes).into()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
             Ok((path.clone(), hash))
         })
         .collect()
@@ -297,6 +390,112 @@ impl ChangeWorktree {
         Ok(String::from_utf8(
             run(&command.executable, &command.args, Some(&self.path), &[])?.stdout,
         )?)
+    }
+
+    /// Preview the inverse of a single-parent commit against this worktree's base.
+    /// Conflicts fail rather than silently changing the requested inverse.
+    pub fn preview_revert(&mut self, commit: &str, render: &RenderCommand) -> Result<Preview> {
+        self.check_base()?;
+        if !matches!(commit.len(), 40 | 64) || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(Error::Invalid("revert requires a full commit ID".into()));
+        }
+        if !git(
+            &self.path,
+            &args(&["status", "--porcelain", "--untracked-files=all"]),
+        )?
+        .is_empty()
+        {
+            return Err(Error::Invalid(
+                "worktree must be clean before preview".into(),
+            ));
+        }
+        let parents = git(
+            &self.path,
+            &args(&["rev-list", "--parents", "-n", "1", commit]),
+        )?;
+        let fields: Vec<_> = parents.split_whitespace().collect();
+        if fields.len() != 2 || !fields[0].eq_ignore_ascii_case(commit) {
+            return Err(Error::Invalid(
+                "revert requires a single-parent commit".into(),
+            ));
+        }
+        let names = git(
+            &self.path,
+            &args(&[
+                "diff",
+                "--no-renames",
+                "--name-only",
+                "-z",
+                fields[1],
+                commit,
+                "--",
+            ]),
+        )?;
+        let changed_files: Vec<PathBuf> = names
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .collect();
+        if changed_files.is_empty() {
+            return Err(Error::Invalid("revert commit has no changes".into()));
+        }
+        let mut created_files = Vec::new();
+        for path in &changed_files {
+            validate_catalog_path(&self.path, path)?;
+            if !self.path.join(path).exists() {
+                validate_new_service(&self.path, path)?;
+                created_files.push(path.clone());
+            }
+            for revision in [fields[1], commit] {
+                let mut command = args(&["ls-tree", "-z", revision, "--"]);
+                command.push(path.as_os_str().to_owned());
+                let entry = git(&self.path, &command)?;
+                if !entry.is_empty()
+                    && !entry.starts_with("100644 blob ")
+                    && !entry.starts_with("100755 blob ")
+                {
+                    return Err(Error::Invalid(
+                        "revert only permits regular catalog YAML files".into(),
+                    ));
+                }
+            }
+        }
+        let base_render = self.render(render)?;
+        git(
+            &self.path,
+            &args(&[
+                "-c",
+                "core.hooksPath=/dev/null",
+                "revert",
+                "--no-commit",
+                commit,
+            ]),
+        )?;
+        git(&self.path, &args(&["reset", "--quiet", "HEAD", "--"]))?;
+        for path in &changed_files {
+            validate_catalog_path(&self.path, path)?;
+        }
+        let proposed_render = self.render(render)?;
+        if !created_files.is_empty() {
+            let mut add = args(&["add", "--intent-to-add", "--"]);
+            add.extend(created_files.iter().map(|p| p.as_os_str().to_owned()));
+            git(&self.path, &add)?;
+        }
+        let mut command = args(&["diff", "--no-ext-diff", "--no-textconv", "--"]);
+        command.extend(changed_files.iter().map(|p| p.as_os_str().to_owned()));
+        let data_diff = git(&self.path, &command)?;
+        self.preview_hashes = file_hashes(&self.path, &changed_files)?;
+        self.changed_files = changed_files;
+        let rendered_diff = TextDiff::from_lines(&base_render, &proposed_render)
+            .unified_diff()
+            .header("base-render", "proposed-render")
+            .to_string();
+        Ok(Preview {
+            base_render,
+            proposed_render,
+            data_diff,
+            rendered_diff,
+        })
     }
 
     /// Render the unmodified base, apply structured patches, then render and diff.
@@ -403,6 +602,30 @@ impl ChangeWorktree {
         message: &str,
         author: &CommitAuthor,
     ) -> Result<PublishedCommit> {
+        self.commit_and_push_inner(change_id, message, author, None)
+    }
+
+    /// Replace this change's existing Thalamus branch using an exact-head
+    /// lease against the single configured push destination. If it already
+    /// points at the generated commit, return it without pushing so callers
+    /// can retry after a successful push.
+    pub fn commit_and_push_update(
+        &self,
+        change_id: &str,
+        message: &str,
+        author: &CommitAuthor,
+        expected_old_head: &str,
+    ) -> Result<PublishedCommit> {
+        self.commit_and_push_inner(change_id, message, author, Some(expected_old_head))
+    }
+
+    fn commit_and_push_inner(
+        &self,
+        change_id: &str,
+        message: &str,
+        author: &CommitAuthor,
+        expected_old_head: Option<&str>,
+    ) -> Result<PublishedCommit> {
         if change_id.is_empty()
             || message.is_empty()
             || author.name.is_empty()
@@ -414,11 +637,22 @@ impl ChangeWorktree {
             ));
         }
         for path in &self.changed_files {
-            validate_file(&self.path, path)?;
+            validate_catalog_path(&self.path, path)?;
         }
         if file_hashes(&self.path, &self.changed_files)? != self.preview_hashes {
             return Err(Error::Invalid(
                 "previewed files changed after rendering".into(),
+            ));
+        }
+        let branch = branch_for_change(change_id)?;
+        let reference = format!("refs/heads/{branch}");
+        if let Some(expected) = expected_old_head
+            && (expected.len() != self.base.len()
+                || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
+                || expected.bytes().all(|byte| byte == b'0'))
+        {
+            return Err(Error::Invalid(
+                "expected old head must be a nonzero full hexadecimal commit ID".into(),
             ));
         }
         let env = [
@@ -497,11 +731,63 @@ impl ChangeWorktree {
                 ));
             }
         }
-        let branch = branch_for_change(change_id)?;
-        git(
-            &self.path,
-            &args(&["push", "origin", &format!("HEAD:refs/heads/{branch}")]),
-        )?;
+        let refspec = format!("HEAD:{reference}");
+        if let Some(expected) = expected_old_head {
+            let destinations = git(
+                &self.path,
+                &args(&["remote", "get-url", "--push", "--all", "origin"]),
+            )?;
+            let mut destinations = destinations.lines();
+            let destination = destinations.next().filter(|url| !url.is_empty());
+            if destination.is_none() || destinations.next().is_some() {
+                return Err(Error::Invalid(
+                    "updating a branch requires exactly one push destination".into(),
+                ));
+            }
+            let remote = git(
+                &self.path,
+                &args(&[
+                    "ls-remote",
+                    "--refs",
+                    "--",
+                    destination.unwrap(),
+                    &reference,
+                ]),
+            )?;
+            let remote_head = remote.lines().find_map(|line| {
+                line.split_once('\t')
+                    .and_then(|(head, name)| (name == reference).then_some(head))
+            });
+            // A previous attempt may have pushed successfully before its
+            // caller persisted the result. No update is needed in that case.
+            if remote_head.is_some_and(|head| head.eq_ignore_ascii_case(&commit)) {
+                return Ok(PublishedCommit { branch, commit });
+            }
+            if !remote_head.is_some_and(|head| head.eq_ignore_ascii_case(expected)) {
+                return Err(Error::Invalid(
+                    "remote branch does not match expected old head".into(),
+                ));
+            }
+            // The preflight check is not the lease: Git checks this exact
+            // expected remote head atomically when it performs the update.
+            let lease = format!(
+                "--force-with-lease={reference}:{}",
+                expected.to_ascii_lowercase()
+            );
+            git(
+                &self.path,
+                &args(&[
+                    "push",
+                    "--no-follow-tags",
+                    "--recurse-submodules=no",
+                    &lease,
+                    "origin",
+                    &refspec,
+                ]),
+            )?;
+        } else {
+            git(&self.path, &args(&["push", "origin", &refspec]))?;
+        }
         Ok(PublishedCommit { branch, commit })
     }
 }
@@ -542,6 +828,45 @@ fn validate_new_service(root: &Path, path: &Path) -> Result<()> {
                 ));
             }
             Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+// Validate existing components without following links, even for a deleted leaf.
+fn validate_catalog_path(root: &Path, path: &Path) -> Result<()> {
+    let mut components = path.components();
+    if components.next() != Some(Component::Normal(OsStr::new("catalog")))
+        || !matches!(
+            path.extension().and_then(OsStr::to_str),
+            Some("yaml" | "yml")
+        )
+    {
+        return Err(Error::Invalid("change must target catalog YAML".into()));
+    }
+    let mut current = root.to_path_buf();
+    let mut missing = false;
+    for component in std::iter::once(Component::Normal(OsStr::new("catalog"))).chain(components) {
+        let Component::Normal(part) = component else {
+            return Err(Error::Invalid("invalid catalog path".into()));
+        };
+        current.push(part);
+        if !missing {
+            match fs::symlink_metadata(&current) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(Error::Invalid(
+                        "symlinks are not allowed in catalog paths".into(),
+                    ));
+                }
+                Ok(metadata) if current == root.join(path) && !metadata.is_file() => {
+                    return Err(Error::Invalid(
+                        "catalog target must be a regular file".into(),
+                    ));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => missing = true,
+                Err(error) => return Err(error.into()),
+            }
         }
     }
     Ok(())

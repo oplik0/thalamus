@@ -3,93 +3,57 @@ services:
     image: postgres:18-alpine
     environment:
       POSTGRES_USER: thalamus
-      POSTGRES_PASSWORD: thalamus
       POSTGRES_DB: thalamus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD externally}
     volumes:
       - postgres_data:/var/lib/postgresql
-    # uncomment to expose postgres
-    # ports:
-    #   - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U thalamus -d thalamus"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 12
 
-  valkey:
-    image: valkey/valkey:9.1-alpine
-    volumes:
-      - valkey_data:/data
-    # uncomment to expose valkey
-    # ports:
-    #   - "6379:6379"
-    healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  mock-oidc:
-    image: ghcr.io/soluto/oidc-server-mock:latest
-    ports:
-      - "9999:8080"
-    environment:
-      ASPNETCORE_ENVIRONMENT: Development
-      SERVER_OPTIONS_INLINE: |
-        {
-          "Authentication": {
-            "CookieSameSiteMode": "Lax",
-            "CheckSessionCookieSameSiteMode": "Lax"
-          }
-        }
-      CLIENTS_CONFIGURATION_PATH: /app/config.json
-      USERS_CONFIGURATION_PATH: /app/users.json
-    volumes:
-      - ./tests/oidc-data/oidc-config.json:/app/config.json:ro
-      - ./tests/oidc-data/oidc-users.json:/app/users.json:ro
-
-  thalamus:
+  server:
     build:
       context: .
       dockerfile: Dockerfile
+    image: thalamus-v2:local
+    command: ["thalamus-server"]
+    env_file: .env.server
     ports:
-      - "3000:3000"
-    environment:
-      DATABASE_URL: postgresql://thalamus:thalamus@postgres:5432/thalamus
-      REDIS_URL: redis://valkey:6379
-      RUST_LOG: info,thalamus=debug
-      ADMIN_INITIAL_PASSWORD: zaq1@WSX
+      - "127.0.0.1:${THALAMUS_PORT:-8080}:8080"
     volumes:
-      - ./config.k:/app/config.k:ro
+      - type: bind
+        source: ${THALAMUS_WORKSPACE_DIR:?Set THALAMUS_WORKSPACE_DIR to the operator workspace}
+        target: /workspace
     depends_on:
       postgres:
         condition: service_healthy
-      valkey:
-        condition: service_healthy
-      mock-oidc:
-        condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
       interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 10s
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      retries: 12
+      start_period: 30s
 
-  frontend:
-    build:
-      context: ./ui
-      dockerfile: Dockerfile
-    ports:
-      - "3020:3000"
+  worker:
+    image: thalamus-v2:local
+    command: ["thalamus-worker"]
+    env_file: .env.worker
     environment:
-      EXPO_PUBLIC_API_URL: http://localhost:3000
+      KUBECONFIG: /run/kube/config
+    volumes:
+      - type: bind
+        source: ${THALAMUS_WORKSPACE_DIR:?Set THALAMUS_WORKSPACE_DIR to the operator workspace}
+        target: /workspace
+        read_only: true
+      - type: bind
+        source: ${THALAMUS_KUBECONFIG_DIR:?Set THALAMUS_KUBECONFIG_DIR to a kubeconfig directory}
+        target: /run/kube
+        read_only: true
     depends_on:
-      - thalamus
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      server:
+        condition: service_healthy
 
 volumes:
   postgres_data:
-  valkey_data:

@@ -370,7 +370,6 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn url_encodes_segments_and_query_and_preserves_prefix() {
@@ -408,48 +407,82 @@ mod tests {
         assert!(client(Some("bad\nheader"), None).is_err());
     }
 
-    #[test]
-    fn maps_run_lookup_and_key_revoke() {
-        let run = make_request(Command::Run {
-            command: RunCommand::Get {
-                id: "run-42".into(),
-            },
-        })
-        .unwrap();
-        assert_eq!(run.method, Method::GET);
-        assert_eq!(run.segments, ["runs", "run-42"]);
-        let key = make_request(Command::Key {
-            command: KeyCommand::Revoke { id: "key-1".into() },
-        })
-        .unwrap();
-        assert_eq!(key.method, Method::DELETE);
-        assert_eq!(key.segments, ["keys", "key-1"]);
-    }
     #[tokio::test]
-    async fn sends_auth_and_returns_server_json() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut bytes = vec![0; 4096];
-            let n = socket.read(&mut bytes).await.unwrap();
-            let request = String::from_utf8_lossy(&bytes[..n]).to_ascii_lowercase();
-            assert!(request.starts_with(
-                "get /api/v1/services HTTP/1.1"
-                    .to_ascii_lowercase()
-                    .as_str()
-            ));
-            assert!(request.contains("authorization: bearer secret"));
-            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"services\":[]}").await.unwrap();
+    async fn bearer_credential_is_sent_to_api_but_not_redirected() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::time::{Duration, Instant};
+
+        let redirect = TcpListener::bind("127.0.0.1:0").unwrap();
+        let redirect_addr = redirect.local_addr().unwrap();
+        redirect.set_nonblocking(true).unwrap();
+        let redirected = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                match redirect.accept() {
+                    Ok((mut stream, _)) => {
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(2)))
+                            .unwrap();
+                        let mut bytes = [0; 4096];
+                        let count = stream.read(&mut bytes).unwrap();
+                        stream
+                            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                            .unwrap();
+                        return Some(String::from_utf8_lossy(&bytes[..count]).into_owned());
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() >= deadline {
+                            return None;
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("redirect listener failed: {error}"),
+                }
+            }
         });
+
+        let api = TcpListener::bind("127.0.0.1:0").unwrap();
+        let api_addr = api.local_addr().unwrap();
+        let received = std::thread::spawn(move || {
+            let (mut stream, _) = api.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                let count = stream.read(&mut buffer).unwrap();
+                assert_ne!(count, 0, "request ended before headers");
+                request.extend_from_slice(&buffer[..count]);
+            }
+            write!(
+                stream,
+                "HTTP/1.1 302 Found\r\nLocation: http://{redirect_addr}/capture\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            String::from_utf8(request).unwrap()
+        });
+
+        let client = client(Some("configured-secret"), None).unwrap();
         let result = execute(
-            &client(Some("secret"), None).unwrap(),
-            base_url(&format!("http://{addr}")).unwrap(),
-            make_request(Command::Services).unwrap(),
+            &client,
+            base_url(&format!("http://{api_addr}")).unwrap(),
+            request(Method::GET, &["services"], None),
         )
-        .await
-        .unwrap();
-        assert_eq!(result, serde_json::json!({"services": []}));
-        server.await.unwrap();
+        .await;
+        assert!(result.is_err(), "redirect must not be followed");
+        let request = received.join().unwrap();
+        let authorization: Vec<_> = request
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+            .map(|(_, value)| value.trim())
+            .collect();
+        assert_eq!(authorization, ["Bearer configured-secret"]);
+        assert!(
+            redirected.join().unwrap().is_none(),
+            "redirected server must not receive a request or credential"
+        );
     }
 }

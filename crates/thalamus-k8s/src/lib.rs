@@ -36,7 +36,7 @@ pub enum Error {
     #[error("object is not managed by thalamus")]
     NotOwned,
     #[error(
-        "ConfigMap data is not exclusively owned by thalamus apply; manual remediation is required"
+        "ConfigMap projection fields are not exclusively owned by thalamus apply; manual remediation is required"
     )]
     UnsafeProjectionOwnership,
     #[error("lease is held by another worker")]
@@ -155,12 +155,35 @@ impl K8s {
         name: &str,
         data: BTreeMap<String, String>,
     ) -> Result<ConfigMap, Error> {
+        self.apply_projection_with_labels(name, data, BTreeMap::new())
+            .await
+    }
+
+    /// Apply a projection with additional selector labels owned by this manager.
+    /// The mandatory ownership label cannot be supplied or overridden.
+    pub async fn apply_projection_with_labels(
+        &self,
+        name: &str,
+        data: BTreeMap<String, String>,
+        labels: BTreeMap<String, String>,
+    ) -> Result<ConfigMap, Error> {
+        validate_projection_labels(&labels)?;
         let mut desired = projection(name, data)?;
+        desired
+            .metadata
+            .labels
+            .as_mut()
+            .expect("projection labels")
+            .extend(labels);
         let api: Api<ConfigMap> = Api::namespaced(self.client.clone(), &self.namespace);
         match api.get_opt(name).await? {
             None => {
                 let empty = ConfigMap {
-                    metadata: desired.metadata.clone(),
+                    metadata: ObjectMeta {
+                        name: desired.metadata.name.clone(),
+                        labels: Some(owned_labels()),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 };
                 let created = api
@@ -185,6 +208,10 @@ impl K8s {
             Some(existing) => {
                 ensure_owned(&existing.metadata)?;
                 ensure_projection_data_owned(&existing)?;
+                ensure_projection_labels_owned(
+                    &existing,
+                    desired.metadata.labels.as_ref().expect("projection labels"),
+                )?;
                 desired.metadata.resource_version = Some(
                     existing
                         .metadata
@@ -433,6 +460,96 @@ fn ensure_projection_data_owned(config_map: &ConfigMap) -> Result<(), Error> {
     }
     Ok(())
 }
+fn label_part(value: &str, allow_empty: bool) -> bool {
+    if value.is_empty() {
+        return allow_empty;
+    }
+    value.len() <= 63
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        && value.as_bytes()[0].is_ascii_alphanumeric()
+        && value.as_bytes()[value.len() - 1].is_ascii_alphanumeric()
+}
+
+fn validate_projection_labels(labels: &BTreeMap<String, String>) -> Result<(), Error> {
+    for (key, value) in labels {
+        let valid_key = match key.split_once('/') {
+            Some((prefix, name)) => {
+                prefix.len() <= 253 && prefix.split('.').all(dns_label) && label_part(name, false)
+            }
+            None => label_part(key, false),
+        };
+        if key == MANAGED_BY || !valid_key || !label_part(value, true) {
+            return Err(Error::Invalid(
+                "invalid or reserved projection label".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+// Reject shared or unknown ownership for requested labels and for labels that
+// an apply omission would otherwise attempt to remove.
+fn ensure_projection_labels_owned(
+    config_map: &ConfigMap,
+    desired: &BTreeMap<String, String>,
+) -> Result<(), Error> {
+    let Some(labels) = config_map.metadata.labels.as_ref() else {
+        return Ok(());
+    };
+    let mut owners: BTreeMap<&str, (bool, bool)> = BTreeMap::new();
+    for entry in config_map
+        .metadata
+        .managed_fields
+        .as_deref()
+        .unwrap_or_default()
+    {
+        if entry.subresource.as_deref().is_some_and(|s| !s.is_empty()) {
+            continue;
+        }
+        if entry.fields_type.as_deref() != Some("FieldsV1") {
+            return Err(Error::UnsafeProjectionOwnership);
+        }
+        let fields = entry
+            .fields_v1
+            .as_ref()
+            .and_then(|f| f.0.as_object())
+            .ok_or(Error::UnsafeProjectionOwnership)?;
+        let Some(metadata) = fields.get("f:metadata") else {
+            continue;
+        };
+        let metadata = metadata
+            .as_object()
+            .ok_or(Error::UnsafeProjectionOwnership)?;
+        let Some(label_fields) = metadata.get("f:labels") else {
+            continue;
+        };
+        let label_fields = label_fields
+            .as_object()
+            .ok_or(Error::UnsafeProjectionOwnership)?;
+        let is_apply = entry.manager.as_deref() == Some(MANAGER)
+            && entry.operation.as_deref() == Some("Apply");
+        for key in labels.keys().filter(|key| key.as_str() != MANAGED_BY) {
+            if label_fields.is_empty() || label_fields.contains_key(&format!("f:{key}")) {
+                let owner = owners.entry(key).or_default();
+                if is_apply {
+                    owner.0 = true;
+                } else {
+                    owner.1 = true;
+                }
+            }
+        }
+    }
+    for key in labels.keys().filter(|key| key.as_str() != MANAGED_BY) {
+        let (ours, other) = owners.get(key.as_str()).copied().unwrap_or_default();
+        if (desired.contains_key(key) || ours) && (!ours || other) {
+            return Err(Error::UnsafeProjectionOwnership);
+        }
+    }
+    Ok(())
+}
+
 fn set_owned(meta: &mut ObjectMeta) -> Result<(), Error> {
     let labels = meta.labels.get_or_insert_with(BTreeMap::new);
     if labels.get(MANAGED_BY).is_some_and(|v| v != MANAGER) {

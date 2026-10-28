@@ -6,8 +6,10 @@ mod jobs;
 mod storage;
 
 pub use artifacts::{ArtifactRef, Artifacts};
-pub use jobs::{build_job, verify_owned_job, verify_recoverable_job, JobTemplate, Templates};
-pub use storage::{Run, Store, Transition};
+pub use jobs::{
+    build_job, verify_owned_job, verify_recoverable_job, JobTemplate, ResultUpload, Templates,
+};
+pub use storage::{Run, RunCursor, Store, Transition, WorkerStore};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -37,7 +39,7 @@ pub enum Error {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RunKind {
     Validation,
@@ -66,7 +68,7 @@ pub struct RunConditions {
 }
 
 /// Parameters are deliberately numeric and bounded; neither command nor pod spec is user supplied.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Workload {
     pub name: String,
     pub seed: u64,
@@ -80,6 +82,7 @@ pub struct Workload {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunRequest {
+    pub project_id: Uuid,
     pub kind: RunKind,
     pub service: String,
     pub deployment: String,
@@ -97,6 +100,9 @@ fn text(value: &str, field: &str, max: usize) -> Result<()> {
 
 impl RunRequest {
     pub fn validate(&self) -> Result<()> {
+        if self.project_id.is_nil() {
+            return Err(Error::Invalid("invalid project id".into()));
+        }
         for (s, name) in [
             (&self.service, "service"),
             (&self.deployment, "deployment"),

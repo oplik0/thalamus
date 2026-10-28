@@ -38,6 +38,10 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Apply this migration with the application's normal migration runner.
 pub const INITIAL_MIGRATION: &str = include_str!("../migrations/0001_identity.sql");
+/// Apply after `INITIAL_MIGRATION`.
+pub const WORKER_KEYS_MIGRATION: &str = include_str!("../migrations/0002_worker_keys.sql");
+/// Apply after `WORKER_KEYS_MIGRATION`.
+pub const BUDGET_CAPS_MIGRATION: &str = include_str!("../migrations/0003_budget_caps.sql");
 
 /// Exact group names and existing team IDs. Team-admin membership takes precedence.
 #[derive(Clone, Default)]
@@ -65,6 +69,34 @@ pub struct IdentityService {
     session_lifetime: Duration,
     groups: GroupMapping,
 }
+/// Only pass OIDC identities after successful resource-token verification at the
+/// trusted transport boundary. Subjects are never provisioned by this API.
+pub enum VerifiedPrincipal<'a> {
+    Session(&'a str),
+    Oidc { issuer: &'a str, subject: &'a str },
+}
+
+/// Holds the identity row lock until the authorized mutation and its audit commit.
+pub struct AuthorizedIdentity<'a> {
+    tx: Transaction<'a, Postgres>,
+    actor: Uuid,
+}
+
+impl<'a> AuthorizedIdentity<'a> {
+    pub fn actor_id(&self) -> Uuid {
+        self.actor
+    }
+    pub fn transaction(&mut self) -> &mut Transaction<'a, Postgres> {
+        &mut self.tx
+    }
+    pub async fn audit(&mut self, agent: Option<&str>, action: &str, target: &str) -> Result<()> {
+        audit(&mut self.tx, Some(self.actor), agent, action, target).await
+    }
+    pub async fn commit(self) -> Result<()> {
+        self.tx.commit().await?;
+        Ok(())
+    }
+}
 
 pub struct LoginStart {
     pub authorization_url: String,
@@ -91,12 +123,13 @@ impl KeyKind {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NewKey {
+    pub name: String,
     pub team_id: Uuid,
     pub project_id: Option<Uuid>,
     pub kind: KeyKind,
     pub allowed_services: Vec<String>,
     pub budget: Option<i64>,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize)]
@@ -108,6 +141,7 @@ pub struct IssuedKey {
 #[derive(Debug, Serialize)]
 pub struct KeyMetadata {
     pub id: Uuid,
+    pub name: String,
     pub user_id: Uuid,
     pub creator_id: Uuid,
     pub team_id: Uuid,
@@ -115,7 +149,7 @@ pub struct KeyMetadata {
     pub kind: String,
     pub allowed_services: Vec<String>,
     pub budget: Option<i64>,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
@@ -141,6 +175,7 @@ pub struct Project {
     pub team_id: Uuid,
     pub name: String,
     pub cost_centre: Option<String>,
+    pub budget: Option<f64>,
 }
 
 async fn audit(
@@ -280,6 +315,31 @@ async fn authorize_locked(
     } else {
         Err(Error::Forbidden)
     }
+}
+async fn check_budget_cap(
+    tx: &mut Transaction<'_, Postgres>,
+    team: Uuid,
+    budget: i64,
+) -> Result<()> {
+    if budget < 0 {
+        return Err(Error::Invalid("negative budget"));
+    }
+    // Lock the singleton before reading the caps; replacement takes the same
+    // lock, so authorization and the write cannot race a cap update.
+    let fresh: Option<bool> = sqlx::query_scalar("SELECT refreshed_at > clock_timestamp() - interval '60 seconds' FROM identity_budget_projection WHERE singleton=true FOR SHARE")
+        .fetch_optional(&mut **tx).await?;
+    if fresh != Some(true) {
+        return Err(Error::Invalid("budget cap unavailable or stale"));
+    }
+    let cap: Option<i64> =
+        sqlx::query_scalar("SELECT max_tokens FROM identity_budget_caps WHERE team_id=$1")
+            .bind(team)
+            .fetch_optional(&mut **tx)
+            .await?;
+    if cap.is_none_or(|cap| budget > cap) {
+        return Err(Error::Invalid("budget exceeds or lacks team cap"));
+    }
+    Ok(())
 }
 
 async fn disable_subject(
@@ -461,6 +521,66 @@ impl IdentityService {
         }
     }
 
+    async fn lock_principal(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        principal: VerifiedPrincipal<'_>,
+    ) -> Result<Uuid> {
+        match principal {
+            VerifiedPrincipal::Session(session) => {
+                lock_session(tx, &self.signing_key, session).await
+            }
+            VerifiedPrincipal::Oidc { issuer, subject } => {
+                if issuer != self.issuer || subject.is_empty() {
+                    return Err(Error::Unauthorized);
+                }
+                sqlx::query_scalar("SELECT id FROM identity_users WHERE issuer=$1 AND subject=$2 AND NOT disabled FOR UPDATE")
+                    .bind(issuer).bind(subject).fetch_optional(&mut **tx).await?.ok_or(Error::Unauthorized)
+            }
+        }
+    }
+
+    /// Authenticate a verified principal for an unscoped read.
+    pub async fn authenticate_principal(&self, principal: VerifiedPrincipal<'_>) -> Result<Uuid> {
+        let mut tx = self.db.begin().await?;
+        let actor = self.lock_principal(&mut tx, principal).await?;
+        tx.commit().await?;
+        Ok(actor)
+    }
+
+    /// Authorize a catalog-wide mutation without requiring a team.
+    pub async fn begin_platform_admin(
+        &self,
+        principal: VerifiedPrincipal<'_>,
+    ) -> Result<AuthorizedIdentity<'_>> {
+        let mut tx = self.db.begin().await?;
+        let actor = self.lock_principal(&mut tx, principal).await?;
+        let admin: bool = sqlx::query_scalar(
+            "SELECT platform_admin FROM identity_users WHERE id=$1 AND NOT disabled",
+        )
+        .bind(actor)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !admin {
+            return Err(Error::Forbidden);
+        }
+        Ok(AuthorizedIdentity { tx, actor })
+    }
+
+    /// The caller must keep this guard until its database mutation and audit
+    /// have committed, and use its transaction for both.
+    pub async fn begin_authorized(
+        &self,
+        principal: VerifiedPrincipal<'_>,
+        team: Uuid,
+        admin_required: bool,
+    ) -> Result<AuthorizedIdentity<'_>> {
+        let mut tx = self.db.begin().await?;
+        let actor = self.lock_principal(&mut tx, principal).await?;
+        authorize_locked(&mut tx, actor, team, admin_required).await?;
+        Ok(AuthorizedIdentity { tx, actor })
+    }
+
     /// Authorize a request in another service using current database membership.
     pub async fn authorize_team(
         &self,
@@ -474,10 +594,20 @@ impl IdentityService {
     }
 
     pub async fn list_teams(&self, session: &str) -> Result<Vec<Team>> {
-        let user = self.authenticate(session).await?;
+        self.list_teams_principal(VerifiedPrincipal::Session(session))
+            .await
+    }
+
+    pub async fn list_teams_principal(
+        &self,
+        principal: VerifiedPrincipal<'_>,
+    ) -> Result<Vec<Team>> {
+        let mut tx = self.db.begin().await?;
+        let user = self.lock_principal(&mut tx, principal).await?;
         let rows = sqlx::query("SELECT t.id,t.name,CASE WHEN u.platform_admin THEN 'platform_admin' ELSE m.role END AS role FROM identity_users u JOIN identity_teams t ON true LEFT JOIN identity_memberships m ON m.team_id=t.id AND m.user_id=u.id WHERE u.id=$1 AND NOT u.disabled AND (u.platform_admin OR m.role IS NOT NULL) ORDER BY t.name")
-            .bind(user).fetch_all(&self.db).await?;
-        rows.into_iter()
+            .bind(user).fetch_all(&mut *tx).await?;
+        let teams = rows
+            .into_iter()
             .map(|r| {
                 Ok(Team {
                     id: r.try_get("id")?,
@@ -485,7 +615,9 @@ impl IdentityService {
                     role: r.try_get("role")?,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        tx.commit().await?;
+        Ok(teams)
     }
 
     pub async fn create_team(
@@ -524,22 +656,54 @@ impl IdentityService {
         team: Uuid,
         name: &str,
         cost_centre: Option<&str>,
+        budget: Option<f64>,
+        agent: Option<&str>,
+    ) -> Result<Uuid> {
+        self.create_project_principal(
+            VerifiedPrincipal::Session(session),
+            team,
+            name,
+            cost_centre,
+            budget,
+            agent,
+        )
+        .await
+    }
+
+    pub async fn create_project_principal(
+        &self,
+        principal: VerifiedPrincipal<'_>,
+        team: Uuid,
+        name: &str,
+        cost_centre: Option<&str>,
+        budget: Option<f64>,
         agent: Option<&str>,
     ) -> Result<Uuid> {
         let mut tx = self.db.begin().await?;
-        let user = lock_session(&mut tx, &self.signing_key, session).await?;
+        let user = self.lock_principal(&mut tx, principal).await?;
         authorize_locked(&mut tx, user, team, true).await?;
         if name.trim().is_empty() {
             return Err(Error::Invalid("empty project name"));
         }
+        if let Some(value) = budget {
+            if !value.is_finite()
+                || value < 0.0
+                || value.fract() != 0.0
+                || value > 9_007_199_254_740_991.0
+            {
+                return Err(Error::Invalid("project budget must be whole tokens"));
+            }
+            check_budget_cap(&mut tx, team, value as i64).await?;
+        }
         let id = Uuid::new_v4();
         sqlx::query(
-            "INSERT INTO identity_projects(id,team_id,name,cost_centre) VALUES ($1,$2,$3,$4)",
+            "INSERT INTO identity_projects(id,team_id,name,cost_centre,budget) VALUES ($1,$2,$3,$4,$5)",
         )
         .bind(id)
         .bind(team)
         .bind(name)
         .bind(cost_centre)
+        .bind(budget)
         .execute(&mut *tx)
         .await?;
         audit(
@@ -555,19 +719,33 @@ impl IdentityService {
     }
 
     pub async fn list_projects(&self, session: &str, team: Uuid) -> Result<Vec<Project>> {
-        let user = self.authenticate(session).await?;
-        self.authorize(user, team, false).await?;
-        let rows = sqlx::query("SELECT id,team_id,name,cost_centre FROM identity_projects WHERE team_id=$1 ORDER BY name").bind(team).fetch_all(&self.db).await?;
-        rows.into_iter()
+        self.list_projects_principal(VerifiedPrincipal::Session(session), team)
+            .await
+    }
+
+    pub async fn list_projects_principal(
+        &self,
+        principal: VerifiedPrincipal<'_>,
+        team: Uuid,
+    ) -> Result<Vec<Project>> {
+        let mut tx = self.db.begin().await?;
+        let user = self.lock_principal(&mut tx, principal).await?;
+        authorize_locked(&mut tx, user, team, false).await?;
+        let rows = sqlx::query("SELECT id,team_id,name,cost_centre,budget FROM identity_projects WHERE team_id=$1 ORDER BY name").bind(team).fetch_all(&mut *tx).await?;
+        let projects = rows
+            .into_iter()
             .map(|r| {
                 Ok(Project {
                     id: r.try_get("id")?,
                     team_id: r.try_get("team_id")?,
                     name: r.try_get("name")?,
                     cost_centre: r.try_get("cost_centre")?,
+                    budget: r.try_get("budget")?,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        tx.commit().await?;
+        Ok(projects)
     }
 
     pub async fn issue_key(
@@ -576,11 +754,30 @@ impl IdentityService {
         input: NewKey,
         agent: Option<&str>,
     ) -> Result<IssuedKey> {
+        self.issue_key_principal(VerifiedPrincipal::Session(session), input, agent)
+            .await
+    }
+
+    pub async fn issue_key_principal(
+        &self,
+        principal: VerifiedPrincipal<'_>,
+        input: NewKey,
+        agent: Option<&str>,
+    ) -> Result<IssuedKey> {
         let mut tx = self.db.begin().await?;
-        let user = lock_session(&mut tx, &self.signing_key, session).await?;
+        let user = self.lock_principal(&mut tx, principal).await?;
         authorize_locked(&mut tx, user, input.team_id, false).await?;
-        if input.expires_at <= Utc::now() {
+        if input.expires_at.is_some_and(|expiry| expiry <= Utc::now()) {
             return Err(Error::Invalid("expiry must be in the future"));
+        }
+        if input.name.trim().is_empty()
+            || input.name.len() > 255
+            || input.name.chars().any(char::is_control)
+        {
+            return Err(Error::Invalid("invalid key name"));
+        }
+        if input.kind == KeyKind::Job {
+            return Err(Error::Forbidden);
         }
         if input.kind != KeyKind::Personal && input.project_id.is_none() {
             return Err(Error::Invalid("project required"));
@@ -590,13 +787,16 @@ impl IdentityService {
         {
             return Err(Error::Invalid("invalid key metadata"));
         }
+        if let Some(budget) = input.budget {
+            check_budget_cap(&mut tx, input.team_id, budget).await?;
+        }
         let mut random = [0u8; 32];
         OsRng.fill_bytes(&mut random);
         let secret = format!("thl_{}", URL_SAFE_NO_PAD.encode(random));
         let digest = Sha256::digest(secret.as_bytes());
         let id = Uuid::new_v4();
-        let row = sqlx::query("INSERT INTO identity_keys(id,digest,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at) VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9) RETURNING id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at")
-            .bind(id).bind(digest.as_slice()).bind(user).bind(input.team_id).bind(input.project_id).bind(input.kind.as_str()).bind(&input.allowed_services).bind(input.budget).bind(input.expires_at).fetch_one(&mut *tx).await?;
+        let row = sqlx::query("INSERT INTO identity_keys(id,digest,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,name) VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at,name")
+            .bind(id).bind(digest.as_slice()).bind(user).bind(input.team_id).bind(input.project_id).bind(input.kind.as_str()).bind(&input.allowed_services).bind(input.budget).bind(input.expires_at).bind(&input.name).fetch_one(&mut *tx).await?;
         let key = key_metadata(row)?;
         audit(&mut tx, Some(user), agent, "key.issue", &id.to_string()).await?;
         tx.commit().await?;
@@ -604,11 +804,26 @@ impl IdentityService {
     }
 
     pub async fn list_keys(&self, session: &str, team: Uuid) -> Result<Vec<KeyMetadata>> {
-        let user = self.authenticate(session).await?;
-        self.authorize(user, team, false).await?;
-        let rows = sqlx::query("SELECT id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at FROM identity_keys WHERE team_id=$1 AND (user_id=$2 OR EXISTS (SELECT 1 FROM identity_users u LEFT JOIN identity_memberships m ON m.user_id=u.id AND m.team_id=$1 WHERE u.id=$2 AND (u.platform_admin OR m.role='team_admin'))) ORDER BY created_at DESC")
-            .bind(team).bind(user).fetch_all(&self.db).await?;
-        rows.into_iter().map(key_metadata).collect()
+        self.list_keys_principal(VerifiedPrincipal::Session(session), team)
+            .await
+    }
+
+    pub async fn list_keys_principal(
+        &self,
+        principal: VerifiedPrincipal<'_>,
+        team: Uuid,
+    ) -> Result<Vec<KeyMetadata>> {
+        let mut tx = self.db.begin().await?;
+        let user = self.lock_principal(&mut tx, principal).await?;
+        authorize_locked(&mut tx, user, team, false).await?;
+        let rows = sqlx::query("SELECT id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at,name FROM identity_keys WHERE team_id=$1 AND (user_id=$2 OR EXISTS (SELECT 1 FROM identity_users u LEFT JOIN identity_memberships m ON m.user_id=u.id AND m.team_id=$1 WHERE u.id=$2 AND (u.platform_admin OR m.role='team_admin'))) ORDER BY created_at DESC")
+            .bind(team).bind(user).fetch_all(&mut *tx).await?;
+        let keys = rows
+            .into_iter()
+            .map(key_metadata)
+            .collect::<Result<Vec<_>>>()?;
+        tx.commit().await?;
+        Ok(keys)
     }
 
     pub async fn revoke_key(
@@ -618,8 +833,19 @@ impl IdentityService {
         id: Uuid,
         agent: Option<&str>,
     ) -> Result<()> {
+        self.revoke_key_principal(VerifiedPrincipal::Session(session), team, id, agent)
+            .await
+    }
+
+    pub async fn revoke_key_principal(
+        &self,
+        principal: VerifiedPrincipal<'_>,
+        team: Uuid,
+        id: Uuid,
+        agent: Option<&str>,
+    ) -> Result<()> {
         let mut tx = self.db.begin().await?;
-        let user = lock_session(&mut tx, &self.signing_key, session).await?;
+        let user = self.lock_principal(&mut tx, principal).await?;
         authorize_locked(&mut tx, user, team, false).await?;
         let changed = sqlx::query("UPDATE identity_keys SET revoked_at=now() WHERE id=$1 AND team_id=$2 AND revoked_at IS NULL AND (user_id=$3 OR EXISTS (SELECT 1 FROM identity_users u LEFT JOIN identity_memberships m ON m.user_id=u.id AND m.team_id=$2 WHERE u.id=$3 AND (u.platform_admin OR m.role='team_admin')))")
             .bind(id).bind(team).bind(user).execute(&mut *tx).await?.rows_affected();
@@ -661,8 +887,243 @@ impl IdentityService {
         active_projection(&self.db).await
     }
 }
+/// Database-only API for the authenticated internal worker. The caller must
+/// authenticate the worker and supply the actual run owner and scope from its
+/// durable run record, never from an untrusted request.
+#[derive(Clone)]
+pub struct WorkerIdentity {
+    db: PgPool,
+}
+/// A verified Git catalog entry. Only the internal catalog reconciler may
+/// supply these; request handlers must never treat user input as a cap.
+#[derive(Clone, Debug, Deserialize)]
+pub struct BudgetCap {
+    pub team_id: Uuid,
+    pub max_tokens: i64,
+    pub unit: String,
+    pub window: String,
+}
+
+/// Scope and secret for a worker-managed run key.
+#[derive(Clone, Copy)]
+pub struct RunKeyRequest<'a> {
+    pub run_id: Uuid,
+    pub user_id: Uuid,
+    pub team_id: Uuid,
+    pub project_id: Uuid,
+    pub service: &'a str,
+    pub expires_at: DateTime<Utc>,
+    pub secret: &'a str,
+    pub budget: i64,
+}
+
+impl WorkerIdentity {
+    pub fn new(db: PgPool) -> Self {
+        Self { db }
+    }
+    /// Atomically replace the projection with a fully verified Git snapshot.
+    /// Refresh only after the source commit and clean tracked file are verified.
+    pub async fn sync_budget_caps(&self, source_commit: &str, caps: &[BudgetCap]) -> Result<()> {
+        if !matches!(source_commit.len(), 40 | 64)
+            || !source_commit
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            return Err(Error::Invalid("invalid budget source commit"));
+        }
+        let mut seen = std::collections::HashSet::new();
+        if caps.iter().any(|cap| {
+            cap.max_tokens < 0
+                || cap.unit != "tokens"
+                || !matches!(cap.window.as_str(), "day" | "month")
+                || !seen.insert(cap.team_id)
+        }) {
+            return Err(Error::Invalid("invalid budget caps"));
+        }
+        let mut tx = self.db.begin().await?;
+        sqlx::query("INSERT INTO identity_budget_projection(singleton,source_commit,refreshed_at) VALUES (true,$1,clock_timestamp()) ON CONFLICT (singleton) DO UPDATE SET source_commit=EXCLUDED.source_commit,refreshed_at=EXCLUDED.refreshed_at")
+            .bind(source_commit).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM identity_budget_caps")
+            .execute(&mut *tx)
+            .await?;
+        for cap in caps {
+            sqlx::query("INSERT INTO identity_budget_caps(team_id,max_tokens,unit,budget_window) VALUES ($1,$2,$3,$4)")
+                .bind(cap.team_id).bind(cap.max_tokens).bind(&cap.unit).bind(&cap.window).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// The returned digests are privileged gateway configuration, not public metadata.
+    pub async fn active_projection(&self) -> Result<Vec<ProjectionKey>> {
+        active_projection(&self.db).await
+    }
+
+    /// Register the secret already durably stored by the worker. Only its
+    /// canonical SHA-256 digest is persisted, and retries must match exactly.
+    pub async fn register_run_key(&self, request: RunKeyRequest<'_>) -> Result<KeyMetadata> {
+        let RunKeyRequest {
+            run_id,
+            user_id,
+            team_id,
+            project_id,
+            service,
+            expires_at,
+            secret,
+            budget,
+        } = request;
+        let now = Utc::now();
+        if expires_at <= now || expires_at > now + Duration::hours(24) {
+            return Err(Error::Invalid("run key expiry must be within 24 hours"));
+        }
+        if !(1..=1_000_000).contains(&budget) {
+            return Err(Error::Invalid("invalid run token budget"));
+        }
+        if service.trim().is_empty()
+            || service.len() > 1024
+            || service.chars().any(char::is_control)
+        {
+            return Err(Error::Invalid("invalid run service"));
+        }
+        let encoded = secret
+            .strip_prefix("thl_")
+            .ok_or(Error::Invalid("invalid run secret"))?;
+        let bytes = URL_SAFE_NO_PAD
+            .decode(encoded)
+            .map_err(|_| Error::Invalid("invalid run secret"))?;
+        if bytes.len() != 32 || URL_SAFE_NO_PAD.encode(&bytes) != encoded {
+            return Err(Error::Invalid("invalid run secret"));
+        }
+        let mut tx = self.db.begin().await?;
+        let owner: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM identity_users WHERE id=$1 FOR UPDATE")
+                .bind(user_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if owner.is_none() {
+            return Err(Error::Forbidden);
+        }
+        authorize_locked(&mut tx, user_id, team_id, false).await?;
+        check_budget_cap(&mut tx, team_id, budget).await?;
+        let project_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM identity_projects WHERE id=$1 AND team_id=$2)",
+        )
+        .bind(project_id)
+        .bind(team_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !project_exists {
+            return Err(Error::NotFound);
+        }
+        // The worker is responsible for generating this value with a CSPRNG.
+        let digest = Sha256::digest(secret.as_bytes());
+        let id = Uuid::new_v4();
+        let name = format!("run-{run_id}");
+        let row = sqlx::query("INSERT INTO identity_keys(id,digest,user_id,creator_id,team_id,project_id,kind,allowed_services,expires_at,name,run_id,budget) VALUES ($1,$2,$3,$3,$4,$5,'job',$6,$7,$8,$9,$10) ON CONFLICT (run_id) DO NOTHING RETURNING id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at,name")
+            .bind(id).bind(digest.as_slice()).bind(user_id).bind(team_id).bind(project_id)
+            .bind(vec![service]).bind(expires_at).bind(name).bind(run_id).bind(budget)
+            .fetch_optional(&mut *tx).await?;
+        let key = if let Some(row) = row {
+            let key = key_metadata(row)?;
+            sqlx::query("INSERT INTO identity_audit(actor_id,agent,action,target,details) VALUES ($1,'thalamus-worker','key.issue',$2,jsonb_build_object('run_id',$3::text))")
+                .bind(user_id).bind(id.to_string()).bind(run_id.to_string()).execute(&mut *tx).await?;
+            key
+        } else {
+            let row = sqlx::query("SELECT id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at,name FROM identity_keys WHERE run_id=$1 AND user_id=$2 AND creator_id=$2 AND team_id=$3 AND project_id=$4 AND kind='job' AND allowed_services=$5 AND expires_at=$6 AND digest=$7 AND budget=$8 AND revoked_at IS NULL FOR UPDATE")
+                .bind(run_id).bind(user_id).bind(team_id).bind(project_id).bind(vec![service])
+                .bind(expires_at).bind(digest.as_slice()).bind(budget).fetch_optional(&mut *tx).await?
+                .ok_or(Error::Invalid("run key registration conflict"))?;
+            key_metadata(row)?
+        };
+        tx.commit().await?;
+        Ok(key)
+    }
+
+    /// Replace only an expired, non-revoked run key. The trusted worker must
+    /// serialize this operation and prove that no Job exists before replacing
+    /// its owned Secret; a Job that has ever started must never be rotated.
+    pub async fn replace_expired_run_key(&self, request: RunKeyRequest<'_>) -> Result<KeyMetadata> {
+        let RunKeyRequest {
+            run_id,
+            user_id,
+            team_id,
+            project_id,
+            service,
+            expires_at,
+            secret,
+            budget,
+        } = request;
+        let now = Utc::now();
+        if expires_at <= now || expires_at > now + Duration::hours(24) {
+            return Err(Error::Invalid("run key expiry must be within 24 hours"));
+        }
+        if !(1..=1_000_000).contains(&budget)
+            || service.trim().is_empty()
+            || service.len() > 1024
+            || service.chars().any(char::is_control)
+        {
+            return Err(Error::Invalid("invalid run key scope"));
+        }
+        let encoded = secret
+            .strip_prefix("thl_")
+            .ok_or(Error::Invalid("invalid run secret"))?;
+        let bytes = URL_SAFE_NO_PAD
+            .decode(encoded)
+            .map_err(|_| Error::Invalid("invalid run secret"))?;
+        if bytes.len() != 32 || URL_SAFE_NO_PAD.encode(&bytes) != encoded {
+            return Err(Error::Invalid("invalid run secret"));
+        }
+        let mut tx = self.db.begin().await?;
+        let owner: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM identity_users WHERE id=$1 FOR UPDATE")
+                .bind(user_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if owner.is_none() {
+            return Err(Error::Forbidden);
+        }
+        authorize_locked(&mut tx, user_id, team_id, false).await?;
+        check_budget_cap(&mut tx, team_id, budget).await?;
+        let digest = Sha256::digest(secret.as_bytes());
+        let row = sqlx::query("UPDATE identity_keys SET digest=$1,expires_at=$2 WHERE run_id=$3 AND user_id=$4 AND creator_id=$4 AND team_id=$5 AND project_id=$6 AND kind='job' AND allowed_services=$7 AND budget=$8 AND revoked_at IS NULL AND expires_at <= clock_timestamp() RETURNING id,user_id,creator_id,team_id,project_id,kind,allowed_services,budget,expires_at,revoked_at,created_at,name")
+            .bind(digest.as_slice()).bind(expires_at).bind(run_id).bind(user_id).bind(team_id)
+            .bind(project_id).bind(vec![service]).bind(budget).fetch_optional(&mut *tx).await?
+            .ok_or(Error::Invalid("run key cannot be replaced"))?;
+        let key = key_metadata(row)?;
+        sqlx::query("INSERT INTO identity_audit(actor_id,agent,action,target,details) VALUES ($1,'thalamus-worker','key.rotate',$2,jsonb_build_object('run_id',$3::text))")
+            .bind(user_id).bind(key.id.to_string()).bind(run_id.to_string()).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(key)
+    }
+
+    /// Idempotently revoke a previously issued run key.
+    pub async fn revoke_run_key(&self, run_id: Uuid) -> Result<()> {
+        let mut tx = self.db.begin().await?;
+        let row = sqlx::query(
+            "SELECT id,user_id,revoked_at FROM identity_keys WHERE run_id=$1 FOR UPDATE",
+        )
+        .bind(run_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(Error::NotFound)?;
+        let id: Uuid = row.try_get("id")?;
+        let user: Uuid = row.try_get("user_id")?;
+        let revoked: Option<DateTime<Utc>> = row.try_get("revoked_at")?;
+        if revoked.is_none() {
+            sqlx::query("UPDATE identity_keys SET revoked_at=now() WHERE id=$1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("INSERT INTO identity_audit(actor_id,agent,action,target,details) VALUES ($1,'thalamus-worker','key.revoke',$2,jsonb_build_object('run_id',$3::text))")
+                .bind(user).bind(id.to_string()).bind(run_id.to_string()).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
 async fn active_projection(db: &PgPool) -> Result<Vec<ProjectionKey>> {
-    let rows = sqlx::query("SELECT k.id,k.user_id,k.creator_id,k.team_id,k.project_id,k.kind,k.allowed_services,k.budget,k.expires_at,k.revoked_at,k.created_at,k.digest,p.cost_centre FROM identity_keys k JOIN identity_users u ON u.id=k.user_id LEFT JOIN identity_projects p ON p.id=k.project_id AND p.team_id=k.team_id WHERE k.revoked_at IS NULL AND k.expires_at>now() AND NOT u.disabled AND (u.platform_admin OR EXISTS (SELECT 1 FROM identity_memberships m WHERE m.user_id=u.id AND m.team_id=k.team_id)) ORDER BY k.id").fetch_all(db).await?;
+    let rows = sqlx::query("SELECT k.id,k.user_id,k.creator_id,k.team_id,k.project_id,k.kind,k.allowed_services,k.budget,k.expires_at,k.revoked_at,k.created_at,k.name,k.digest,p.cost_centre FROM identity_keys k JOIN identity_users u ON u.id=k.user_id LEFT JOIN identity_projects p ON p.id=k.project_id AND p.team_id=k.team_id WHERE k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>now()) AND NOT u.disabled AND (u.platform_admin OR EXISTS (SELECT 1 FROM identity_memberships m WHERE m.user_id=u.id AND m.team_id=k.team_id)) ORDER BY k.id").fetch_all(db).await?;
     rows.into_iter()
         .map(|r| {
             Ok(ProjectionKey {
@@ -677,6 +1138,7 @@ fn key_metadata(r: sqlx::postgres::PgRow) -> Result<KeyMetadata> {
     Ok(KeyMetadata {
         id: r.try_get("id")?,
         user_id: r.try_get("user_id")?,
+        name: r.try_get("name")?,
         creator_id: r.try_get("creator_id")?,
         team_id: r.try_get("team_id")?,
         project_id: r.try_get("project_id")?,

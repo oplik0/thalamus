@@ -52,9 +52,20 @@ fn decode(row: &sqlx::postgres::PgRow) -> Result<Run> {
 pub enum Transition {
     Started,
     JobSucceeded,
-    JobFailed { error: String },
-    IngestionSucceeded { artifacts: Vec<ArtifactRef> },
-    IngestionFailed { error: String },
+    JobFailed {
+        error: String,
+    },
+    /// A failed Job can still produce useful evidence; it never becomes successful.
+    JobFailedWithArtifacts {
+        error: String,
+        artifacts: Vec<ArtifactRef>,
+    },
+    IngestionSucceeded {
+        artifacts: Vec<ArtifactRef>,
+    },
+    IngestionFailed {
+        error: String,
+    },
     RetryIngestion,
 }
 
@@ -66,6 +77,9 @@ impl Transition {
             ("pending", Self::Started) => Ok(("running", None, None)),
             ("running", Self::JobSucceeded) => Ok(("ingesting", None, None)),
             ("pending" | "running", Self::JobFailed { error }) => Ok(("failed", Some(error), None)),
+            ("running", Self::JobFailedWithArtifacts { error, artifacts }) => {
+                Ok(("failed", Some(error), Some(artifacts)))
+            }
             ("ingesting", Self::IngestionSucceeded { artifacts }) => {
                 Ok(("succeeded", None, Some(artifacts)))
             }
@@ -76,6 +90,60 @@ impl Transition {
             _ => Err(Error::InvalidTransition),
         }
     }
+}
+/// Position in an ascending, stable worker sweep. Start each new sweep at `None`;
+/// runs that become actionable behind the cursor are picked up by the next sweep.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunCursor {
+    pub created_at: DateTime<Utc>,
+    pub id: Uuid,
+}
+
+impl From<&Run> for RunCursor {
+    fn from(run: &Run) -> Self {
+        Self {
+            created_at: run.created_at,
+            id: run.id,
+        }
+    }
+}
+
+/// Cross-tenant discovery for the trusted worker process only. This capability
+/// must not be exposed through tenant-facing APIs.
+#[derive(Clone)]
+pub struct WorkerStore {
+    pool: PgPool,
+}
+
+impl WorkerStore {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// Fetch one page of work in creation order. Ingesting runs are included so
+    /// that a worker crash between job completion and artifact persistence can
+    /// be recovered. A new sweep must begin at `None`.
+    pub async fn list_actionable(&self, after: Option<RunCursor>, limit: u32) -> Result<Vec<Run>> {
+        validate_page_limit(limit)?;
+        let rows = sqlx::query(
+            "SELECT * FROM thalamus_runs WHERE state IN ('pending','running','ingesting') \
+             AND ($1::timestamptz IS NULL OR (created_at,id) > ($1,$2)) \
+             ORDER BY created_at, id LIMIT $3",
+        )
+        .bind(after.as_ref().map(|cursor| cursor.created_at))
+        .bind(after.as_ref().map(|cursor| cursor.id))
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(decode).collect()
+    }
+}
+
+fn validate_page_limit(limit: u32) -> Result<()> {
+    if !(1..=100).contains(&limit) {
+        return Err(Error::Invalid("limit must be 1..=100".into()));
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -94,6 +162,12 @@ impl Store {
         sqlx::raw_sql(include_str!("../migrations/0001_runs.sql"))
             .execute(&self.pool)
             .await?;
+        sqlx::raw_sql(include_str!("../migrations/0002_actionable.sql"))
+            .execute(&self.pool)
+            .await?;
+        sqlx::raw_sql(include_str!("../migrations/0003_run_project.sql"))
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -104,25 +178,42 @@ impl Store {
         idempotency_key: &str,
         request: &RunRequest,
     ) -> Result<Run> {
+        let mut tx = self.pool.begin().await?;
+        let run = self
+            .create_in_transaction(&mut tx, team, actor, idempotency_key, request)
+            .await?;
+        tx.commit().await?;
+        Ok(run)
+    }
+
+    /// Create within the caller's authorization transaction. The caller owns
+    /// commit/rollback and must hold the relevant authorization locks.
+    pub async fn create_in_transaction(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        team: &str,
+        actor: &str,
+        idempotency_key: &str,
+        request: &RunRequest,
+    ) -> Result<Run> {
         text(team, "team", 256)?;
         text(actor, "actor", 256)?;
         text(idempotency_key, "idempotency key", 256)?;
         let fingerprint = request.fingerprint()?;
         let id = Uuid::new_v4();
-        let mut tx = self.pool.begin().await?;
         let inserted = sqlx::query("INSERT INTO thalamus_runs (id,team,actor,idempotency_key,fingerprint,request,job_name,state,ownership_nonce) VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8) ON CONFLICT (team,idempotency_key) DO NOTHING RETURNING *")
             .bind(id).bind(team).bind(actor).bind(idempotency_key).bind(&fingerprint)
-            .bind(serde_json::to_value(request)?).bind(job_name(id)).bind(Uuid::new_v4()).fetch_optional(&mut *tx).await?;
+            .bind(serde_json::to_value(request)?).bind(job_name(id)).bind(Uuid::new_v4()).fetch_optional(&mut **tx).await?;
         let row = if let Some(row) = inserted {
             sqlx::query("INSERT INTO thalamus_run_audit (run_id,team,actor,action,detail) VALUES ($1,$2,$3,'created',$4)")
-                .bind(id).bind(team).bind(actor).bind(serde_json::json!({"fingerprint": fingerprint})).execute(&mut *tx).await?;
+                .bind(id).bind(team).bind(actor).bind(serde_json::json!({"fingerprint": fingerprint})).execute(&mut **tx).await?;
             row
         } else {
             let row =
                 sqlx::query("SELECT * FROM thalamus_runs WHERE team=$1 AND idempotency_key=$2")
                     .bind(team)
                     .bind(idempotency_key)
-                    .fetch_one(&mut *tx)
+                    .fetch_one(&mut **tx)
                     .await?;
             if row.try_get::<String, _>("fingerprint")? != fingerprint
                 || row.try_get::<String, _>("actor")? != actor
@@ -131,9 +222,7 @@ impl Store {
             }
             row
         };
-        let run = decode(&row)?;
-        tx.commit().await?;
-        Ok(run)
+        decode(&row)
     }
 
     pub async fn get(&self, team: &str, id: Uuid) -> Result<Run> {
@@ -146,16 +235,48 @@ impl Store {
         decode(&row)
     }
 
+    /// Read a tenant-scoped run while the caller holds authorization locks.
+    pub async fn get_in_transaction(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        team: &str,
+        id: Uuid,
+    ) -> Result<Run> {
+        let row = sqlx::query("SELECT * FROM thalamus_runs WHERE team=$1 AND id=$2")
+            .bind(team)
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .ok_or(Error::NotFound)?;
+        decode(&row)
+    }
+
     pub async fn list(&self, team: &str, limit: u32) -> Result<Vec<Run>> {
-        if !(1..=100).contains(&limit) {
-            return Err(Error::Invalid("limit must be 1..=100".into()));
-        }
+        validate_page_limit(limit)?;
         let rows = sqlx::query(
             "SELECT * FROM thalamus_runs WHERE team=$1 ORDER BY created_at DESC, id DESC LIMIT $2",
         )
         .bind(team)
         .bind(i64::from(limit))
         .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(decode).collect()
+    }
+
+    /// List a single tenant's runs while the caller holds authorization locks.
+    pub async fn list_in_transaction(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        team: &str,
+        limit: u32,
+    ) -> Result<Vec<Run>> {
+        validate_page_limit(limit)?;
+        let rows = sqlx::query(
+            "SELECT * FROM thalamus_runs WHERE team=$1 ORDER BY created_at DESC, id DESC LIMIT $2",
+        )
+        .bind(team)
+        .bind(i64::from(limit))
+        .fetch_all(&mut **tx)
         .await?;
         rows.iter().map(decode).collect()
     }
@@ -288,6 +409,11 @@ impl Store {
             Transition::JobFailed { error } => {
                 run.state == "failed" && run.error.as_deref() == Some(error)
             }
+            Transition::JobFailedWithArtifacts { error, artifacts } => {
+                run.state == "failed"
+                    && run.error.as_deref() == Some(error)
+                    && run.artifacts.as_ref() == Some(artifacts)
+            }
             Transition::IngestionSucceeded { artifacts } => {
                 run.state == "succeeded" && run.artifacts.as_ref() == Some(artifacts)
             }
@@ -301,8 +427,12 @@ impl Store {
             return Ok(run);
         }
         let (state, error, artifact) = transition.next(&run.state)?;
-        if matches!(transition, Transition::Started | Transition::JobSucceeded)
-            && run.job_uid.is_none()
+        if matches!(
+            transition,
+            Transition::Started
+                | Transition::JobSucceeded
+                | Transition::JobFailedWithArtifacts { .. }
+        ) && run.job_uid.is_none()
         {
             return Err(Error::ForeignJob);
         }
@@ -379,5 +509,18 @@ mod tests {
         );
         assert!(Transition::Started.next("succeeded").is_err());
         assert!(Transition::JobSucceeded.next("pending").is_err());
+        let failure = Transition::JobFailedWithArtifacts {
+            error: "job failed".into(),
+            artifacts: vec![ArtifactRef {
+                path: "unused".into(),
+                sha256: "unused".into(),
+                size: 0,
+            }],
+        };
+        let (state, error, artifacts) = failure.next("running").unwrap();
+        assert_eq!(state, "failed");
+        assert_eq!(error, Some("job failed"));
+        assert_eq!(artifacts.unwrap().len(), 1);
+        assert!(failure.next("pending").is_err());
     }
 }

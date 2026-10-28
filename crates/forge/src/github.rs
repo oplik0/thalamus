@@ -63,6 +63,8 @@ impl Github {
             merge: true,
             comments: true,
             reviews: true,
+            branch_policy_evidence: true,
+            atomic_policy_guarded_merge: false,
             commit_statuses: true,
             check_runs: true,
             webhooks: true,
@@ -92,6 +94,13 @@ fn nested<'a>(v: &'a Value, key: &str) -> Result<&'a Value> {
 }
 fn optional(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(Value::as_str).map(str::to_owned)
+}
+fn nullable_text(v: &Value, key: &str) -> Result<Option<String>> {
+    match v.get(key) {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
+        _ => Err(Error::Malformed(format!("invalid or missing {key}"))),
+    }
 }
 fn change(v: &Value, host: &str) -> Result<ChangeRequest> {
     let head = nested(v, "head")?;
@@ -154,10 +163,16 @@ fn comment(v: &Value) -> Result<Comment> {
     })
 }
 fn review(v: &Value) -> Result<Review> {
+    let commit_sha = nullable_text(v, "commit_id")?;
+    if let Some(commit) = &commit_sha {
+        sha(commit).map_err(|_| Error::Malformed("invalid review commit_id".into()))?;
+    }
     Ok(Review {
         id: number(v, "id")?,
         author: text(nested(v, "user")?, "login")?.into(),
         state: text(v, "state")?.into(),
+        commit_sha,
+        submitted_at: nullable_text(v, "submitted_at")?,
         body: optional(v, "body"),
         url: text(v, "html_url")?.into(),
     })
@@ -329,6 +344,95 @@ impl Comments for Github {
         )
     }
 }
+fn validate_ruleset_detail(detail: &Value, id: u64) -> Result<()> {
+    if number(detail, "id")? != id {
+        return Err(Error::Malformed("ruleset identity mismatch".into()));
+    }
+    if !detail.get("bypass_actors").is_some_and(Value::is_array) {
+        return Err(Error::Malformed("ruleset bypass actors unavailable".into()));
+    }
+    Ok(())
+}
+#[async_trait]
+impl BranchPolicies for Github {
+    async fn branch_policy(&self, branch: &str) -> Result<BranchPolicy> {
+        use futures_core::Stream;
+        use std::future::poll_fn;
+
+        if branch.is_empty() || branch.chars().any(char::is_control) {
+            return Err(Error::InvalidInput("invalid branch".into()));
+        }
+        let encoded: String = url::form_urlencoded::byte_serialize(branch.as_bytes()).collect();
+        // A 404, including an unprotected branch or insufficient visibility, is an error.
+        let protection = self
+            .get(&self.route(&format!("/branches/{encoded}/protection")))
+            .await?;
+        if !protection.is_object() {
+            return Err(Error::Malformed("invalid branch protection".into()));
+        }
+        let mut stream = pages(
+            self,
+            self.route(&format!("/rules/branches/{encoded}")),
+            None,
+            |v| {
+                if v.is_object() {
+                    Ok(v.clone())
+                } else {
+                    Err(Error::Malformed("invalid branch rule".into()))
+                }
+            },
+        );
+        let mut rules = Vec::new();
+        while let Some(item) = poll_fn(|cx| Stream::poll_next(stream.as_mut(), cx)).await {
+            rules.push(item?);
+        }
+        let mut listings = pages(
+            self,
+            self.route("/rulesets?includes_parents=true"),
+            None,
+            |v| number(v, "id"),
+        );
+        let mut ids = std::collections::HashSet::new();
+        let mut rulesets = Vec::new();
+        while let Some(item) = poll_fn(|cx| Stream::poll_next(listings.as_mut(), cx)).await {
+            let id = item?;
+            if !ids.insert(id) {
+                return Err(Error::Malformed("duplicate ruleset id".into()));
+            }
+            let detail = self
+                .get(&self.route(&format!("/rulesets/{id}?includes_parents=true")))
+                .await?;
+            validate_ruleset_detail(&detail, id)?;
+            rulesets.push(detail);
+        }
+        Ok(BranchPolicy {
+            branch: branch.into(),
+            protection,
+            rules,
+            rulesets,
+        })
+    }
+    async fn policy_actor(&self) -> Result<PolicyActor> {
+        let user = self.get("/user").await?;
+        let id = number(&user, "id")?;
+        let login = text(&user, "login")?;
+        if login.is_empty() || login.chars().any(char::is_control) {
+            return Err(Error::Malformed("invalid authenticated user login".into()));
+        }
+        let encoded: String = url::form_urlencoded::byte_serialize(login.as_bytes()).collect();
+        let repository_permission = self
+            .get(&self.route(&format!("/collaborators/{encoded}/permission")))
+            .await?;
+        if number(nested(&repository_permission, "user")?, "id")? != id {
+            return Err(Error::Malformed("collaborator identity mismatch".into()));
+        }
+        text(&repository_permission, "permission")?;
+        Ok(PolicyActor {
+            user,
+            repository_permission,
+        })
+    }
+}
 #[async_trait]
 impl Checks for Github {
     fn list_checks<'a>(&'a self, s: &'a str) -> PageStream<'a, Check> {
@@ -475,6 +579,40 @@ impl Webhooks for Github {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ruleset_requires_identity_and_visible_bypass_actors() {
+        assert!(validate_ruleset_detail(&json!({"id": 42, "bypass_actors": []}), 42).is_ok());
+        assert!(validate_ruleset_detail(&json!({"id": 42}), 42).is_err());
+        assert!(validate_ruleset_detail(&json!({"id": 42, "bypass_actors": null}), 42).is_err());
+        assert!(validate_ruleset_detail(&json!({"id": 43, "bypass_actors": []}), 42).is_err());
+    }
+
+    #[test]
+    fn review_preserves_upstream_commit_submission_and_state() {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let mut value = json!({
+            "id": 12, "user": {"login": "alice"}, "state": "APPROVED",
+            "commit_id": commit, "submitted_at": "2026-01-02T03:04:05Z",
+            "body": null, "html_url": "https://github.example/review/12"
+        });
+        let r = review(&value).unwrap();
+        assert_eq!(r.author, "alice");
+        assert_eq!(r.state, "APPROVED");
+        assert_eq!(r.commit_sha.as_deref(), Some(commit));
+        assert_eq!(r.submitted_at.as_deref(), Some("2026-01-02T03:04:05Z"));
+        value["state"] = json!("PENDING");
+        value["commit_id"] = Value::Null;
+        value["submitted_at"] = Value::Null;
+        let pending = review(&value).unwrap();
+        assert!(pending.commit_sha.is_none());
+        assert!(pending.submitted_at.is_none());
+        value["commit_id"] = json!("not-a-commit");
+        assert!(review(&value).is_err());
+        value.as_object_mut().unwrap().remove("submitted_at");
+        value["commit_id"] = Value::Null;
+        assert!(review(&value).is_err());
+    }
 
     #[test]
     fn translates_example_pull_and_check_responses() {

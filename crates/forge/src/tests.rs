@@ -82,12 +82,9 @@ async fn verifies_webhook_bytes_before_decoding_and_checks_repository() {
 }
 
 #[tokio::test]
-async fn merge_rejects_retarget_or_base_change_without_merging() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
+async fn approval_guard_rejects_changed_target_base_or_head() {
     struct ForgeStub {
         change: ChangeRequest,
-        merges: AtomicUsize,
     }
     #[async_trait]
     impl ChangeRequests for ForgeStub {
@@ -103,16 +100,8 @@ async fn merge_rejects_retarget_or_base_change_without_merging() {
         async fn update_change(&self, _: u64, _: &UpdateChangeRequest) -> Result<ChangeRequest> {
             panic!("not used")
         }
-        async fn merge_change(
-            &self,
-            number: u64,
-            head: &str,
-            target: &str,
-            base: &str,
-        ) -> Result<String> {
-            ensure_approved_change(self, number, head, target, base).await?;
-            self.merges.fetch_add(1, Ordering::SeqCst);
-            Ok(head.into())
+        async fn merge_change(&self, _: u64, _: &str, _: &str, _: &str) -> Result<String> {
+            panic!("the approval guard must not merge")
         }
     }
     let mut forge = ForgeStub {
@@ -133,39 +122,28 @@ async fn merge_rejects_retarget_or_base_change_without_merging() {
             labels: vec![],
             url: "https://github.example/team/catalog/pull/42".into(),
         },
-        merges: AtomicUsize::new(0),
     };
     forge.change.target_branch = "other".into();
-    assert!(
-        forge
-            .merge_change(42, "head", "main", "base")
-            .await
-            .is_err()
-    );
+    assert!(matches!(
+        ensure_approved_change(&forge, 42, "head", "main", "base").await,
+        Err(Error::InvalidInput(_))
+    ));
     forge.change.target_branch = "main".into();
     forge.change.base_sha = "new-base".into();
-    assert!(
-        forge
-            .merge_change(42, "head", "main", "base")
-            .await
-            .is_err()
-    );
+    assert!(matches!(
+        ensure_approved_change(&forge, 42, "head", "main", "base").await,
+        Err(Error::InvalidInput(_))
+    ));
     forge.change.base_sha = "base".into();
     forge.change.head_sha = "new-head".into();
-    assert!(
-        forge
-            .merge_change(42, "head", "main", "base")
-            .await
-            .is_err()
-    );
-    assert_eq!(forge.merges.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        ensure_approved_change(&forge, 42, "head", "main", "base").await,
+        Err(Error::InvalidInput(_))
+    ));
     forge.change.head_sha = "head".into();
-    assert_eq!(
-        forge
-            .merge_change(42, "head", "main", "base")
+    assert!(
+        ensure_approved_change(&forge, 42, "head", "main", "base")
             .await
-            .unwrap(),
-        "head"
+            .is_ok()
     );
-    assert_eq!(forge.merges.load(Ordering::SeqCst), 1);
 }

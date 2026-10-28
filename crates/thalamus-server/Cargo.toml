@@ -1,0 +1,39 @@
+[package]
+name = "thalamus-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-trait = "0.1"
+axum = { version = "0.8", features = ["macros"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+hmac = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
+tower-http = { version = "0.6", features = ["fs"] }
+url = "2"
+utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+thalamus-core = { path = "../thalamus-core" }
+thalamus-identity = { path = "../thalamus-identity" }
+thalamus-metrics = { path = "../thalamus-metrics" }
+thalamus-runs = { path = "../thalamus-runs" }
+thalamus-changes = { path = "../thalamus-changes" }
+thalamus-gitops = { path = "../thalamus-gitops" }
+thalamus-mcp = { path = "../thalamus-mcp" }
+thalamus-oidc-resource = { path = "../thalamus-oidc-resource" }
+thalamus-access = { path = "../thalamus-access" }
+thalamus-logs = { path = "../thalamus-logs" }
+thalamus-debug = { path = "../thalamus-debug" }
+thalamus-usage = { path = "../thalamus-usage" }
+forge = { package = "thalamus-forge", path = "../forge", features = ["github"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

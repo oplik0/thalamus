@@ -1,0 +1,26 @@
+[package]
+name = "thalamus-worker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+base64 = "0.22"
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+k8s-openapi = { version = "0.24", features = ["v1_30"] }
+kube = { version = "0.98", features = ["client", "runtime", "rustls-tls"] }
+object_store = { version = "0.11", features = ["aws"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false }
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json"] }
+thalamus-identity = { path = "../thalamus-identity" }
+thalamus-debug = { path = "../thalamus-debug" }
+thalamus-k8s = { path = "../thalamus-k8s" }
+thalamus-runs = { path = "../thalamus-runs" }
+thalamus-usage = { path = "../thalamus-usage" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "fs", "net", "io-util"] }
+uuid = { version = "1", features = ["v4", "serde"] }

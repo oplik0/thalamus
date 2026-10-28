@@ -12,11 +12,8 @@
 
 # Frontend (ui/)
 ui/node_modules/
-ui/.expo/
-ui/dist/
-ui-v2/node_modules/
-ui-v2/.svelte-kit/
-ui-v2/build/
+ui/.svelte-kit/
+ui/build/
 .old
 
 docs/.gen

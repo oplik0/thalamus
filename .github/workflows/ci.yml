@@ -32,14 +32,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.94.1
-          components: rustfmt
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Build workspace
-        run: cargo build --workspace --all-targets
+        run: cargo build --workspace --all-targets --all-features
       - name: Test workspace
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
+      - name: Lint workspace
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   kcl:
     runs-on: ubuntu-latest
@@ -50,6 +52,12 @@ jobs:
           install_args: kcl
       - name: Render illustrative KCL example
         run: kcl main.k -D service_file=catalog/services/example-service.yaml
+      - name: Test serving and feature recipes
+        run: |
+          kcl test ./templates/serving
+          kcl test ./templates/features
+      - name: Exercise gateway authentication and attribution
+        run: python3 scripts/gateway-policy-smoke.py
 
   ui:
     runs-on: ubuntu-latest
@@ -62,12 +70,12 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: ui-v2/pnpm-lock.yaml
+          cache-dependency-path: ui/pnpm-lock.yaml
       - name: Install dependencies
-        run: pnpm --dir ui-v2 install --frozen-lockfile
+        run: pnpm --dir ui install --frozen-lockfile
       - name: Check UI
-        run: pnpm --dir ui-v2 run check
+        run: pnpm --dir ui run check
       - name: Build UI
-        run: pnpm --dir ui-v2 run build
+        run: pnpm --dir ui run build
       - name: Test UI
-        run: pnpm --dir ui-v2 run test
+        run: pnpm --dir ui run test

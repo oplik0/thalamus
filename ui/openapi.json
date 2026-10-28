@@ -1,0 +1,2234 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "thalamus-server",
+    "description": "",
+    "license": {
+      "name": ""
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/v1/changes": {
+      "get": {
+        "tags": [
+          "crate::workflows"
+        ],
+        "operationId": "list_changes",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangesView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Platform administrator required"
+          },
+          "503": {
+            "description": "Changes unavailable"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crate::workflows"
+        ],
+        "operationId": "create_change",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Platform administrator required"
+          },
+          "409": {
+            "description": "Change conflict"
+          },
+          "503": {
+            "description": "Changes unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/changes/{id}/open-pr": {
+      "post": {
+        "tags": [
+          "crate::workflows"
+        ],
+        "operationId": "open_pr",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Platform administrator required"
+          },
+          "404": {
+            "description": "Change not found"
+          },
+          "409": {
+            "description": "Change conflict"
+          },
+          "503": {
+            "description": "Publication unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/changes/{id}/refresh": {
+      "post": {
+        "tags": [
+          "crate::workflows"
+        ],
+        "summary": "Refresh invalidates the previous validation; the new base must be reviewed\nand explicitly validated before another publication.",
+        "operationId": "refresh_change",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Platform administrator required"
+          },
+          "404": {
+            "description": "Change not found"
+          },
+          "409": {
+            "description": "Change conflict"
+          },
+          "503": {
+            "description": "Changes unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/changes/{id}/validate": {
+      "post": {
+        "tags": [
+          "crate::workflows"
+        ],
+        "operationId": "validate_change",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Platform administrator required"
+          },
+          "404": {
+            "description": "Change not found"
+          },
+          "409": {
+            "description": "Change conflict"
+          },
+          "503": {
+            "description": "Validation unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/client-config": {
+      "post": {
+        "tags": [
+          "crate::client_config"
+        ],
+        "operationId": "config",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/client-config/check": {
+      "post": {
+        "tags": [
+          "crate::client_config"
+        ],
+        "operationId": "check",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/keys": {
+      "get": {
+        "tags": [
+          "crate::projects"
+        ],
+        "operationId": "list_keys",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeysResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "503": {
+            "description": "Identity service unavailable"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crate::projects"
+        ],
+        "operationId": "create_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateKey"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedKeyView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "503": {
+            "description": "Identity service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/keys/{id}": {
+      "delete": {
+        "tags": [
+          "crate::projects"
+        ],
+        "operationId": "revoke_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Key revoked"
+          },
+          "400": {
+            "description": "Invalid key id"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Key not found"
+          },
+          "503": {
+            "description": "Identity service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/keys/{id}/verify-revocation": {
+      "post": {
+        "tags": [
+          "crate::projects"
+        ],
+        "operationId": "verify_revocation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRevocation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Revocation verified"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Key not found"
+          },
+          "409": {
+            "description": "Revocation not confirmed"
+          },
+          "503": {
+            "description": "Verification unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "tags": [
+          "crate::projects"
+        ],
+        "operationId": "list_projects",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "503": {
+            "description": "Identity service unavailable"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crate::projects"
+        ],
+        "operationId": "create_project",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProject"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Team not found"
+          },
+          "503": {
+            "description": "Identity service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/runs": {
+      "get": {
+        "tags": [
+          "crate::workflows"
+        ],
+        "operationId": "list_runs",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "503": {
+            "description": "Runs unavailable"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crate::workflows"
+        ],
+        "operationId": "create_run",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRun"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "409": {
+            "description": "Run conflict"
+          },
+          "503": {
+            "description": "Runs unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}": {
+      "get": {
+        "tags": [
+          "crate::workflows"
+        ],
+        "operationId": "get_run",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Run not found"
+          },
+          "503": {
+            "description": "Runs unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/services": {
+      "get": {
+        "tags": [
+          "crate::catalog"
+        ],
+        "operationId": "list_services",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "503": {
+            "description": "Catalog or identity service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/services/{id}": {
+      "get": {
+        "tags": [
+          "crate::catalog"
+        ],
+        "operationId": "service_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Service name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid service ID"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Service not found"
+          },
+          "503": {
+            "description": "Catalog or identity service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/services/{id}/compare": {
+      "get": {
+        "tags": [
+          "crate::inspection"
+        ],
+        "operationId": "compare_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Service name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Base revision",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Target revision",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comparison"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid path or query"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Platform administrator required"
+          },
+          "503": {
+            "description": "Comparison or identity service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/services/{id}/compatibility": {
+      "get": {
+        "tags": [
+          "crate::inspection"
+        ],
+        "operationId": "compatibility_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Service name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Compatibility"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid path"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Platform administrator required"
+          },
+          "404": {
+            "description": "Service not found"
+          },
+          "503": {
+            "description": "Catalog or identity service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/services/{id}/logs": {
+      "get": {
+        "tags": [
+          "crate::inspection"
+        ],
+        "operationId": "logs_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Service name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "deployment",
+            "in": "query",
+            "description": "Deployment name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since_seconds",
+            "in": "query",
+            "description": "Lookback in seconds, from 1 to 3600",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum lines, from 1 to 500",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Logs"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid path, query, or bounds"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Service or deployment not found"
+          },
+          "503": {
+            "description": "Logs or identity service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/services/{id}/metrics": {
+      "get": {
+        "tags": [
+          "crate::catalog"
+        ],
+        "operationId": "service_metrics",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Service name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid service ID"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Service not found"
+          },
+          "500": {
+            "description": "Metrics query task failed"
+          },
+          "503": {
+            "description": "Catalog or identity service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/usage": {
+      "get": {
+        "tags": [
+          "crate::usage"
+        ],
+        "operationId": "usage",
+        "parameters": [
+          {
+            "name": "team",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "description": "Inclusive UTC date",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "description": "Exclusive UTC date",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid date range"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "404": {
+            "description": "Team or project not found"
+          },
+          "503": {
+            "description": "Usage history unavailable"
+          }
+        }
+      }
+    },
+    "/auth/callback": {
+      "get": {
+        "tags": [
+          "crate::auth"
+        ],
+        "operationId": "callback",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Authenticated browser redirect"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "get": {
+        "tags": [
+          "crate::auth"
+        ],
+        "operationId": "login",
+        "responses": {
+          "302": {
+            "description": "Redirect to the OIDC provider"
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "crate::auth"
+        ],
+        "operationId": "logout",
+        "responses": {
+          "303": {
+            "description": "Session revoked; redirect to the UI"
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "crate"
+        ],
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Process is serving requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": [
+          "crate"
+        ],
+        "operationId": "openapi",
+        "responses": {
+          "200": {
+            "description": "OpenAPI document",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChangeView": {
+        "type": "object",
+        "required": [
+          "id",
+          "service",
+          "state",
+          "base_commit"
+        ],
+        "properties": {
+          "base_commit": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "service": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "ChangesView": {
+        "type": "object",
+        "required": [
+          "changes"
+        ],
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChangeView"
+            }
+          }
+        }
+      },
+      "CheckRequest": {
+        "type": "object",
+        "required": [
+          "service",
+          "client",
+          "major_version",
+          "key"
+        ],
+        "properties": {
+          "client": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "major_version": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CheckResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Comparison": {
+        "type": "object",
+        "required": [
+          "service",
+          "from",
+          "to",
+          "data_diff",
+          "rendered_diff",
+          "run_revision_relation",
+          "runs"
+        ],
+        "properties": {
+          "data_diff": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "rendered_diff": {
+            "type": "string"
+          },
+          "run_revision_relation": {
+            "type": "string",
+            "description": "Run configuration digests are not Git commit IDs. These are recent\nservice runs, not evidence asserted to apply to either compared commit."
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunEvidence"
+            }
+          },
+          "service": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        }
+      },
+      "Compatibility": {
+        "type": "object",
+        "required": [
+          "service",
+          "deployments"
+        ],
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeploymentCompatibility"
+            }
+          },
+          "service": {
+            "type": "string"
+          }
+        }
+      },
+      "ConfigRequest": {
+        "type": "object",
+        "required": [
+          "service",
+          "client",
+          "major_version"
+        ],
+        "properties": {
+          "client": {
+            "type": "string"
+          },
+          "major_version": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigResponse": {
+        "type": "object",
+        "required": [
+          "config"
+        ],
+        "properties": {
+          "config": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateChange": {
+        "type": "object",
+        "required": [
+          "service",
+          "base_commit",
+          "patch"
+        ],
+        "properties": {
+          "base_commit": {
+            "type": "string"
+          },
+          "patch": {
+            "type": "object",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "service": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateKey": {
+        "type": "object",
+        "required": [
+          "name",
+          "project_id",
+          "allowed_services"
+        ],
+        "properties": {
+          "allowed_services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "CreateProject": {
+        "type": "object",
+        "required": [
+          "name",
+          "team"
+        ],
+        "properties": {
+          "budget": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "name": {
+            "type": "string"
+          },
+          "team": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateRun": {
+        "type": "object",
+        "required": [
+          "service",
+          "deployment",
+          "kind",
+          "project_id"
+        ],
+        "properties": {
+          "deployment": {
+            "type": "string"
+          },
+          "expected_runner": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_workload": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Workload"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RunKind"
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Required for admission; a missing or nil project ID is rejected."
+          },
+          "service": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DailyUsage": {
+        "type": "object",
+        "required": [
+          "day",
+          "project_id",
+          "team_id",
+          "service",
+          "traffic_class",
+          "observed_at",
+          "updated_at"
+        ],
+        "properties": {
+          "day": {
+            "type": "string",
+            "format": "date"
+          },
+          "input_tokens": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "output_tokens": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "service": {
+            "type": "string"
+          },
+          "team_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "traffic_class": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "DeploymentCompatibility": {
+        "type": "object",
+        "required": [
+          "deployment",
+          "artifact",
+          "hardware",
+          "tier",
+          "reason",
+          "evidence"
+        ],
+        "properties": {
+          "artifact": {
+            "type": "string"
+          },
+          "deployment": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunEvidence"
+            }
+          },
+          "hardware": {
+            "type": "string"
+          },
+          "hardware_definition": {},
+          "reason": {
+            "type": "string"
+          },
+          "recipe": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tier": {
+            "type": "string"
+          }
+        }
+      },
+      "DeploymentView": {
+        "type": "object",
+        "required": [
+          "name",
+          "recipe",
+          "artifact",
+          "hardware"
+        ],
+        "properties": {
+          "artifact": {
+            "type": "string"
+          },
+          "hardware": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "recipe": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "IssuedKeyView": {
+        "type": "object",
+        "required": [
+          "key",
+          "secret"
+        ],
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/KeyView"
+          },
+          "secret": {
+            "type": "string"
+          }
+        }
+      },
+      "KeyView": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "project_id",
+          "allowed_services",
+          "revocation_state"
+        ],
+        "properties": {
+          "allowed_services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revocation_state": {
+            "type": "string"
+          }
+        }
+      },
+      "KeysResponse": {
+        "type": "object",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyView"
+            }
+          }
+        }
+      },
+      "LogEntry": {
+        "type": "object",
+        "required": [
+          "timestamp_ns",
+          "line"
+        ],
+        "properties": {
+          "line": {
+            "type": "string"
+          },
+          "timestamp_ns": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix timestamp in nanoseconds, as supplied by Loki.",
+            "minimum": 0
+          }
+        }
+      },
+      "Logs": {
+        "type": "object",
+        "required": [
+          "service",
+          "deployment",
+          "entries"
+        ],
+        "properties": {
+          "deployment": {
+            "type": "string"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogEntry"
+            }
+          },
+          "service": {
+            "type": "string"
+          }
+        }
+      },
+      "MetricList": {
+        "type": "object",
+        "required": [
+          "metrics"
+        ],
+        "properties": {
+          "metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MetricView"
+            }
+          }
+        }
+      },
+      "MetricView": {
+        "type": "object",
+        "required": [
+          "deployment",
+          "name",
+          "unit",
+          "state"
+        ],
+        "properties": {
+          "deployment": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "observed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "state": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "PrView": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "ProjectView": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "team"
+        ],
+        "properties": {
+          "budget": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "team": {
+            "type": "string"
+          }
+        }
+      },
+      "ProjectsResponse": {
+        "type": "object",
+        "required": [
+          "projects"
+        ],
+        "properties": {
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectView"
+            }
+          }
+        }
+      },
+      "RunEvidence": {
+        "type": "object",
+        "required": [
+          "id",
+          "deployment",
+          "kind",
+          "state",
+          "revision",
+          "updated_at"
+        ],
+        "properties": {
+          "deployment": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "observed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RunKind": {
+        "type": "string",
+        "enum": [
+          "validation",
+          "benchmark",
+          "debug"
+        ]
+      },
+      "RunView": {
+        "type": "object",
+        "required": [
+          "id",
+          "service",
+          "deployment",
+          "kind",
+          "state",
+          "revision"
+        ],
+        "properties": {
+          "deployment": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "RunsView": {
+        "type": "object",
+        "required": [
+          "runs"
+        ],
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunView"
+            }
+          }
+        }
+      },
+      "ServiceList": {
+        "type": "object",
+        "required": [
+          "services"
+        ],
+        "properties": {
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServiceView"
+            }
+          }
+        }
+      },
+      "ServiceStatus": {
+        "type": "object",
+        "required": [
+          "accepted",
+          "applied",
+          "running",
+          "functional",
+          "measured"
+        ],
+        "properties": {
+          "accepted": {
+            "$ref": "#/components/schemas/StatusView"
+          },
+          "applied": {
+            "$ref": "#/components/schemas/StatusView"
+          },
+          "functional": {
+            "$ref": "#/components/schemas/StatusView"
+          },
+          "measured": {
+            "$ref": "#/components/schemas/StatusView"
+          },
+          "running": {
+            "$ref": "#/components/schemas/StatusView"
+          }
+        }
+      },
+      "ServiceView": {
+        "type": "object",
+        "required": [
+          "name",
+          "deployments",
+          "status"
+        ],
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeploymentView"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ServiceStatus"
+          }
+        }
+      },
+      "StatusView": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "observed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "UsageQuery": {
+        "type": "object",
+        "required": [
+          "team",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "string",
+            "format": "date",
+            "description": "Exclusive UTC date."
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "start": {
+            "type": "string",
+            "format": "date"
+          },
+          "team": {
+            "type": "string"
+          }
+        }
+      },
+      "UsageResponse": {
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "unit",
+          "usage"
+        ],
+        "properties": {
+          "end": {
+            "type": "string",
+            "format": "date"
+          },
+          "start": {
+            "type": "string",
+            "format": "date"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "usage": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DailyUsage"
+            }
+          }
+        }
+      },
+      "ValidationView": {
+        "type": "object",
+        "required": [
+          "data_diff",
+          "rendered_diff",
+          "errors"
+        ],
+        "properties": {
+          "data_diff": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rendered_diff": {
+            "type": "string"
+          }
+        }
+      },
+      "VerifyRevocation": {
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Workload": {
+        "type": "object",
+        "description": "Parameters are deliberately numeric and bounded; neither command nor pod spec is user supplied.",
+        "required": [
+          "name",
+          "seed",
+          "concurrency",
+          "duration_seconds",
+          "warmup_seconds",
+          "max_requests",
+          "model_budget_tokens",
+          "tool_budget_calls"
+        ],
+        "properties": {
+          "concurrency": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "duration_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "max_requests": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "model_budget_tokens": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "seed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "tool_budget_calls": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "warmup_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

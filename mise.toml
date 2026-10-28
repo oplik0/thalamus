@@ -31,27 +31,27 @@ run = "cargo fmt --all -- --check"
 
 [tasks."ui:install"]
 description = "Install v2 UI dependencies"
-dir = "ui-v2"
+dir = "ui"
 run = "pnpm install --frozen-lockfile"
 
 [tasks."ui:dev"]
 description = "Run the v2 UI development server"
-dir = "ui-v2"
+dir = "ui"
 run = "pnpm run dev"
 
 [tasks."ui:check"]
 description = "Check the v2 UI"
-dir = "ui-v2"
+dir = "ui"
 run = "pnpm run check"
 
 [tasks."ui:build"]
 description = "Build the v2 UI"
-dir = "ui-v2"
+dir = "ui"
 run = "pnpm run build"
 
 [tasks."ui:test"]
 description = "Test the v2 UI"
-dir = "ui-v2"
+dir = "ui"
 run = "pnpm run test"
 
 [tasks."kcl:render"]
@@ -65,7 +65,7 @@ run = '''
   cargo build --workspace --all-targets
   cargo test --workspace
   kcl main.k -D service_file=catalog/services/example-service.yaml
-  pnpm --dir ui-v2 run check
-  pnpm --dir ui-v2 run build
-  pnpm --dir ui-v2 run test
+  pnpm --dir ui run check
+  pnpm --dir ui run build
+  pnpm --dir ui run test
 '''

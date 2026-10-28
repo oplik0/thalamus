@@ -237,6 +237,103 @@ async fn projection_create_is_empty_and_revocation_uses_non_forced_apply() {
 }
 
 #[tokio::test]
+async fn projection_selector_labels_are_validated_and_applied_after_creation() {
+    for (key, value) in [
+        (MANAGED_BY, "thalamus"),
+        ("Bad_domain/name", "x"),
+        ("example.com/", "x"),
+        ("example.com/name", "-bad"),
+        ("example.com/name", "bad/value"),
+    ] {
+        let (k8s, requests) = fake_client(vec![]);
+        assert!(matches!(
+            k8s.apply_projection_with_labels(
+                "thalamus-projection",
+                BTreeMap::new(),
+                BTreeMap::from([(key.into(), value.into())])
+            )
+            .await,
+            Err(Error::Invalid(_))
+        ));
+        assert!(requests.lock().unwrap().is_empty());
+    }
+    let object = managed_projection(json!({}), json!([]));
+    let (k8s, requests) = fake_client(vec![
+        (
+            404,
+            json!({"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound","code":404}),
+        ),
+        (201, object.clone()),
+        (200, object),
+    ]);
+    k8s.apply_projection_with_labels(
+        "thalamus-projection",
+        BTreeMap::new(),
+        BTreeMap::from([("gateway.example.com/config".into(), "primary".into())]),
+    )
+    .await
+    .unwrap();
+    let requests = requests.lock().unwrap();
+    assert!(
+        requests[1].2["metadata"]["labels"]
+            .get("gateway.example.com/config")
+            .is_none()
+    );
+    assert_eq!(
+        requests[2].2["metadata"]["labels"]["gateway.example.com/config"],
+        "primary"
+    );
+    assert_eq!(requests[2].2["metadata"]["labels"][MANAGED_BY], MANAGER);
+    assert_eq!(requests[2].2["metadata"]["resourceVersion"], "7");
+    assert!(!requests[2].1.contains("force=true"));
+}
+
+#[tokio::test]
+async fn projection_selector_labels_reject_unknown_and_shared_ownership() {
+    for fields in [
+        json!([]),
+        json!([
+            {"manager":"thalamus","operation":"Apply","fieldsType":"FieldsV1",
+             "fieldsV1":{"f:metadata":{"f:labels":{"f:gateway.example.com/config":{}}}}},
+            {"manager":"other","operation":"Apply","fieldsType":"FieldsV1",
+             "fieldsV1":{"f:metadata":{"f:labels":{"f:gateway.example.com/config":{}}}}}
+        ]),
+    ] {
+        let mut object = managed_projection(json!({}), fields);
+        object["metadata"]["labels"]["gateway.example.com/config"] = json!("primary");
+        let (k8s, requests) = fake_client(vec![(200, object)]);
+        assert!(matches!(
+            k8s.apply_projection_with_labels(
+                "thalamus-projection",
+                BTreeMap::new(),
+                BTreeMap::from([("gateway.example.com/config".into(), "primary".into())])
+            )
+            .await,
+            Err(Error::UnsafeProjectionOwnership)
+        ));
+        assert_eq!(requests.lock().unwrap().len(), 1);
+    }
+    let fields = json!([{"manager":"thalamus","operation":"Apply","fieldsType":"FieldsV1",
+        "fieldsV1":{"f:metadata":{"f:labels":{"f:gateway.example.com/config":{}}}}}]);
+    let mut object = managed_projection(json!({}), fields);
+    object["metadata"]["labels"]["gateway.example.com/config"] = json!("primary");
+    let (k8s, requests) = fake_client(vec![(200, object.clone()), (200, object)]);
+    k8s.apply_projection_with_labels(
+        "thalamus-projection",
+        BTreeMap::new(),
+        BTreeMap::from([("gateway.example.com/config".into(), "other".into())]),
+    )
+    .await
+    .unwrap();
+    let requests = requests.lock().unwrap();
+    assert_eq!(
+        requests[1].2["metadata"]["labels"]["gateway.example.com/config"],
+        "other"
+    );
+    assert_eq!(requests[1].2["metadata"]["resourceVersion"], "7");
+}
+
+#[tokio::test]
 async fn legacy_dual_owned_data_fails_before_apply_even_for_revocation() {
     let fields = json!([
         {"manager":"thalamus","operation":"Update","apiVersion":"v1","fieldsType":"FieldsV1",

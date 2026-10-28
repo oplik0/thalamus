@@ -18,14 +18,64 @@ pub struct JobTemplate {
     pub key_secret: Option<String>,
 }
 
+/// Operator-provided upload destination. The worker signs a short-lived PUT
+/// for the exact result object and places it in an owned per-run Secret.
+#[derive(Clone, Debug)]
+pub struct ResultUpload {
+    pub endpoint: String,
+    pub bucket: String,
+    pub region: String,
+    pub secret_prefix: String,
+}
+
+fn dns_label(value: &str, max: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        && value.as_bytes()[0].is_ascii_alphanumeric()
+        && value.as_bytes()[value.len() - 1].is_ascii_alphanumeric()
+}
+
+impl ResultUpload {
+    fn validate(&self) -> Result<()> {
+        let endpoint = url::Url::parse(&self.endpoint)
+            .map_err(|_| Error::Invalid("invalid result endpoint".into()))?;
+        if endpoint.scheme() != "https"
+            || endpoint.host_str().is_none()
+            || !endpoint.username().is_empty()
+            || endpoint.password().is_some()
+            || endpoint.query().is_some()
+            || endpoint.fragment().is_some()
+            || endpoint.path() != "/"
+            || self.endpoint.len() > 1024
+            || self.bucket.len() < 3
+            || !dns_label(&self.bucket, 63)
+            || !dns_label(&self.region, 63)
+            || !dns_label(&self.secret_prefix, 26)
+        {
+            return Err(Error::Invalid("invalid result upload configuration".into()));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Templates {
     namespace: String,
     runners: BTreeMap<String, JobTemplate>,
+    result_upload: ResultUpload,
+    validation_configs: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl Templates {
-    pub fn new(namespace: String, runners: BTreeMap<String, JobTemplate>) -> Result<Self> {
+    pub fn new(
+        namespace: String,
+        runners: BTreeMap<String, JobTemplate>,
+        result_upload: ResultUpload,
+    ) -> Result<Self> {
+        result_upload.validate()?;
         crate::text(&namespace, "namespace", 253)?;
         if runners.is_empty() {
             return Err(Error::Invalid("no runner templates configured".into()));
@@ -59,13 +109,81 @@ impl Templates {
                 crate::text(s, "key secret", 253)?;
             }
         }
-        Ok(Self { namespace, runners })
+        Ok(Self {
+            namespace,
+            runners,
+            result_upload,
+            validation_configs: BTreeMap::new(),
+        })
+    }
+
+    /// Configurations are operator-controlled and indexed by exact service and
+    /// deployment identity. They are never accepted from an API request.
+    pub fn with_validation_configs(
+        mut self,
+        configs: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
+    ) -> Result<Self> {
+        let mut encoded = BTreeMap::new();
+        for (service, deployments) in configs {
+            crate::text(&service, "service", 1024)?;
+            let mut entries = BTreeMap::new();
+            for (deployment, config) in deployments {
+                crate::text(&deployment, "deployment", 1024)?;
+                let object = config
+                    .as_object()
+                    .ok_or_else(|| Error::Invalid("validation config must be an object".into()))?;
+                let allowed = [
+                    "base_url",
+                    "model",
+                    "forbidden_model",
+                    "suite",
+                    "backend_header",
+                    "expected_backend",
+                    "old_backend",
+                    "context_prompt",
+                    "context_tokens",
+                    "tool_parser",
+                    "reasoning",
+                    "responses",
+                    "anthropic",
+                    "responses_continuation",
+                    "timeout_seconds",
+                ];
+                if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+                    return Err(Error::Invalid("unknown validation config field".into()));
+                }
+                let base = object
+                    .get("base_url")
+                    .and_then(|v| v.as_str())
+                    .and_then(|v| url::Url::parse(v).ok())
+                    .ok_or_else(|| Error::Invalid("invalid validation base URL".into()))?;
+                if !matches!(base.scheme(), "http" | "https")
+                    || base.host_str().is_none()
+                    || !base.username().is_empty()
+                    || base.password().is_some()
+                    || base.query().is_some()
+                    || base.fragment().is_some()
+                {
+                    return Err(Error::Invalid("invalid validation base URL".into()));
+                }
+                let json = serde_json::to_string(&config)?;
+                // Linux limits the size of each individual environment string.
+                if json.len() > 64 * 1024 {
+                    return Err(Error::Invalid(
+                        "validation config exceeds environment limit".into(),
+                    ));
+                }
+                entries.insert(deployment, json);
+            }
+            encoded.insert(service, entries);
+        }
+        self.validation_configs = encoded;
+        Ok(self)
     }
 }
 
 /// Constructs a typed Job exclusively from a trusted runner and named workload.
-/// The runner contract is the THALAMUS_RUN_REQUEST JSON and THALAMUS_RUN_ID
-/// environment variables; it must write results for ingestion by the worker.
+/// The runner receives a presigned PUT URL only via its per-run Secret.
 pub fn build_job(run: &Run, templates: &Templates) -> Result<Job> {
     run.request.validate()?;
     if run.fingerprint != run.request.fingerprint()? || run.job_name != crate::job_name(run.id) {
@@ -79,10 +197,31 @@ pub fn build_job(run: &Run, templates: &Templates) -> Result<Job> {
     {
         return Err(Error::Invalid("runner or workload not permitted".into()));
     }
+    if template.key_secret.is_some() && run.request.workload.model_budget_tokens == 0 {
+        return Err(Error::Invalid(
+            "runner key requires a positive model token budget".into(),
+        ));
+    }
     let mut env = vec![
         json!({"name":"THALAMUS_RUN_ID", "value":run.id.to_string()}),
         json!({"name":"THALAMUS_RUN_REQUEST", "value":serde_json::to_string(&run.request)?}),
     ];
+    if matches!(run.request.kind, RunKind::Validation) {
+        if template.key_secret.is_none() {
+            return Err(Error::Invalid(
+                "validation runner requires a run key secret".into(),
+            ));
+        }
+        let config = templates
+            .validation_configs
+            .get(&run.request.service)
+            .and_then(|deployments| deployments.get(&run.request.deployment))
+            .ok_or_else(|| {
+                Error::Invalid("no validation configuration for service and deployment".into())
+            })?;
+        env.push(json!({"name":"THALAMUS_VALIDATION_CONFIG","value":config}));
+    }
+    let secret = format!("{}-{}", templates.result_upload.secret_prefix, run.id);
     if let Some(secret) = &template.key_secret {
         env.push(json!({"name":"THALAMUS_API_KEY","valueFrom":{"secretKeyRef":{"name":format!("{secret}-{}", run.id),"key":"key"}}}));
     }
@@ -97,18 +236,20 @@ pub fn build_job(run: &Run, templates: &Templates) -> Result<Job> {
                 "spec":{"restartPolicy":"Never","serviceAccountName":template.service_account,
                     "automountServiceAccountToken":false,
                     "securityContext":{"runAsNonRoot":true,"runAsUser":65532,"runAsGroup":65532,"seccompProfile":{"type":"RuntimeDefault"}},
+                    "volumes":[{"name":"result-upload","projected":{"defaultMode":292,"sources":[{"secret":{"name":secret,"items":[{"key":"url","path":"url"}]}}]}}],
                     "containers":[{"name":"runner","image":template.image,"command":template.command,"env":env,
+                        "volumeMounts":[{"name":"result-upload","mountPath":"/var/run/thalamus/result-upload","readOnly":true}],
                         "resources":{"requests":{"cpu":"100m","memory":"128Mi","ephemeral-storage":"64Mi"},"limits":{"cpu":"2","memory":"2Gi","ephemeral-storage":"1Gi"}},
                         "securityContext":{"allowPrivilegeEscalation":false,"readOnlyRootFilesystem":true,"capabilities":{"drop":["ALL"]}}}]}}}
     });
     if matches!(template.kind, RunKind::Debug) {
         let pod = &mut value["spec"]["template"]["spec"];
-        pod["volumes"] = json!([{"name":"kube-api-access","projected":{"defaultMode":420,"sources":[
+        pod["volumes"].as_array_mut().unwrap().push(json!({"name":"kube-api-access","projected":{"defaultMode":420,"sources":[
             {"serviceAccountToken":{"path":"token","expirationSeconds":3600}},
             {"configMap":{"name":"kube-root-ca.crt","items":[{"key":"ca.crt","path":"ca.crt"}]}},
             {"downwardAPI":{"items":[{"path":"namespace","fieldRef":{"apiVersion":"v1","fieldPath":"metadata.namespace"}}]}}
-        ]}}]);
-        pod["containers"][0]["volumeMounts"] = json!([{"name":"kube-api-access","mountPath":"/var/run/secrets/kubernetes.io/serviceaccount","readOnly":true}]);
+        ]}}));
+        pod["containers"][0]["volumeMounts"].as_array_mut().unwrap().push(json!({"name":"kube-api-access","mountPath":"/var/run/secrets/kubernetes.io/serviceaccount","readOnly":true}));
     }
     Ok(serde_json::from_value(value)?)
 }
@@ -248,4 +389,27 @@ pub fn verify_owned_job(run: &Run, job: &Job, namespace: &str) -> Result<()> {
         return Err(Error::ForeignJob);
     }
     verify_recoverable_job(run, job)
+}
+
+#[cfg(test)]
+mod upload_tests {
+    use super::*;
+
+    #[test]
+    fn upload_configuration_rejects_credentials_and_unbounded_secret_names() {
+        let mut upload = ResultUpload {
+            endpoint: "https://objects.example".into(),
+            bucket: "run-results".into(),
+            region: "us-east-1".into(),
+            secret_prefix: "upload".into(),
+        };
+        assert!(upload.validate().is_ok());
+        upload.endpoint = "https://user:password@objects.example".into();
+        assert!(upload.validate().is_err());
+        upload.endpoint = "http://objects.example".into();
+        assert!(upload.validate().is_err());
+        upload.endpoint = "https://objects.example".into();
+        upload.secret_prefix = "a".repeat(27);
+        assert!(upload.validate().is_err());
+    }
 }

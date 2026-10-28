@@ -8,5 +8,15 @@ members = [
     "crates/thalamus-runs",
     "crates/thalamus-metrics",
     "crates/thalamus-cli",
+    "crates/thalamus-access",
+    "crates/thalamus-changes",
+    "crates/thalamus-debug",
+    "crates/thalamus-logs",
+    "crates/thalamus-mcp",
+    "crates/thalamus-oidc-resource",
+    "crates/thalamus-server",
+    "crates/thalamus-validation",
+    "crates/thalamus-usage",
+    "crates/thalamus-worker",
 ]
 resolver = "3"

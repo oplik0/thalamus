@@ -238,25 +238,77 @@ fn evidence_requires_complete_matching_four_part_identity_and_success() {
 }
 
 #[test]
-fn independent_statuses_round_trip_including_stale_and_unknown() {
-    let observation = |value| StatusObservation {
+fn independent_statuses_have_explicit_wire_contract_including_stale_and_unknown() {
+    let observation = |value, revision: &str, observed_at: &str, reason: &str| StatusObservation {
         value,
-        revision: "r1".into(),
-        observed_at: chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+        revision: revision.into(),
+        observed_at: chrono::DateTime::parse_from_rfc3339(observed_at)
             .unwrap()
             .to_utc(),
-        reason: "example observation".into(),
+        reason: reason.into(),
     };
     let statuses = DeploymentStatuses {
-        accepted: observation(StatusValue::Yes),
-        applied: observation(StatusValue::Unknown),
-        running: observation(StatusValue::Stale),
-        functional: observation(StatusValue::No),
-        measured: observation(StatusValue::Unknown),
+        accepted: observation(StatusValue::Yes, "r1", "2026-01-01T00:00:00Z", "merged"),
+        applied: observation(
+            StatusValue::Unknown,
+            "r2",
+            "2026-01-02T00:00:00Z",
+            "not observed",
+        ),
+        running: observation(
+            StatusValue::Stale,
+            "r3",
+            "2026-01-03T00:00:00Z",
+            "observation expired",
+        ),
+        functional: observation(
+            StatusValue::No,
+            "r4",
+            "2026-01-04T00:00:00Z",
+            "validation failed",
+        ),
+        measured: observation(
+            StatusValue::Unknown,
+            "r5",
+            "2026-01-05T00:00:00Z",
+            "benchmark missing",
+        ),
     };
-    let json = serde_json::to_string(&statuses).unwrap();
+    let expected = serde_json::json!({
+        "accepted": {
+            "value": "yes",
+            "revision": "r1",
+            "observed_at": "2026-01-01T00:00:00Z",
+            "reason": "merged"
+        },
+        "applied": {
+            "value": "unknown",
+            "revision": "r2",
+            "observed_at": "2026-01-02T00:00:00Z",
+            "reason": "not observed"
+        },
+        "running": {
+            "value": "stale",
+            "revision": "r3",
+            "observed_at": "2026-01-03T00:00:00Z",
+            "reason": "observation expired"
+        },
+        "functional": {
+            "value": "no",
+            "revision": "r4",
+            "observed_at": "2026-01-04T00:00:00Z",
+            "reason": "validation failed"
+        },
+        "measured": {
+            "value": "unknown",
+            "revision": "r5",
+            "observed_at": "2026-01-05T00:00:00Z",
+            "reason": "benchmark missing"
+        }
+    });
+    assert_eq!(serde_json::to_value(&statuses).unwrap(), expected);
     assert_eq!(
-        serde_json::from_str::<DeploymentStatuses>(&json).unwrap(),
+        serde_json::from_value::<DeploymentStatuses>(expected).unwrap(),
         statuses
     );
 }
