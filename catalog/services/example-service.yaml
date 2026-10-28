@@ -1,0 +1,15 @@
+# Example only; replace image, artifact and hardware for an actual deployment.
+name: example-service
+namespace: example-inference
+artifact: example-model
+hardware: example-gpu
+image: vllm/vllm-openai:example-tag
+replicas: 1
+contextLength: 4096
+maxNumSeqs: 64
+maxNumBatchedTokens: 4096
+tensorParallelSize: 1
+features:
+  # Non-empty values enable the corresponding vLLM parser flags.
+  toolParser: ""
+  reasoningParser: ""

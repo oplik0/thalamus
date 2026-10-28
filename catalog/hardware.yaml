@@ -1,0 +1,7 @@
+# Replace this illustrative node selector and resources with your cluster's values.
+example-gpu:
+  nodeSelector:
+    accelerator: example-gpu
+  gpuCount: 1
+  cpu: "4"
+  memory: 16Gi

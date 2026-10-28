@@ -3,101 +3,71 @@ name: CI
 on:
   push:
   pull_request:
-    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  rust:
     runs-on: ubuntu-latest
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: jdx/mise-action@v2
-
-      - name: Install Rust components
-        run: rustup component add rustfmt clippy
-
-      - uses: Swatinem/rust-cache@v2
-      - uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Enable sccache
-        run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-
-      - name: Start services
-        run: |
-          mise run services:up
-          for i in {1..30}; do
-            if pg_isready -h localhost -U $USER -d thalamus > /dev/null 2>&1; then
-              echo "PostgreSQL is ready"
-              break
-            fi
-            echo "Waiting for PostgreSQL... ($i/30)"
-            sleep 1
-          done
-
-      - name: Run database migrations
-        run: mise run db:migrate
-
-      - name: Check formatting
-        run: mise run fmt:check
-
-      - name: Run linter
-        run: mise run lint
-
-      - name: Run tests
-        run: mise run test:ci
-
-  coverage:
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: jdx/mise-action@v2
-
-      - name: Install Rust components
-        run: rustup component add rustfmt clippy
-
-      - uses: Swatinem/rust-cache@v2
-      - uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Enable sccache
-        run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-
-      - name: Start services
-        run: |
-          mise run services:up
-          for i in {1..30}; do
-            if pg_isready -h localhost -U $USER -d thalamus > /dev/null 2>&1; then
-              echo "PostgreSQL is ready"
-              break
-            fi
-            echo "Waiting for PostgreSQL... ($i/30)"
-            sleep 1
-          done
-
-      - name: Run database migrations
-        run: mise run db:migrate
-
-      - name: Run tests with coverage
-        run: mise run test:coverage-xml
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage/
-          retention-days: 30
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        if: env.CODECOV_TOKEN != ''
-        with:
-          files: coverage/cobertura.xml
-          fail_ci_if_error: false
-          verbose: true
+    services:
+      postgres:
+        image: postgres:16
         env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+          POSTGRES_USER: thalamus
+          POSTGRES_PASSWORD: thalamus
+          POSTGRES_DB: thalamus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U thalamus -d thalamus_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://thalamus:thalamus@localhost:5432/thalamus_test
+      TEST_DATABASE_URL: postgres://thalamus:thalamus@localhost:5432/thalamus_test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.1
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Build workspace
+        run: cargo build --workspace --all-targets
+      - name: Test workspace
+        run: cargo test --workspace
+
+  kcl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: kcl
+      - name: Render illustrative KCL example
+        run: kcl main.k -D service_file=catalog/services/example-service.yaml
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: ui-v2/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm --dir ui-v2 install --frozen-lockfile
+      - name: Check UI
+        run: pnpm --dir ui-v2 run check
+      - name: Build UI
+        run: pnpm --dir ui-v2 run build
+      - name: Test UI
+        run: pnpm --dir ui-v2 run test
