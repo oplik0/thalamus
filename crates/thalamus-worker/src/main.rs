@@ -1475,7 +1475,7 @@ async fn main() -> Result<()> {
     let usage_store = UsageStore::new(db.clone());
     let identity = WorkerIdentity::new(db.clone());
     let idp_sync = IdentitySync::from_env()?;
-    let client = kube::Client::try_default().await?;
+    let client = thalamus_k8s::default_client().await?;
     let k8s = K8s::new(client.clone(), &config.namespace)?;
     let store = Store::new(db.clone());
     let worker_store = WorkerStore::new(db.clone());

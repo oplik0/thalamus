@@ -20,7 +20,11 @@ run = '''
   set -eu
   kcl="$(mise which kcl)"
   python="$(python3 -c 'import os,sys; print(os.path.realpath(sys.executable))')"
-  PATH="$(dirname "$kcl"):$(dirname "$python"):$PATH" cargo test --workspace --all-features
+  tools="$(mktemp -d)"
+  trap 'rm -f "$tools/kcl" "$tools/python3"; rmdir "$tools"' EXIT
+  ln -s "$kcl" "$tools/kcl"
+  ln -s "$python" "$tools/python3"
+  PATH="$tools:$PATH" cargo test --workspace --all-features
 '''
 
 [tasks.check]
@@ -78,7 +82,11 @@ run = '''
   set -eu
   kcl="$(mise which kcl)"
   python="$(python3 -c 'import os,sys; print(os.path.realpath(sys.executable))')"
-  export PATH="$(dirname "$kcl"):$(dirname "$python"):$PATH"
+  tools="$(mktemp -d)"
+  trap 'rm -f "$tools/kcl" "$tools/python3"; rmdir "$tools"' EXIT
+  ln -s "$kcl" "$tools/kcl"
+  ln -s "$python" "$tools/python3"
+  export PATH="$tools:$PATH"
   cargo fmt --all -- --check
   cargo build --workspace --all-targets --all-features
   cargo test --workspace --all-features

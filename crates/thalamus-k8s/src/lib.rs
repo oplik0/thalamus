@@ -27,6 +27,27 @@ pub const MANAGED_BY: &str = "app.kubernetes.io/managed-by";
 pub const NAME_PREFIX: &str = "thalamus-";
 pub const CONFIG_MAP_MAX_BYTES: usize = 1024 * 1024;
 
+// Rustls cannot choose a process default when multiple crypto providers are
+// enabled. Respect an application-installed provider; racing initializers keep
+// whichever provider was installed first.
+fn ensure_crypto_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
+/// Construct a Kubernetes client from the ambient kubeconfig.
+pub async fn default_client() -> Result<Client, kube::Error> {
+    ensure_crypto_provider();
+    Client::try_default().await
+}
+
+/// Construct a Kubernetes client from an explicit configuration.
+pub fn client_from_config(config: kube::Config) -> Result<Client, kube::Error> {
+    ensure_crypto_provider();
+    Client::try_from(config)
+}
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Kubernetes API: {0}")]

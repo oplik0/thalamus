@@ -4,6 +4,7 @@ import runtime
 import templates.serving.raw as raw_serving
 import templates.serving.kserve as raw_types
 import templates.features.shared_pool as raw_pool_types
+import templates.features.kv_offload as raw_picker
 
 _raw_revision = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 _raw_image = "registry.example/model@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -97,6 +98,10 @@ test_raw_endpoint_picker_contract = lambda {
     assert picker.command == ["/app/epp"]
     assert "--config-text" in picker.args and "--secure-serving=false" in picker.args
     assert "model-a-inference-pool" in picker.args and "models" in picker.args
+    assert "--grpc-port=${svc.spec.ports[0].targetPort}" in picker.args
+    grpc_port = [port.containerPort for port in picker.ports if port.name == "grpc"][0]
+    assert svc.spec.ports[0].targetPort == grpc_port
+    assert "--grpc-port=${grpc_port}" in raw_picker.scheduler("models", "model-a").template.containers[0].command
     assert config.apiVersion == "llm-d.ai/v1" and config.kind == "EndpointPickerConfig"
     assert "prefix-cache-scorer" in [p.type for p in config.plugins]
     assert "load-aware-scorer" in [p.type for p in config.plugins]

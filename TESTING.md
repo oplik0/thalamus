@@ -8,29 +8,22 @@ Install the tool versions declared in `mise.toml`, then run the workspace checks
 
 ```sh
 mise install
-mise exec -- cargo fmt --all -- --check
-mise exec -- cargo build --workspace --all-targets --all-features
-mise exec -- sh -c '
-  set -eu
-  kcl="$(mise which kcl)"
-  python="$(python3 -c "import os,sys; print(os.path.realpath(sys.executable))")"
-  PATH="$(dirname "$kcl"):$(dirname "$python"):$PATH" cargo test --workspace --all-features
-'
+mise run fmt:check
+mise run build
+mise run test
 ```
 
-Equivalently, `mise run fmt:check`, `mise run build` and `mise run test` use those commands. Database-backed SQLx tests require `DATABASE_URL` for a disposable PostgreSQL instance whose user can create test databases. The default test run excludes Rust tests marked `#[ignore]`.
+Database-backed SQLx tests require `DATABASE_URL` for a disposable PostgreSQL instance whose user can create test databases. The default test run excludes Rust tests marked `#[ignore]`.
 
-The real Git catalog publication regression in `thalamus-gitops` requires Python 3 and the actual pinned KCL 0.13.2 executable on `PATH`; it must not silently pass without KCL. Integrated Rust publication tests and the server/worker renderer run with a sanitized environment and isolated `HOME`, so executable shims that depend on the caller's `HOME` or checkout are insufficient. The command above resolves `mise which kcl` and Python's `sys.executable` in the repository, then prepends their executable directories. For example, run the real publication test directly:
+On memory-constrained nodes, run the integrated checks with serial compilation and without debug symbols:
 
 ```sh
-mise exec -- sh -c '
-  set -eu
-  kcl="$(mise which kcl)"
-  python="$(python3 -c "import os,sys; print(os.path.realpath(sys.executable))")"
-  PATH="$(dirname "$kcl"):$(dirname "$python"):$PATH" \
-    cargo test -p thalamus-gitops real_catalog_publication_commits_preview_and_refreshes_with_a_lease
-'
+CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 mise run ci
 ```
+
+These settings do not disable tests, Cargo features or debug assertions. The integrated task also checks the UI, catalog publication and KCL recipes.
+
+The real Git catalog publication regression in `thalamus-gitops` requires Python 3 and the actual pinned KCL 0.13.2 executable; it must not silently pass without KCL. Integrated Rust publication tests and the server/worker renderer run with a sanitized environment and isolated `HOME`, so executable shims that depend on the caller's `HOME` or checkout are insufficient. `mise run test` and `mise run ci` resolve the actual executables in the repository, place only `kcl` and `python3` symlinks in a private temporary directory at the front of `PATH`, and remove that directory on exit. This preserves the ordering of other mise-selected tools. `mise run test` includes the real publication regression.
 
 GitHub CI installs Python and pinned KCL and places a symlink to the actual KCL binary in a runner temporary directory on `PATH` before running Rust tests.
 

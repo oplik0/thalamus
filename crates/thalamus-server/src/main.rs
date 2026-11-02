@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|config| config.artifacts())
         .transpose()?;
     let kube = if config.runtime.is_some() || config.debug.is_some() {
-        Some(kube::Client::try_default().await?)
+        Some(thalamus_k8s::default_client().await?)
     } else {
         None
     };

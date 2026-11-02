@@ -293,6 +293,21 @@ impl LiveObserver {
         self.list(Some(namespace), "", "v1", "Pod", "pods").await
     }
 
+    /// Read the EndpointSlices independently of Service and Pod desired state.
+    pub async fn list_endpoint_slices(&self, namespace: &str) -> Result<Vec<Value>> {
+        if !dns_label(namespace) {
+            return Err(invalid("invalid EndpointSlice namespace"));
+        }
+        self.list(
+            Some(namespace),
+            "discovery.k8s.io",
+            "v1",
+            "EndpointSlice",
+            "endpointslices",
+        )
+        .await
+    }
+
     /// Project only immutable Secret metadata; never retain Secret values.
     async fn get_secret_metadata(&self, namespace: &str, name: &str) -> Result<Value> {
         if !dns_label(namespace) || !dns_subdomain(name) {

@@ -111,7 +111,7 @@ scheduler = lambda namespace: str, deployment: str -> any {
                 "--pool-name", "${deployment}-inference-pool",
                 "--pool-namespace", namespace,
                 "--zap-encoder", "json",
-                "--grpc-port", "9002",
+                "--grpc-port=9002",
                 "--grpc-health-port", "9003",
                 "--secure-serving=false",
                 "--metrics-endpoint-auth=false",

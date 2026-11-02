@@ -20,6 +20,9 @@ use crate::{
     AppState,
 };
 
+#[path = "service_status_pool.rs"]
+mod pool;
+
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn cell(
@@ -791,6 +794,39 @@ async fn deployment_observation(
             )
         };
     }
+    // Observe the pool independently of workload readiness once the Flux
+    // revision is established. A known failure remains decisive, followed by
+    // stale and unknown observations, just as for deployment aggregation.
+    if applied.state == StatusValue::Yes {
+        let pool = pool::observe(
+            &pool::Observation {
+                observer,
+                config,
+                service,
+                deployment,
+                serving: &serving,
+                selector: service_selector.as_ref(),
+                pods: pods.as_deref(),
+                kustomization: kustomization.as_ref(),
+                helm_owner: helm_owner.as_ref(),
+            },
+            revision,
+        )
+        .await;
+        let decisive = [StatusValue::No, StatusValue::Stale, StatusValue::Unknown]
+            .into_iter()
+            .find(|state| running.state == *state || pool.state == *state);
+        running = match decisive {
+            Some(state) if running.state == state => running,
+            Some(_) => pool,
+            None => cell(
+                StatusValue::Yes,
+                Some(revision),
+                running.observed_at.min(pool.observed_at),
+                "serving replicas, inference pool and endpoint picker are ready",
+            ),
+        };
+    }
     (applied, running)
 }
 
@@ -1233,6 +1269,10 @@ pub(crate) async fn collect(
 }
 
 #[cfg(test)]
+#[path = "service_status_pool_tests.rs"]
+mod pool_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -1446,8 +1486,8 @@ mod tests {
     }
 
     #[test]
-    fn independent_upstream_and_durable_fixtures_fill_all_five_cells() {
-        let (source, kustomization, serving, selector, pods) = resources();
+    fn independent_upstream_and_durable_fixtures_do_not_infer_pool_readiness() {
+        let (source, kustomization, _, _, _) = resources();
         let target = target();
         let validation_run = run(RunKind::Validation);
         let mut benchmark_run = run(RunKind::Benchmark);
@@ -1462,14 +1502,7 @@ mod tests {
                 at(),
             ),
             applied: flux_applied(COMMIT, &source, &kustomization, None, at()),
-            running: running_from_pods(
-                COMMIT,
-                &deployment(),
-                &serving,
-                Some(&selector),
-                Some(&pods),
-                at(),
-            ),
+            running: unknown(Some(COMMIT), "inference pool and picker are not observed"),
             functional: result_status(
                 &validation_run,
                 &target,
@@ -1490,11 +1523,12 @@ mod tests {
             ),
         };
         let view = serde_json::to_value(status).unwrap();
-        for column in ["accepted", "applied", "running", "functional", "measured"] {
+        for column in ["accepted", "applied", "functional", "measured"] {
             assert_eq!(view[column]["state"], "true", "{column}");
             assert_eq!(view[column]["revision"], COMMIT);
             assert!(!view[column]["observed_at"].is_null());
         }
+        assert_eq!(view["running"]["state"], "unknown");
     }
 
     #[test]
