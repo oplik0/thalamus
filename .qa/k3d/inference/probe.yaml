@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qa-flux-revision
+  namespace: thalamus-inference
+data:
+  generation: '1'
+  expectedPriority: '10001'
