@@ -5,4 +5,5 @@ metadata:
   namespace: thalamus-inference
 data:
   generation: '2'
-  expectedPriority: '10002'
+  expectedPriority: '10001'
+  priorityGeneration: '2'

@@ -2,6 +2,8 @@ apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
   name: qa-flux-priority
-value: 10002
+  annotations:
+    thalamus.dev/qa-generation: '2'
+value: 10001
 globalDefault: false
 preemptionPolicy: Never
