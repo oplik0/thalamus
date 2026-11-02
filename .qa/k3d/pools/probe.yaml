@@ -2,6 +2,6 @@ apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
   name: qa-flux-priority
-value: 10001
+value: 10002
 globalDefault: false
 preemptionPolicy: Never
