@@ -108,6 +108,8 @@ python3 scripts/inference-perf/simulator.py --adapter-image thalamus-inference-p
 python3 -m unittest discover -s scripts/inference-perf -p 'test_*.py'
 ```
 
+Python's generated `__pycache__/` directories and `.pyc` files are ignored local execution caches; do not commit them.
+
 The output path must not already exist. This runs the real inference-perf adapter and llm-d-inference-sim Docker image; a local adapter image ID is identified as local, not as a pushed registry digest. Measurements describe the simulator, not GPU performance, a Kubernetes Job, gateway, live provenance or production readiness.
 
 No real cluster or previous deployment history is needed for these local checks. Live acceptance still requires explicitly approved infrastructure and independently collected evidence; fixtures are not evidence of deployed behavior.

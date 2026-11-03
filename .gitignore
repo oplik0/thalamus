@@ -7,6 +7,10 @@
 # direnv
 .direnv
 
+# Python bytecode
+__pycache__/
+*.pyc
+
 # pre-commit
 .pre-commit-config.yaml
 
