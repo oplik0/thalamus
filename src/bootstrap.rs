@@ -10,7 +10,8 @@ use crate::features::batch::BatchService;
 use crate::features::batch::infra::{SqlxBatchRepository, spawn_batch_worker};
 use crate::features::llm_proxy::ProxyService;
 use crate::features::mcp::infra::{
-    McpService, RmcpClientFactory, SqlxMcpServerRepository, SqlxMcpToolsetRepository,
+    McpOutboundPolicy, McpService, RmcpClientFactory, SqlxMcpServerRepository,
+    SqlxMcpToolsetRepository,
 };
 use crate::features::plugin::PluginManager;
 use crate::features::plugin::guardrail_bridge::GuardrailService;
@@ -339,9 +340,13 @@ pub async fn init_app_state(
         Arc::new(SqlxMcpServerRepository::new(db_pool.clone()));
     let mcp_toolset_repo: Arc<dyn crate::features::mcp::domain::McpToolsetRepository> =
         Arc::new(SqlxMcpToolsetRepository::new(db_pool.clone()));
-    let mcp_client_factory: Arc<dyn crate::features::mcp::domain::McpClientFactory> = Arc::new(
-        RmcpClientFactory::new(http_client.clone(), std::time::Duration::from_secs(30)),
-    );
+    let mcp_outbound_policy = McpOutboundPolicy::default()
+        .with_allowed_private_hosts(config.security.mcp_allowed_private_hosts.iter().cloned());
+    let mcp_client_factory: Arc<dyn crate::features::mcp::domain::McpClientFactory> =
+        Arc::new(RmcpClientFactory::with_outbound_policy(
+            std::time::Duration::from_secs(30),
+            mcp_outbound_policy,
+        ));
     let mcp_session_manager: Arc<dyn crate::features::mcp::domain::McpSessionManager> =
         Arc::new(crate::features::mcp::infra::PooledMcpSessionManager::new(
             mcp_client_factory.clone(),

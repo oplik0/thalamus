@@ -25,8 +25,8 @@ use std::sync::Once;
 use thalamus::features::backends::infra::{AdaptingBackendClient, InMemoryBackendRegistry};
 use thalamus::features::llm_proxy::domain::ProxyService;
 use thalamus::features::mcp::infra::{
-    McpService, PooledMcpSessionManager, RmcpClientFactory, SqlxMcpServerRepository,
-    SqlxMcpToolsetRepository,
+    McpOutboundPolicy, McpService, PooledMcpSessionManager, RmcpClientFactory,
+    SqlxMcpServerRepository, SqlxMcpToolsetRepository,
 };
 use thalamus::features::plugin::guardrail_bridge::GuardrailService;
 use thalamus::features::routing::infra::RouterService;
@@ -207,6 +207,7 @@ pub async fn init_test_state_legacy() -> thalamus::bootstrap::AppState {
             api_key_secret: "test_secret_key_must_be_at_least_32_bytes_long".to_string(),
             paseto_secret_key: "exactly_32_bytes_for_paseto_key!".to_string(),
             opaque_server_setup: "dev".to_string(),
+            mcp_allowed_private_hosts: Vec::new(),
         },
         plugins: None,
         mcp_servers: std::collections::HashMap::new(),
@@ -278,9 +279,11 @@ pub async fn init_test_state_legacy() -> thalamus::bootstrap::AppState {
         Arc::new(SqlxMcpServerRepository::new(pool.clone()));
     let mcp_toolset_repo: Arc<dyn thalamus::features::mcp::domain::McpToolsetRepository> =
         Arc::new(SqlxMcpToolsetRepository::new(pool.clone()));
-    let mcp_client_factory: Arc<dyn thalamus::features::mcp::domain::McpClientFactory> = Arc::new(
-        RmcpClientFactory::new(http_client.clone(), std::time::Duration::from_secs(30)),
-    );
+    let mcp_client_factory: Arc<dyn thalamus::features::mcp::domain::McpClientFactory> =
+        Arc::new(RmcpClientFactory::with_outbound_policy(
+            std::time::Duration::from_secs(30),
+            McpOutboundPolicy::default().with_private_networks(true),
+        ));
     let mcp_session_manager: Arc<dyn thalamus::features::mcp::domain::McpSessionManager> =
         Arc::new(PooledMcpSessionManager::new(
             mcp_client_factory.clone(),

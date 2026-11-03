@@ -15,7 +15,8 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Respond, ResponseTemplate};
 
 mod common;
-use common::{TestApiKeyBuilder, TestUserBuilder, init_test_state};
+use common::fixtures::{TestApiKeyBuilder, TestUserBuilder};
+use common::transactional::init_test_state;
 
 struct McpMockResponder;
 
@@ -53,6 +54,17 @@ impl Respond for McpMockResponder {
                                     "query": { "type": "string" }
                                 },
                                 "required": ["query"]
+                            }
+                        },
+                        {
+                            "name": "deletePlace",
+                            "description": "Delete a place",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "id": { "type": "string" }
+                                },
+                                "required": ["id"]
                             }
                         }
                     ]
@@ -169,6 +181,50 @@ async fn test_mcp_server_crud(pool: PgPool) {
 
     let body = common::http::extract_json(response).await;
     assert_eq!(body["alias"], "places_api");
+}
+
+#[sqlx::test]
+async fn test_runtime_stdio_registration_is_disabled(pool: PgPool) {
+    let state = init_test_state(pool.clone()).await;
+    let app = thalamus::bootstrap::build_router(state);
+    let user = TestUserBuilder::new()
+        .with_scope("mcp:admin")
+        .create(&pool)
+        .await;
+    let api_key = TestApiKeyBuilder::new()
+        .for_user(&user)
+        .with_scope("mcp:admin")
+        .create(&pool)
+        .await;
+
+    let request = build_request(
+        "POST",
+        "/admin/mcp/servers",
+        &api_key.key,
+        Some(json!({
+            "alias": "unsafe_stdio",
+            "transport": "stdio",
+            "command": "sh",
+            "args": ["-c", "id"],
+            "env": {"SECRET": "should-not-run"}
+        })),
+    );
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = common::http::extract_json(response).await;
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("stdio MCP registration is disabled")
+    );
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcp_servers WHERE alias = $1")
+        .bind("unsafe_stdio")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
 }
 
 #[sqlx::test]
@@ -306,6 +362,7 @@ async fn test_team_auto_toolset(pool: PgPool) {
 
     let body = common::http::extract_json(response).await;
     assert_eq!(body["toolset"]["slug"], "mcp");
+    assert_eq!(body["tools"].as_array().unwrap().len(), 2);
     assert_eq!(body["tools"][0]["name"], "places_api-getPlaces");
     assert_eq!(body["tools"][0]["server_alias"], "places_api");
 }
@@ -367,7 +424,7 @@ async fn test_streamable_http_gateway_with_rmcp_client(pool: PgPool) {
     .unwrap();
 
     let tools = client.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 1);
+    assert_eq!(tools.len(), 2);
     assert_eq!(tools[0].name, "places_api-getPlaces");
 
     let result = client
@@ -379,6 +436,114 @@ async fn test_streamable_http_gateway_with_rmcp_client(pool: PgPool) {
         .unwrap();
     let result = serde_json::to_value(result).unwrap();
     assert_eq!(result["content"][0]["text"], "Found 3 places");
+
+    client.cancel().await.unwrap();
+    shutdown.cancel();
+    server.await.unwrap();
+}
+
+#[sqlx::test]
+async fn test_named_toolset_is_an_mcp_endpoint(pool: PgPool) {
+    let upstream = start_mock_mcp_server().await;
+    let state = init_test_state(pool.clone()).await;
+    let app = thalamus::bootstrap::build_router(state);
+    let user = TestUserBuilder::new()
+        .with_scope("mcp:admin")
+        .with_scope("mcp:invoke")
+        .create(&pool)
+        .await;
+    let api_key = TestApiKeyBuilder::new()
+        .for_user(&user)
+        .with_scope("mcp:admin")
+        .with_scope("mcp:invoke")
+        .create(&pool)
+        .await;
+
+    let response = app
+        .clone()
+        .oneshot(build_request(
+            "POST",
+            "/admin/mcp/servers",
+            &api_key.key,
+            Some(json!({
+                "alias": "places_api",
+                "transport": "http",
+                "url": format!("{}/mcp", upstream.uri()),
+                "allowed_scopes": ["mcp:invoke"]
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let server_id = common::http::extract_json(response).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let response = app
+        .clone()
+        .oneshot(build_request(
+            "POST",
+            "/v1/mcp/toolset",
+            &api_key.key,
+            Some(json!({"name": "Read only", "slug": "read-only"})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let toolset_id = common::http::extract_json(response).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let response = app
+        .clone()
+        .oneshot(build_request(
+            "POST",
+            &format!("/v1/mcp/toolset/{toolset_id}/items"),
+            &api_key.key,
+            Some(json!({"server_id": server_id, "tool_name": "getPlaces"})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let shutdown = CancellationToken::new();
+    let server_shutdown = shutdown.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move { server_shutdown.cancelled().await })
+            .await
+            .unwrap();
+    });
+
+    let mut config = StreamableHttpClientTransportConfig::with_uri(format!(
+        "http://{address}/mcp/toolsets/read-only"
+    ))
+    .auth_header(api_key.key.clone());
+    config.allow_stateless = false;
+    let client = ClientInfo::new(
+        ClientCapabilities::default(),
+        Implementation::new("thalamus-toolset-test-client", "1.0.0"),
+    )
+    .serve(StreamableHttpClientTransport::from_config(config))
+    .await
+    .unwrap();
+
+    let tools = client.list_all_tools().await.unwrap();
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].name, "places_api-getPlaces");
+    assert!(
+        client
+            .call_tool(
+                CallToolRequestParams::new("places_api-deletePlace")
+                    .with_arguments(serde_json::from_value(json!({"id": "123"})).unwrap()),
+            )
+            .await
+            .is_err()
+    );
 
     client.cancel().await.unwrap();
     shutdown.cancel();

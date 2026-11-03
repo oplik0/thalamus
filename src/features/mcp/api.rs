@@ -3,7 +3,8 @@
 use crate::bootstrap::AppState;
 use crate::error::{Error, Result};
 use crate::features::mcp::domain::{
-    McpServerCreate, McpServerUpdate, McpToolContent, McpToolsetCreate, validate_alias,
+    McpServerCreate, McpServerUpdate, McpSessionIdentity, McpToolContent, McpToolsetCreate,
+    validate_alias, validate_mcp_http_url,
 };
 use crate::features::mcp::dto::{
     AddToolsetItemRequest, CallMcpToolRequest, CallMcpToolResponse, CreateMcpServerRequest,
@@ -31,6 +32,7 @@ use rmcp::transport::{
 };
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -38,7 +40,8 @@ use uuid::Uuid;
 pub fn router(state: AppState) -> Router<AppState> {
     let gateway_service = mcp_gateway_service(state.mcp_service.clone());
     let gateway_routes = Router::new()
-        .nest_service("/mcp", gateway_service)
+        .route_service("/mcp", gateway_service.clone())
+        .route_service("/mcp/toolsets/{slug}", gateway_service)
         .layer(middleware::from_fn_with_state(state, mcp_gateway_auth));
 
     Router::new()
@@ -270,7 +273,10 @@ async fn list_server_tools(
     ensure_server_access(&auth, &server)?;
     ensure_invoke_scope(&auth, &server)?;
 
-    let tools = state.mcp_service.list_tools_for_server(&server).await?;
+    let tools = state
+        .mcp_service
+        .list_tools_for_server(&server, mcp_session_identity(&auth))
+        .await?;
 
     Ok(Json(ListMcpToolsResponse {
         server_id: server.alias,
@@ -304,7 +310,10 @@ async fn rest_list_tools(
     ensure_server_access(&auth, &server)?;
     ensure_invoke_scope(&auth, &server)?;
 
-    let tools = state.mcp_service.list_tools_for_server(&server).await?;
+    let tools = state
+        .mcp_service
+        .list_tools_for_server(&server, mcp_session_identity(&auth))
+        .await?;
 
     Ok(Json(ListMcpToolsResponse {
         server_id: server.alias,
@@ -339,7 +348,12 @@ async fn rest_call_tool(
 
     let result = state
         .mcp_service
-        .call_tool(&server, &tool_name, req.arguments)
+        .call_tool(
+            &server,
+            mcp_session_identity(&auth),
+            &tool_name,
+            req.arguments,
+        )
         .await?;
 
     Ok(Json(CallMcpToolResponse {
@@ -411,7 +425,7 @@ async fn get_toolset(
     ensure_toolset_access(&auth, &toolset)?;
 
     let items = state.mcp_service.toolset_repo.list_items(id).await?;
-    let items = resolve_toolset_items(&state, items).await?;
+    let items = resolve_toolset_items(&state, toolset.team_id, items).await?;
 
     Ok(Json(McpToolsetDetailResponse {
         toolset: McpToolsetResponse::from(toolset),
@@ -462,6 +476,34 @@ async fn add_toolset_item(
         .ok_or_else(|| Error::NotFound(format!("Toolset not found: {id}")))?;
 
     ensure_toolset_access(&auth, &toolset)?;
+
+    let server = state
+        .mcp_service
+        .server_repo
+        .get_by_id(req.server_id)
+        .await?
+        .ok_or_else(|| Error::NotFound(format!("MCP server not found: {}", req.server_id)))?;
+    if server
+        .team_id
+        .is_some_and(|server_team_id| server_team_id != toolset.team_id)
+    {
+        return Err(Error::Authorization(
+            "Cannot add another team's MCP server to this toolset".to_string(),
+        ));
+    }
+    if let Some(tool_name) = req.tool_name.as_deref() {
+        ensure_invoke_scope(&auth, &server)?;
+        let tools = state
+            .mcp_service
+            .list_tools_for_server(&server, mcp_session_identity(&auth))
+            .await?;
+        if !tools.iter().any(|tool| tool.name == tool_name) {
+            return Err(Error::NotFound(format!(
+                "MCP tool not found on server '{}': {tool_name}",
+                server.alias
+            )));
+        }
+    }
 
     state
         .mcp_service
@@ -524,7 +566,7 @@ async fn get_team_mcp_toolset(
 
     let tools = state
         .mcp_service
-        .resolve_toolset_tools(team.id, "mcp")
+        .resolve_toolset_tools(team.id, mcp_session_identity(&auth), "mcp")
         .await?;
 
     Ok(Json(McpToolsetToolsResponse {
@@ -553,23 +595,21 @@ fn resolve_team_scope(auth: &Auth, query_team_id: Option<Uuid>) -> Result<(Optio
 fn validate_transport(
     transport: &crate::features::mcp::domain::McpTransport,
     url: Option<&str>,
-    command: Option<&str>,
+    _command: Option<&str>,
 ) -> Result<()> {
     use crate::features::mcp::domain::McpTransport;
     match transport {
         McpTransport::Http | McpTransport::Sse => {
-            if url.is_none() || url.unwrap().is_empty() {
-                return Err(Error::InvalidInput(
-                    "HTTP/SSE transport requires a non-empty URL".to_string(),
-                ));
-            }
+            let url = url.filter(|url| !url.is_empty()).ok_or_else(|| {
+                Error::InvalidInput("HTTP/SSE transport requires a non-empty URL".to_string())
+            })?;
+            validate_mcp_http_url(url)?;
         }
         McpTransport::Stdio => {
-            if command.is_none() || command.unwrap().is_empty() {
-                return Err(Error::InvalidInput(
-                    "stdio transport requires a non-empty command".to_string(),
-                ));
-            }
+            return Err(Error::InvalidInput(
+                "stdio MCP registration is disabled until process execution is containerized"
+                    .to_string(),
+            ));
         }
     }
     Ok(())
@@ -629,8 +669,16 @@ fn ensure_invoke_scope(
     ))
 }
 
+fn mcp_session_identity(auth: &Auth) -> McpSessionIdentity {
+    McpSessionIdentity {
+        tenant_id: auth.team_id,
+        principal_id: auth.user_id,
+    }
+}
+
 async fn resolve_toolset_items(
     state: &AppState,
+    team_id: Uuid,
     items: Vec<crate::features::mcp::domain::McpToolsetItem>,
 ) -> Result<Vec<McpToolsetItemResponse>> {
     let mut responses = Vec::with_capacity(items.len());
@@ -641,6 +689,12 @@ async fn resolve_toolset_items(
             .get_by_id(item.server_id)
             .await?
         {
+            if server
+                .team_id
+                .is_some_and(|server_team_id| server_team_id != team_id)
+            {
+                continue;
+            }
             responses.push(McpToolsetItemResponse {
                 server_id: item.server_id,
                 server_alias: server.alias,
@@ -663,9 +717,94 @@ struct ThalamusMcpGateway {
     mcp_service: Arc<crate::features::mcp::infra::McpService>,
 }
 
+#[derive(Debug, Clone)]
+enum McpGatewaySelection {
+    All,
+    Toolset(String),
+}
+
+struct GatewayServerAccess {
+    server: crate::features::mcp::domain::McpServer,
+    allowed_tools: Option<HashSet<String>>,
+}
+
+impl GatewayServerAccess {
+    fn allows_tool(&self, tool_name: &str) -> bool {
+        self.allowed_tools
+            .as_ref()
+            .is_none_or(|tools| tools.contains(tool_name))
+    }
+}
+
 impl ThalamusMcpGateway {
     fn new(mcp_service: Arc<crate::features::mcp::infra::McpService>) -> Self {
         Self { mcp_service }
+    }
+
+    async fn resolve_server_access(
+        &self,
+        auth: &Auth,
+        selection: McpGatewaySelection,
+    ) -> Result<Vec<GatewayServerAccess>> {
+        let servers = self
+            .mcp_service
+            .server_repo
+            .list(Some(auth.team_id), true)
+            .await?;
+
+        let McpGatewaySelection::Toolset(slug) = selection else {
+            return Ok(servers
+                .into_iter()
+                .map(|server| GatewayServerAccess {
+                    server,
+                    allowed_tools: None,
+                })
+                .collect());
+        };
+
+        let toolset = self
+            .mcp_service
+            .toolset_repo
+            .get_by_team_slug(auth.team_id, &slug)
+            .await?
+            .ok_or_else(|| Error::NotFound(format!("Toolset not found: {slug}")))?;
+        let toolset = if toolset.is_auto {
+            self.mcp_service
+                .toolset_repo
+                .sync_team_auto_toolset(auth.team_id)
+                .await?
+        } else {
+            toolset
+        };
+
+        let mut filters: HashMap<Uuid, Option<HashSet<String>>> = HashMap::new();
+        for item in self.mcp_service.toolset_repo.list_items(toolset.id).await? {
+            match (filters.get_mut(&item.server_id), item.tool_name) {
+                (Some(filter), None) => *filter = None,
+                (Some(Some(tools)), Some(tool)) => {
+                    tools.insert(tool);
+                }
+                (Some(None), Some(_)) => {}
+                (None, None) => {
+                    filters.insert(item.server_id, None);
+                }
+                (None, Some(tool)) => {
+                    filters.insert(item.server_id, Some(HashSet::from([tool])));
+                }
+            }
+        }
+
+        Ok(servers
+            .into_iter()
+            .filter_map(|server| {
+                filters
+                    .remove(&server.id)
+                    .map(|allowed_tools| GatewayServerAccess {
+                        server,
+                        allowed_tools,
+                    })
+            })
+            .collect())
     }
 }
 
@@ -683,16 +822,15 @@ impl ServerHandler for ThalamusMcpGateway {
     ) -> std::result::Result<ListToolsResult, ErrorData> {
         let auth = mcp_auth_from_context(&context)?;
         require_scope(&auth, "mcp:invoke").map_err(|err| mcp_error_from_app(&err))?;
-
+        let selection = mcp_selection_from_context(&context)?;
         let servers = self
-            .mcp_service
-            .server_repo
-            .list(Some(auth.team_id), true)
+            .resolve_server_access(&auth, selection)
             .await
             .map_err(|err| mcp_error_from_app(&err))?;
 
         let mut all_tools = Vec::new();
-        for server in &servers {
+        for access in &servers {
+            let server = &access.server;
             if !server.is_enabled
                 || (!server.allowed_scopes.is_empty()
                     && !server
@@ -703,9 +841,16 @@ impl ServerHandler for ThalamusMcpGateway {
                 continue;
             }
 
-            match self.mcp_service.list_tools_for_server(server).await {
+            match self
+                .mcp_service
+                .list_tools_for_server(server, mcp_session_identity(&auth))
+                .await
+            {
                 Ok(tools) => {
                     for tool in tools {
+                        if !access.allows_tool(&tool.name) {
+                            continue;
+                        }
                         let Value::Object(input_schema) = tool.input_schema else {
                             tracing::warn!(
                                 server_id = %server.id,
@@ -749,45 +894,47 @@ impl ServerHandler for ThalamusMcpGateway {
     ) -> std::result::Result<CallToolResult, ErrorData> {
         let auth = mcp_auth_from_context(&context)?;
         require_scope(&auth, "mcp:invoke").map_err(|err| mcp_error_from_app(&err))?;
-
+        let selection = mcp_selection_from_context(&context)?;
         let tool_name = request.name.as_ref();
         let servers = self
-            .mcp_service
-            .server_repo
-            .list(Some(auth.team_id), true)
+            .resolve_server_access(&auth, selection)
             .await
             .map_err(|err| mcp_error_from_app(&err))?;
 
         // Use the longest matching alias: `api-v2-tool` belongs to `api-v2`,
         // not `api`, if both aliases exist.
-        let mut best_match: Option<(&crate::features::mcp::domain::McpServer, &str)> = None;
-        for server in &servers {
+        let mut best_match: Option<(&GatewayServerAccess, &str)> = None;
+        for access in &servers {
+            let server = &access.server;
             if !server.is_enabled {
                 continue;
             }
             if let Some(stripped) =
                 crate::features::mcp::domain::strip_alias_prefix(&server.alias, tool_name, "-")
+                && access.allows_tool(stripped)
             {
                 let is_longer = best_match
-                    .is_none_or(|(previous, _)| server.alias.len() > previous.alias.len());
+                    .is_none_or(|(previous, _)| server.alias.len() > previous.server.alias.len());
                 if is_longer {
-                    best_match = Some((server, stripped));
+                    best_match = Some((access, stripped));
                 }
             }
         }
 
-        let Some((server, stripped)) = best_match else {
+        let Some((access, stripped)) = best_match else {
             return Err(ErrorData::resource_not_found(
                 format!("No MCP server found for tool: {tool_name}"),
                 None,
             ));
         };
+        let server = &access.server;
         ensure_invoke_scope(&auth, server).map_err(|err| mcp_error_from_app(&err))?;
 
         let result = match self
             .mcp_service
             .call_tool(
                 server,
+                mcp_session_identity(&auth),
                 stripped,
                 Value::Object(request.arguments.unwrap_or_default()),
             )
@@ -839,8 +986,30 @@ async fn mcp_gateway_auth(
 ) -> Result<Response> {
     let (mut parts, body) = request.into_parts();
     let ApiKeyAuth(auth) = ApiKeyAuth::from_request_parts(&mut parts, &state).await?;
+    let selection = match parts.uri.path().strip_prefix("/mcp/toolsets/") {
+        Some(slug) => {
+            validate_alias(slug)?;
+            McpGatewaySelection::Toolset(slug.to_string())
+        }
+        None => McpGatewaySelection::All,
+    };
     parts.extensions.insert(auth);
+    parts.extensions.insert(selection);
     Ok(next.run(Request::from_parts(parts, body)).await)
+}
+
+fn mcp_selection_from_context(
+    context: &RequestContext<RoleServer>,
+) -> std::result::Result<McpGatewaySelection, ErrorData> {
+    let parts = context
+        .extensions
+        .get::<axum::http::request::Parts>()
+        .ok_or_else(|| ErrorData::internal_error("MCP request has no HTTP context", None))?;
+    parts
+        .extensions
+        .get::<McpGatewaySelection>()
+        .cloned()
+        .ok_or_else(|| ErrorData::internal_error("MCP request has no tool selection", None))
 }
 
 fn mcp_auth_from_context(

@@ -11,26 +11,27 @@ use crate::bootstrap::parse_duration;
 use crate::error::{Error, Result};
 use crate::features::mcp::domain::{
     McpAuthConfig, McpClient, McpClientFactory, McpServer, McpServerCreate, McpServerInfo,
-    McpServerRepository, McpServerUpdate, McpSession, McpSessionManager, McpTool,
-    McpToolCallResult, McpToolContent, McpToolset, McpToolsetCreate, McpToolsetItem,
-    McpToolsetRepository, McpTransport, ToolsetToolEntry,
+    McpServerRepository, McpServerUpdate, McpSession, McpSessionIdentity, McpSessionKey,
+    McpSessionManager, McpTool, McpToolCallResult, McpToolContent, McpToolset, McpToolsetCreate,
+    McpToolsetItem, McpToolsetRepository, McpTransport, ToolsetToolEntry, validate_mcp_http_url,
 };
 use async_trait::async_trait;
 use dashmap::DashMap;
-use reqwest::{Client, header};
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+use reqwest::{Client, Url, header};
 use rmcp::model::{
     CallToolRequestParams, ClientCapabilities, ClientInfo, ClientRequest, Implementation,
     ListToolsRequest, PaginatedRequestParams, ServerResult,
 };
 use rmcp::service::{PeerRequestOptions, RunningService};
 use rmcp::transport::{
-    ConfigureCommandExt, StreamableHttpClientTransport, TokioChildProcess,
-    streamable_http_client::StreamableHttpClientTransportConfig,
+    StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
 };
 use rmcp::{RoleClient, ServiceExt};
 use serde_json::Value;
 use sqlx::PgPool;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -637,15 +638,22 @@ fn rmcp_content_to_domain(content: rmcp::model::ContentBlock) -> Result<McpToolC
 /// Factory for fully initialized rmcp clients.
 #[derive(Debug, Clone)]
 pub struct RmcpClientFactory {
-    client: Client,
     default_timeout: Duration,
+    outbound_policy: McpOutboundPolicy,
 }
 
 impl RmcpClientFactory {
-    pub fn new(client: Client, default_timeout: Duration) -> Self {
+    pub fn new(default_timeout: Duration) -> Self {
+        Self::with_outbound_policy(default_timeout, McpOutboundPolicy::default())
+    }
+
+    pub fn with_outbound_policy(
+        default_timeout: Duration,
+        outbound_policy: McpOutboundPolicy,
+    ) -> Self {
         Self {
-            client,
             default_timeout,
+            outbound_policy,
         }
     }
 
@@ -655,6 +663,7 @@ impl RmcpClientFactory {
         url: String,
         timeout: Duration,
     ) -> Result<RmcpClient> {
+        validate_outbound_url(&url, &self.outbound_policy)?;
         let (default_headers, config) = streamable_http_config(server, url)?;
         let transport = StreamableHttpClientTransport::with_client(
             self.client_with_default_headers(default_headers)?,
@@ -669,39 +678,188 @@ impl RmcpClientFactory {
     }
 
     fn client_with_default_headers(&self, headers: header::HeaderMap) -> Result<Client> {
-        if headers.is_empty() {
-            return Ok(self.client.clone());
-        }
-
-        // reqwest does not allow extending an existing client's default
-        // headers. Rebuild the small per-session client only when a raw
-        // Authorization header is required; preserve the application's normal
-        // connection-pool settings.
-        Client::builder()
+        let mut builder = Client::builder()
             .pool_idle_timeout(Some(Duration::from_secs(90)))
             .pool_max_idle_per_host(32)
-            .default_headers(headers)
-            .build()
-            .map_err(Error::from)
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .connect_timeout(self.default_timeout.min(Duration::from_secs(10)))
+            .timeout(self.default_timeout)
+            .dns_resolver(SafeDnsResolver::new(self.outbound_policy.clone()));
+
+        if !headers.is_empty() {
+            builder = builder.default_headers(headers);
+        }
+
+        builder.build().map_err(Error::from)
     }
 
     async fn connect_stdio(&self, server: &McpServer, timeout: Duration) -> Result<RmcpClient> {
-        let command = server.command.as_ref().ok_or_else(|| {
-            Error::InvalidInput("stdio MCP server requires a command".to_string())
-        })?;
-
-        let transport =
-            TokioChildProcess::new(tokio::process::Command::new(command).configure(|command| {
-                command.args(&server.args).envs(&server.env);
-            }))
-            .map_err(|err| Error::Backend(format!("Failed to start MCP server process: {err}")))?;
-        let connection = mcp_client_info()
-            .serve(transport)
-            .await
-            .map_err(|err| Error::Backend(format!("MCP initialization failed: {err}")))?;
-
-        Ok(RmcpClient::new(connection, timeout))
+        let _ = (server, timeout);
+        Err(Error::InvalidInput(
+            "stdio MCP execution is disabled until a containerized process runner is configured"
+                .to_string(),
+        ))
     }
+}
+
+/// Network policy applied to every outbound MCP HTTP connection.
+#[derive(Debug, Clone, Default)]
+pub struct McpOutboundPolicy {
+    allow_private_networks: bool,
+    allowed_private_hosts: HashSet<String>,
+}
+
+impl McpOutboundPolicy {
+    /// Allow private and special-use addresses for controlled test or
+    /// development environments. Production uses the fail-closed default.
+    #[must_use]
+    pub fn with_private_networks(mut self, allow: bool) -> Self {
+        self.allow_private_networks = allow;
+        self
+    }
+
+    #[must_use]
+    pub fn with_allowed_private_hosts(mut self, hosts: impl IntoIterator<Item = String>) -> Self {
+        self.allowed_private_hosts
+            .extend(hosts.into_iter().map(|host| normalize_policy_host(&host)));
+        self
+    }
+
+    fn allows_destination(&self, host: &str, ip: IpAddr) -> bool {
+        self.allow_private_networks
+            || self
+                .allowed_private_hosts
+                .contains(&normalize_policy_host(host))
+            || is_public_ip(ip)
+    }
+}
+
+fn normalize_policy_host(host: &str) -> String {
+    host.trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
+}
+
+#[derive(Debug, Clone)]
+struct SafeDnsResolver {
+    policy: McpOutboundPolicy,
+}
+
+impl SafeDnsResolver {
+    fn new(policy: McpOutboundPolicy) -> Self {
+        Self { policy }
+    }
+}
+
+impl Resolve for SafeDnsResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let host = name.as_str().to_string();
+        let policy = self.policy.clone();
+        Box::pin(async move {
+            let resolved = tokio::net::lookup_host((host.as_str(), 0))
+                .await
+                .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { Box::new(err) })?
+                .collect::<Vec<_>>();
+            let resolved = validate_resolved_addrs(&host, resolved, &policy)?;
+            Ok(Box::new(resolved.into_iter()) as Addrs)
+        })
+    }
+}
+
+fn validate_resolved_addrs(
+    host: &str,
+    resolved: Vec<std::net::SocketAddr>,
+    policy: &McpOutboundPolicy,
+) -> std::io::Result<Vec<std::net::SocketAddr>> {
+    if resolved.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "MCP host '{host}' did not resolve to any address"
+        )));
+    }
+
+    if let Some(blocked) = resolved
+        .iter()
+        .find(|addr| !policy.allows_destination(host, addr.ip()))
+    {
+        return Err(std::io::Error::other(format!(
+            "MCP host '{host}' resolved to blocked address {}",
+            blocked.ip()
+        )));
+    }
+
+    Ok(resolved)
+}
+
+fn validate_outbound_url(raw_url: &str, policy: &McpOutboundPolicy) -> Result<Url> {
+    let url = validate_mcp_http_url(raw_url)?;
+    let host = url.host().expect("validated MCP URL has a host");
+    match host {
+        url::Host::Ipv4(ip) => ensure_allowed_ip(&ip.to_string(), IpAddr::V4(ip), policy)?,
+        url::Host::Ipv6(ip) => ensure_allowed_ip(&ip.to_string(), IpAddr::V6(ip), policy)?,
+        url::Host::Domain(domain) => {
+            let domain = domain.trim_end_matches('.').to_ascii_lowercase();
+            if domain == "localhost" || domain.ends_with(".localhost") {
+                return Err(Error::InvalidInput(
+                    "MCP server URL resolves to a local host".to_string(),
+                ));
+            }
+        }
+    }
+
+    Ok(url)
+}
+
+fn ensure_allowed_ip(host: &str, ip: IpAddr, policy: &McpOutboundPolicy) -> Result<()> {
+    if policy.allows_destination(host, ip) {
+        Ok(())
+    } else {
+        Err(Error::InvalidInput(format!(
+            "MCP server URL uses blocked address {ip}"
+        )))
+    }
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => is_public_ipv4(ip),
+        IpAddr::V6(ip) => is_public_ipv6(ip),
+    }
+}
+
+fn is_public_ipv4(ip: Ipv4Addr) -> bool {
+    let [a, b, c, _] = ip.octets();
+    !matches!(
+        (a, b, c),
+        (0, _, _)
+            | (10, _, _)
+            | (100, 64..=127, _)
+            | (127, _, _)
+            | (169, 254, _)
+            | (172, 16..=31, _)
+            | (192, 0, 0)
+            | (192, 168, _)
+            | (192, 0, 2)
+            | (192, 88, 99)
+            | (198, 18..=19, _)
+            | (198, 51, 100)
+            | (203, 0, 113)
+            | (224..=255, _, _)
+    )
+}
+
+fn is_public_ipv6(ip: Ipv6Addr) -> bool {
+    if let Some(mapped) = ip.to_ipv4_mapped() {
+        return is_public_ipv4(mapped);
+    }
+
+    let segments = ip.segments();
+    let first = segments[0];
+    let special_2001 = first == 0x2001
+        && (matches!(segments[1], 0x0002 | 0x0db8) || (0x0010..=0x001f).contains(&segments[1]));
+    (first & 0xe000) == 0x2000 && !special_2001 && first != 0x2002
 }
 
 #[async_trait]
@@ -819,8 +977,8 @@ fn insert_mcp_header(
 
 /// A pooled MCP session manager backed by a DashMap.
 pub struct PooledMcpSessionManager {
-    sessions: DashMap<Uuid, Arc<McpSession>>,
-    connect_locks: DashMap<Uuid, Arc<Mutex<()>>>,
+    sessions: DashMap<McpSessionKey, Arc<McpSession>>,
+    connect_locks: DashMap<McpSessionKey, Arc<Mutex<()>>>,
     factory: Arc<dyn McpClientFactory>,
     ttl: Duration,
 }
@@ -848,13 +1006,19 @@ impl std::fmt::Debug for PooledMcpSessionManager {
 
 #[async_trait]
 impl McpSessionManager for PooledMcpSessionManager {
-    async fn get_or_connect(&self, server: &McpServer) -> Result<Arc<McpSession>> {
+    async fn get_or_connect(
+        &self,
+        server: &McpServer,
+        identity: McpSessionIdentity,
+    ) -> Result<Arc<McpSession>> {
+        let key = McpSessionKey::new(server.id, identity);
+
         // Evict expired sessions first.
         self.sessions
             .retain(|_, session| !session.is_evictable(self.ttl));
 
         // Check for existing session.
-        if let Some(existing) = self.sessions.get(&server.id) {
+        if let Some(existing) = self.sessions.get(&key) {
             existing.touch();
             return Ok(existing.clone());
         }
@@ -864,13 +1028,13 @@ impl McpSessionManager for PooledMcpSessionManager {
         // entry, leaving N-1 short-lived sessions and child processes behind.
         let connect_lock = self
             .connect_locks
-            .entry(server.id)
+            .entry(key)
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone();
         let _connect_guard = connect_lock.lock().await;
 
         // Another caller can have connected while this caller waited.
-        if let Some(existing) = self.sessions.get(&server.id) {
+        if let Some(existing) = self.sessions.get(&key) {
             existing.touch();
             return Ok(existing.clone());
         }
@@ -891,18 +1055,22 @@ impl McpSessionManager for PooledMcpSessionManager {
         })?;
 
         let now = Instant::now();
-        let session = Arc::new(McpSession::new(server.id, client, server_info, now));
+        let session = Arc::new(McpSession::new(key, client, server_info, now));
 
-        self.sessions.insert(server.id, session.clone());
+        self.sessions.insert(key, session.clone());
         Ok(session)
     }
 
     fn invalidate(&self, server_id: Uuid) {
-        self.sessions.remove(&server_id);
+        self.sessions.retain(|key, _| key.server_id != server_id);
+        self.connect_locks
+            .retain(|key, _| key.server_id != server_id);
     }
 
     fn evict(&self, server_id: Uuid) {
-        self.sessions.remove(&server_id);
+        self.sessions.retain(|key, _| key.server_id != server_id);
+        self.connect_locks
+            .retain(|key, _| key.server_id != server_id);
     }
 
     async fn health_check(&self, server: &McpServer) -> Result<bool> {
@@ -1098,8 +1266,15 @@ impl McpService {
     }
 
     /// List tools for a server, using a pooled session.
-    pub async fn list_tools_for_server(&self, server: &McpServer) -> Result<Vec<McpTool>> {
-        let session = self.session_manager.get_or_connect(server).await?;
+    pub async fn list_tools_for_server(
+        &self,
+        server: &McpServer,
+        identity: McpSessionIdentity,
+    ) -> Result<Vec<McpTool>> {
+        let session = self
+            .session_manager
+            .get_or_connect(server, identity)
+            .await?;
         let _lease = session.acquire();
         session.client.list_tools().await
     }
@@ -1108,10 +1283,14 @@ impl McpService {
     pub async fn call_tool(
         &self,
         server: &McpServer,
+        identity: McpSessionIdentity,
         tool_name: &str,
         arguments: Value,
     ) -> Result<McpToolCallResult> {
-        let session = self.session_manager.get_or_connect(server).await?;
+        let session = self
+            .session_manager
+            .get_or_connect(server, identity)
+            .await?;
         let _lease = session.acquire();
         session.client.call_tool(tool_name, arguments).await
     }
@@ -1120,6 +1299,7 @@ impl McpService {
     pub async fn resolve_toolset_tools(
         &self,
         team_id: Uuid,
+        identity: McpSessionIdentity,
         slug: &str,
     ) -> Result<Vec<ToolsetToolEntry>> {
         let toolset = self
@@ -1145,12 +1325,12 @@ impl McpService {
                 continue;
             };
 
-            let tools = self.list_tools_for_server(server).await?;
+            let tools = self.list_tools_for_server(server, identity).await?;
             for tool in tools {
-                if let Some(ref allowed) = item.tool_name {
-                    if &tool.name != allowed {
-                        continue;
-                    }
+                if let Some(ref allowed) = item.tool_name
+                    && &tool.name != allowed
+                {
+                    continue;
                 }
                 entries.push(ToolsetToolEntry {
                     server_id: server.id.to_string(),
@@ -1247,6 +1427,13 @@ mod tests {
         }
     }
 
+    fn test_identity() -> McpSessionIdentity {
+        McpSessionIdentity {
+            tenant_id: Uuid::new_v4(),
+            principal_id: Uuid::new_v4(),
+        }
+    }
+
     #[test]
     fn streamable_http_config_preserves_custom_and_raw_authorization_headers() {
         let mut server = test_server();
@@ -1280,6 +1467,91 @@ mod tests {
         );
     }
 
+    #[test]
+    fn outbound_policy_blocks_private_and_special_use_addresses() {
+        let policy = McpOutboundPolicy::default();
+        for url in [
+            "http://localhost/mcp",
+            "http://127.0.0.1/mcp",
+            "http://10.0.0.1/mcp",
+            "http://100.64.0.1/mcp",
+            "http://169.254.169.254/latest/meta-data",
+            "http://172.16.0.1/mcp",
+            "http://192.168.1.1/mcp",
+            "http://198.18.0.1/mcp",
+            "http://[::1]/mcp",
+            "http://[fc00::1]/mcp",
+            "http://[fe80::1]/mcp",
+            "http://[::ffff:127.0.0.1]/mcp",
+        ] {
+            assert!(
+                validate_outbound_url(url, &policy).is_err(),
+                "expected {url} to be blocked"
+            );
+        }
+    }
+
+    #[test]
+    fn outbound_policy_allows_public_addresses_and_test_override() {
+        let policy = McpOutboundPolicy::default();
+        assert!(validate_outbound_url("https://example.com/mcp", &policy).is_ok());
+        assert!(validate_outbound_url("http://93.184.216.34/mcp", &policy).is_ok());
+
+        let allowlisted = policy.with_allowed_private_hosts(["127.0.0.1".to_string()]);
+        assert!(validate_outbound_url("http://127.0.0.1:8080/mcp", &allowlisted).is_ok());
+        assert!(validate_outbound_url("http://127.0.0.2:8080/mcp", &allowlisted).is_err());
+    }
+
+    #[test]
+    fn dns_policy_rejects_mixed_public_and_private_answers() {
+        let resolved = vec![
+            "93.184.216.34:443".parse().unwrap(),
+            "127.0.0.1:443".parse().unwrap(),
+        ];
+        let result =
+            validate_resolved_addrs("rebind.example", resolved, &McpOutboundPolicy::default());
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn outbound_http_client_does_not_follow_redirects() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let target = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/private"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&target)
+            .await;
+
+        let redirector = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/redirect"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("Location", format!("{}/private", target.uri())),
+            )
+            .mount(&redirector)
+            .await;
+
+        let factory = RmcpClientFactory::with_outbound_policy(
+            Duration::from_secs(5),
+            McpOutboundPolicy::default().with_private_networks(true),
+        );
+        let client = factory
+            .client_with_default_headers(header::HeaderMap::new())
+            .unwrap();
+        let response = client
+            .get(format!("{}/redirect", redirector.uri()))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        assert!(target.received_requests().await.unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn concurrent_get_or_connect_creates_one_session() {
         let factory = Arc::new(CountingFactory::default());
@@ -1288,11 +1560,12 @@ mod tests {
             Duration::from_secs(60),
         ));
         let server = Arc::new(test_server());
+        let identity = test_identity();
 
         let sessions = futures::future::join_all((0..16).map(|_| {
             let manager = manager.clone();
             let server = server.clone();
-            async move { manager.get_or_connect(&server).await.unwrap() }
+            async move { manager.get_or_connect(&server, identity).await.unwrap() }
         }))
         .await;
 
@@ -1309,16 +1582,59 @@ mod tests {
         let factory = Arc::new(CountingFactory::default());
         let manager = PooledMcpSessionManager::new(factory.clone(), Duration::ZERO);
         let server = test_server();
+        let identity = test_identity();
 
-        let first = manager.get_or_connect(&server).await.unwrap();
+        let first = manager.get_or_connect(&server, identity).await.unwrap();
         let lease = first.acquire();
-        let while_active = manager.get_or_connect(&server).await.unwrap();
+        let while_active = manager.get_or_connect(&server, identity).await.unwrap();
         assert!(Arc::ptr_eq(&first, &while_active));
         assert_eq!(factory.creations.load(Ordering::SeqCst), 1);
 
         drop(lease);
-        let replacement = manager.get_or_connect(&server).await.unwrap();
+        let replacement = manager.get_or_connect(&server, identity).await.unwrap();
         assert!(!Arc::ptr_eq(&first, &replacement));
         assert_eq!(factory.creations.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn sessions_are_isolated_by_tenant_and_principal() {
+        let factory = Arc::new(CountingFactory::default());
+        let manager = PooledMcpSessionManager::new(factory.clone(), Duration::from_secs(60));
+        let server = test_server();
+        let first_identity = test_identity();
+        let second_principal = McpSessionIdentity {
+            tenant_id: first_identity.tenant_id,
+            principal_id: Uuid::new_v4(),
+        };
+        let second_tenant = McpSessionIdentity {
+            tenant_id: Uuid::new_v4(),
+            principal_id: first_identity.principal_id,
+        };
+
+        let first = manager
+            .get_or_connect(&server, first_identity)
+            .await
+            .unwrap();
+        let repeated = manager
+            .get_or_connect(&server, first_identity)
+            .await
+            .unwrap();
+        let other_principal = manager
+            .get_or_connect(&server, second_principal)
+            .await
+            .unwrap();
+        let other_tenant = manager
+            .get_or_connect(&server, second_tenant)
+            .await
+            .unwrap();
+
+        assert!(Arc::ptr_eq(&first, &repeated));
+        assert!(!Arc::ptr_eq(&first, &other_principal));
+        assert!(!Arc::ptr_eq(&first, &other_tenant));
+        assert_eq!(factory.creations.load(Ordering::SeqCst), 3);
+        assert_eq!(manager.session_count(), 3);
+
+        manager.evict(server.id);
+        assert_eq!(manager.session_count(), 0);
     }
 }

@@ -206,6 +206,7 @@ schema SecurityConfig:
     api_key_secret: str  # Secret for HMAC signing of API keys (min 32 bytes recommended)
     paseto_secret_key: str  # Secret key for PASETO token signing (must be exactly 32 bytes)
     opaque_server_setup: str  # OPAQUE server setup string; set to 'dev' for development only
+    mcp_allowed_private_hosts: [str] = []  # Exact MCP hosts permitted on private networks
 
     check:
         len(api_key_secret) > 0, "api_key_secret cannot be empty"

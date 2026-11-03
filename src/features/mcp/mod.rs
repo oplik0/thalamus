@@ -9,6 +9,6 @@ pub mod infra;
 
 pub use api::router;
 pub use infra::{
-    McpHealthMonitor, McpService, PooledMcpSessionManager, RmcpClientFactory,
+    McpHealthMonitor, McpOutboundPolicy, McpService, PooledMcpSessionManager, RmcpClientFactory,
     SqlxMcpServerRepository, SqlxMcpToolsetRepository,
 };

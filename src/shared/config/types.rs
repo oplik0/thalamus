@@ -281,6 +281,10 @@ pub struct SecurityConfig {
     pub api_key_secret: String,
     pub paseto_secret_key: String,
     pub opaque_server_setup: String,
+    /// Exact hostnames or IP literals allowed to resolve to private/special
+    /// addresses for outbound MCP connections.
+    #[serde(default)]
+    pub mcp_allowed_private_hosts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -369,19 +373,21 @@ pub enum McpTransport {
 }
 
 /// MCP server authentication configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum McpAuthConfig {
+    #[default]
     None,
-    BearerToken { token: String },
-    ApiKey { header: String, token: String },
-    Headers { headers: HashMap<String, String> },
-}
-
-impl Default for McpAuthConfig {
-    fn default() -> Self {
-        Self::None
-    }
+    BearerToken {
+        token: String,
+    },
+    ApiKey {
+        header: String,
+        token: String,
+    },
+    Headers {
+        headers: HashMap<String, String>,
+    },
 }
 
 /// MCP server configuration (static config file)

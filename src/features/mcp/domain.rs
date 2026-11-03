@@ -48,19 +48,21 @@ impl std::str::FromStr for McpTransport {
 }
 
 /// Authentication configuration for an MCP server.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum McpAuthConfig {
+    #[default]
     None,
-    BearerToken { token: String },
-    ApiKey { header: String, token: String },
-    Headers { headers: HashMap<String, String> },
-}
-
-impl Default for McpAuthConfig {
-    fn default() -> Self {
-        Self::None
-    }
+    BearerToken {
+        token: String,
+    },
+    ApiKey {
+        header: String,
+        token: String,
+    },
+    Headers {
+        headers: HashMap<String, String>,
+    },
 }
 
 /// Persistent MCP server entity.
@@ -316,9 +318,35 @@ pub trait McpToolsetRepository: Send + Sync {
 // Session management
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Identity boundary for an upstream MCP session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct McpSessionIdentity {
+    pub tenant_id: Uuid,
+    pub principal_id: Uuid,
+}
+
+/// Cache key for an upstream MCP session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct McpSessionKey {
+    pub server_id: Uuid,
+    pub tenant_id: Uuid,
+    pub principal_id: Uuid,
+}
+
+impl McpSessionKey {
+    #[must_use]
+    pub fn new(server_id: Uuid, identity: McpSessionIdentity) -> Self {
+        Self {
+            server_id,
+            tenant_id: identity.tenant_id,
+            principal_id: identity.principal_id,
+        }
+    }
+}
+
 /// An active, pooled session to an MCP server.
 pub struct McpSession {
-    pub server_id: Uuid,
+    pub key: McpSessionKey,
     pub client: Box<dyn McpClient>,
     pub server_info: McpServerInfo,
     pub connected_at: Instant,
@@ -330,14 +358,14 @@ impl McpSession {
     /// Create a new session with `last_used` set to now.
     #[must_use]
     pub fn new(
-        server_id: Uuid,
+        key: McpSessionKey,
         client: Box<dyn McpClient>,
         server_info: McpServerInfo,
         connected_at: Instant,
     ) -> Self {
         let now_ms = now_millis(connected_at);
         Self {
-            server_id,
+            key,
             client,
             server_info,
             connected_at,
@@ -399,7 +427,7 @@ fn now_millis(t: Instant) -> u64 {
 impl std::fmt::Debug for McpSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("McpSession")
-            .field("server_id", &self.server_id)
+            .field("key", &self.key)
             .field("client", &"<dyn McpClient>")
             .field("server_info", &self.server_info)
             .field("connected_at", &self.connected_at)
@@ -416,7 +444,11 @@ impl std::fmt::Debug for McpSession {
 #[async_trait]
 pub trait McpSessionManager: Send + Sync {
     /// Get or create a session for the given server.
-    async fn get_or_connect(&self, server: &McpServer) -> Result<Arc<McpSession>>;
+    async fn get_or_connect(
+        &self,
+        server: &McpServer,
+        identity: McpSessionIdentity,
+    ) -> Result<Arc<McpSession>>;
 
     /// Invalidate and remove a session (e.g., after a health check failure).
     fn invalidate(&self, server_id: Uuid);
@@ -458,6 +490,31 @@ pub fn validate_alias(alias: &str) -> Result<()> {
     Ok(())
 }
 
+/// Validate the non-network parts of an outbound MCP URL. Address resolution
+/// is validated again by the transport immediately before connecting.
+pub fn validate_mcp_http_url(raw_url: &str) -> Result<url::Url> {
+    let url = url::Url::parse(raw_url)
+        .map_err(|err| crate::Error::InvalidInput(format!("Invalid MCP server URL: {err}")))?;
+
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(crate::Error::InvalidInput(
+            "MCP server URL must use http or https".to_string(),
+        ));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(crate::Error::InvalidInput(
+            "MCP server URL must not contain user credentials".to_string(),
+        ));
+    }
+    if url.host().is_none() {
+        return Err(crate::Error::InvalidInput(
+            "MCP server URL must include a host".to_string(),
+        ));
+    }
+
+    Ok(url)
+}
+
 /// Build a prefixed tool name for a server alias.
 pub fn prefixed_tool_name(alias: &str, tool_name: &str, separator: &str) -> String {
     format!("{alias}{separator}{tool_name}")
@@ -496,5 +553,15 @@ mod tests {
             Some("getPlaces")
         );
         assert_eq!(strip_alias_prefix("places", "getPlaces", "-"), None);
+    }
+
+    #[test]
+    fn validate_mcp_http_url_rejects_unsafe_syntax() {
+        assert!(validate_mcp_http_url("https://example.com/mcp").is_ok());
+        assert!(validate_mcp_http_url("http://example.com:8080/mcp").is_ok());
+        assert!(validate_mcp_http_url("file:///etc/passwd").is_err());
+        assert!(validate_mcp_http_url("gopher://example.com").is_err());
+        assert!(validate_mcp_http_url("https://user:secret@example.com/mcp").is_err());
+        assert!(validate_mcp_http_url("not a URL").is_err());
     }
 }
