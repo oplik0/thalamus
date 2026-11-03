@@ -1,0 +1,235 @@
+{
+  "app_name": "thalamus-gpu-qa-a498cb1f28",
+  "tag": "a498cb1f28",
+  "authorized_usd": 10,
+  "gpu_allocations": [
+    {
+      "scope": "standalone real-GPU diagnostics; not Kubernetes/Thalamus worker acceptance",
+      "name": "thalamus-gpu-qa-a498cb1f28-1",
+      "status": "failed",
+      "timeout_seconds": 1200,
+      "gpu": "H100",
+      "gpu_count": 1,
+      "cpu": [
+        2,
+        8
+      ],
+      "memory_mib": [
+        8192,
+        32768
+      ],
+      "runtime_list_cost_ceiling_usd": "1.95096",
+      "public_endpoints": false,
+      "persistent_volumes": false,
+      "automatic_retries": false,
+      "phases": {
+        "baseline": {
+          "status": "server_exited_early",
+          "server_exit_code": 1
+        }
+      },
+      "collected_files": {
+        "model-observation.json": {
+          "bytes": 4499,
+          "sha256": "3cbd0b2e57e3c228608f0d9f0272ae06bbc7e89d501be433d39b5ea8793bcb80",
+          "test_key_redacted": false
+        },
+        "baseline-server.json": {
+          "bytes": 1270,
+          "sha256": "e72c445ceaa4111de65f189069eee90b0a5eb2e7db9e3c7f3e1b3af27c4db94c",
+          "test_key_redacted": false
+        },
+        "baseline-server.log": {
+          "bytes": 19156,
+          "sha256": "50993a48fd81dba67842633bb3abe6e5a5f0dbc83424967ecff6b70dd61ae45f",
+          "test_key_redacted": false
+        }
+      },
+      "collection_errors": [
+        {
+          "file": "baseline-report.json",
+          "error_type": "SandboxFilesystemNotFoundError"
+        },
+        {
+          "file": "baseline-benchmark.json",
+          "error_type": "SandboxFilesystemNotFoundError"
+        },
+        {
+          "file": "baseline-metrics-before.prom",
+          "error_type": "SandboxFilesystemNotFoundError"
+        },
+        {
+          "file": "baseline-metrics-after.prom",
+          "error_type": "SandboxFilesystemNotFoundError"
+        },
+        {
+          "file": "baseline-metrics-during.jsonl",
+          "error_type": "SandboxFilesystemNotFoundError"
+        }
+      ],
+      "commands": [
+        {
+          "label": "mkdir-main",
+          "argv": [
+            "mkdir",
+            "-p",
+            "/qa"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 0.846109937003348
+        },
+        {
+          "label": "mkdir-sidecar",
+          "argv": [
+            "mkdir",
+            "-p",
+            "/qa"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 0.5239072559998021
+        },
+        {
+          "label": "prepare-model",
+          "argv": [
+            "python3",
+            "/qa/gpu_payload.py",
+            "prepare"
+          ],
+          "exit_code": 0,
+          "elapsed_seconds": 12.128170077994582
+        }
+      ],
+      "requested_at": "2026-11-03T09:22:58.597767+00:00",
+      "sandbox_id": "sb-pWeGkGsytaxVQbu6dQT3t5",
+      "create_returned_at": "2026-11-03T09:22:59.144992+00:00",
+      "sidecar_id": "sb-pWeGkGsytaxVQbu6dQT3t5-ctr-QAQTQRFEYB",
+      "hardware": [
+        {
+          "compute_capability": [
+            9,
+            0
+          ],
+          "free_memory_bytes": 84456964096,
+          "index": 0,
+          "name": "NVIDIA H100 80GB HBM3",
+          "runtime_total_memory_bytes": 85009367040,
+          "total_memory_bytes": 85009367040,
+          "uuid": "b756763d-17dc-7115-09fb-92b97c4eec08"
+        }
+      ],
+      "error_type": "RuntimeError",
+      "error": "baseline server exited before the probe completed",
+      "termination_requested_at": "2026-11-03T09:23:43.304175+00:00",
+      "termination_exit_code": 137,
+      "termination_confirmed": true,
+      "termination_returned_at": "2026-11-03T09:23:44.464621+00:00",
+      "wall_seconds_including_creation_and_cleanup": 45.866689229995245
+    }
+  ],
+  "images": {
+    "main": {
+      "source_oci_base": "docker.io/vllm/vllm-openai@sha256:3a1e7f5904e1a1192a02aa0086ceaffc33985d7044c7bb25b3a43d61bdbe3ac0",
+      "modal_image_id": "im-CTrSPBJDDpbh4rVL3GTYAF",
+      "modifications": [
+        "ENTRYPOINT cleared; no RUN, package installation or GPU build step"
+      ]
+    },
+    "sidecar": {
+      "source_oci_base": "quay.io/inference-perf/inference-perf@sha256:d247e6ad725dc5bb56df71d115abc8ca455bba9f0ccd4110e14bbb56504250ec",
+      "modal_image_id": "im-7OdNbJYd2BrUzzAaDGlqhH",
+      "modifications": [
+        "ENTRYPOINT cleared; no RUN, package installation or GPU build step"
+      ]
+    }
+  },
+  "image_preparation": "completed",
+  "image_preparation_limit_seconds": 300,
+  "runtime_plan": {
+    "gpu": "H100",
+    "gpu_count": 1,
+    "timeout_seconds": 1200,
+    "cpu_request": 2,
+    "cpu_limit": 8,
+    "memory_request_mib": 8192,
+    "memory_limit_mib": 32768,
+    "maximum_runtime_list_cost_usd": "1.95096",
+    "initial_allocation_count": 1,
+    "automatic_retries": false
+  },
+  "cost_boundary": "Runtime ceiling excludes image import and egress charges. No workspace budget is changed. Image preparation precedes GPU allocation; billing reports may lag.",
+  "started_at": "2026-11-03T09:05:21.549252+00:00",
+  "sdk_version": "1.5.2",
+  "app_id": "ap-y2lGkR7oz6lD87eGdV1ESi",
+  "billing_before_images": {
+    "queried_at": "2026-11-03T09:05:22.340819+00:00",
+    "complete": false,
+    "reason": "Current-hour usage and ingestion may be incomplete",
+    "owned_rows": []
+  },
+  "image_preparation_wall_seconds": 151.45149668699742,
+  "billing_after_images": {
+    "queried_at": "2026-11-03T09:07:53.000931+00:00",
+    "complete": false,
+    "reason": "Current-hour usage and ingestion may be incomplete",
+    "owned_rows": [
+      {
+        "object_id": "ap-y2lGkR7oz6lD87eGdV1ESi",
+        "description": "thalamus-gpu-qa-a498cb1f28",
+        "environment_name": "main",
+        "interval_start": "2026-11-03 09:00:00+00:00",
+        "cost": "0.00055300",
+        "cost_by_resource": {
+          "CPU": "0.00047300",
+          "Memory": "0.00008000"
+        },
+        "tags": {
+          "qa_run": "a498cb1f28"
+        }
+      }
+    ]
+  },
+  "billing_before_gpu": {
+    "queried_at": "2026-11-03T09:22:58.117040+00:00",
+    "complete": false,
+    "reason": "Current intervals and billing ingestion may be incomplete",
+    "owned_rows": [
+      {
+        "object_id": "ap-y2lGkR7oz6lD87eGdV1ESi",
+        "description": "thalamus-gpu-qa-a498cb1f28",
+        "environment_name": "main",
+        "interval_start": "2026-11-03 09:00:00+00:00",
+        "cost": "0.00089227",
+        "cost_by_resource": {
+          "CPU": "0.00077560",
+          "Memory": "0.00011667"
+        },
+        "tags": {
+          "qa_run": "a498cb1f28"
+        }
+      }
+    ],
+    "reported_metered_usd": "0.00089227"
+  },
+  "billing_after_gpu": {
+    "queried_at": "2026-11-03T09:23:44.464978+00:00",
+    "complete": false,
+    "reason": "Current intervals and billing ingestion may be incomplete",
+    "owned_rows": [
+      {
+        "object_id": "ap-y2lGkR7oz6lD87eGdV1ESi",
+        "description": "thalamus-gpu-qa-a498cb1f28",
+        "environment_name": "main",
+        "interval_start": "2026-11-03 09:00:00+00:00",
+        "cost": "0.00089227",
+        "cost_by_resource": {
+          "CPU": "0.00077560",
+          "Memory": "0.00011667"
+        },
+        "tags": {
+          "qa_run": "a498cb1f28"
+        }
+      }
+    ],
+    "reported_metered_usd": "0.00089227"
+  }
+}

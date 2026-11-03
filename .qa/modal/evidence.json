@@ -1,0 +1,536 @@
+{
+  "schema_version": 1,
+  "study": "Bounded standalone Modal real-GPU validation and output-token accounting correction",
+  "recorded_at": "2026-11-03T10:21:09.601099+00:00",
+  "source": {
+    "before_commit": "95e2933b4d0219ba624dc45d24ebc605bab51c7a",
+    "fixed_commit": "9e62049a3f7dab6e9eb2177f766eb85dfb2e0308",
+    "branch": "redesign/v2",
+    "fix": "Enable inference-perf0.7.0 report.request_lifecycle.use_server_output_tokens; server-preferred with upstream per-request client fallback when usage is absent. No metric scaling or schema change.",
+    "files": [
+      "scripts/inference-perf/adapter.py",
+      "TESTING.md"
+    ],
+    "production_source_sha256": {
+      "adapter.py": "e9a8035358a6f20c5be9e4d97ba0c25dedf5bc9e90c636dfd3e6f1e63dd11d93",
+      "snapshot.py": "0825ed76bcfec10dc9ed61ba599348669c173136ba8107bb4e3312f3754215f4",
+      "upstream_entry.py": "0e54cb8b4bcf06386f97cb565afa56a25446e911798d6de5c0e2204d3c9c3506"
+    }
+  },
+  "scope": {
+    "standalone_diagnostic": true,
+    "kubernetes_resources_created": false,
+    "thalamus_created_worker_job": false,
+    "artifact_uploaded_or_server_accepted": false,
+    "protected_forge_promotion": false,
+    "agentic_api_gpu_validation": false,
+    "kueue_preemption_or_mixed_load_slo_validation": false,
+    "main_source_and_preserved_v1_worktree_distinct": true,
+    "invocation": "Unmodified production adapter.execute(..., local=False) against private http://main:8000/v1; returned bytes written exclusively, no upload_result call. Synthetic run IDs, not control-plane issued."
+  },
+  "runtime": {
+    "main_oci_source_base": "docker.io/vllm/vllm-openai@sha256:3a1e7f5904e1a1192a02aa0086ceaffc33985d7044c7bb25b3a43d61bdbe3ac0",
+    "sidecar_oci_source_base": "quay.io/inference-perf/inference-perf@sha256:d247e6ad725dc5bb56df71d115abc8ca455bba9f0ccd4110e14bbb56504250ec",
+    "modal_imports": {
+      "main": {
+        "source_oci_base": "docker.io/vllm/vllm-openai@sha256:3a1e7f5904e1a1192a02aa0086ceaffc33985d7044c7bb25b3a43d61bdbe3ac0",
+        "modal_image_id": "im-CTrSPBJDDpbh4rVL3GTYAF",
+        "modifications": [
+          "ENTRYPOINT cleared; no RUN, package installation or GPU build step"
+        ]
+      },
+      "sidecar": {
+        "source_oci_base": "quay.io/inference-perf/inference-perf@sha256:d247e6ad725dc5bb56df71d115abc8ca455bba9f0ccd4110e14bbb56504250ec",
+        "modal_image_id": "im-7OdNbJYd2BrUzzAaDGlqhH",
+        "modifications": [
+          "ENTRYPOINT cleared; no RUN, package installation or GPU build step"
+        ]
+      }
+    },
+    "model_repository": "Qwen/Qwen2.5-0.5B-Instruct",
+    "model_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+    "model_file_identity_evidence": "raw/attempt-3/model-observation.json",
+    "gpu": [
+      {
+        "compute_capability": [
+          9,
+          0
+        ],
+        "free_memory_bytes": 84456964096,
+        "index": 0,
+        "name": "NVIDIA H100 80GB HBM3",
+        "runtime_total_memory_bytes": 85009367040,
+        "total_memory_bytes": 85009367040,
+        "uuid": "04e8ce3b-994f-aa78-7cd0-ae617f274121"
+      }
+    ],
+    "vllm_version": "0.23.0",
+    "torch_version": "2.11.0+cu130",
+    "torch_cuda_version": "13.0",
+    "gpu_kv_cache_bytes": 67108864,
+    "native_cpu_kv_offload_gib": 1,
+    "max_model_length": 2048,
+    "tensor_parallel_size": 1,
+    "pipeline_parallel_size": 1,
+    "eager_execution": true,
+    "runner_boundary": "Mounted production Python scripts on the exact upstream base; not a published/baked production runner identity or Kubernetes imageID."
+  },
+  "workload": {
+    "adapter_bounds_read_from_reference": {
+      "aggregate_conservative_tokens_including_protocol": 524448,
+      "max_stage_token_estimate": 261120,
+      "pregenerated_limit": 4000000,
+      "pregenerated_tokens": 43520,
+      "stage_limit": 16000000,
+      "total_adapter_requests": 322
+    },
+    "config_request_sha256": "51fa69d49fbf06729688dc3dfb70ee3574dcda3373d2c879dc319f9a5cf78773",
+    "conservative_max_second_turn_tokens": 1632,
+    "sessions_per_stage": 80,
+    "spec": {
+      "data": {
+        "enable_multi_turn_chat": true,
+        "num_groups": 80,
+        "num_prompts_per_group": 1,
+        "output_len": 16,
+        "question_len": 32,
+        "system_prompt_len": 512,
+        "type": "shared_prefix"
+      },
+      "goodput": {
+        "itl": 1,
+        "ttft": 10
+      },
+      "load": {
+        "stages": [
+          {
+            "concurrency_level": 2,
+            "num_requests": 160
+          },
+          {
+            "concurrency_level": 4,
+            "num_requests": 160
+          }
+        ],
+        "type": "concurrent"
+      }
+    },
+    "synthetic_cache_pressure_not_production_performance": true,
+    "turns_per_session_per_stage": 2,
+    "unique_system_prefix_tokens": 40960
+  },
+  "protocol_input": {
+    "endpoint": "/v1/completions",
+    "prompt_token_ids": [
+      100,
+      101,
+      102,
+      103,
+      104,
+      105,
+      106,
+      107,
+      108,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115
+    ],
+    "max_tokens": 16,
+    "temperature": 0,
+    "seed": 6271,
+    "ignore_eos": true,
+    "n": 1,
+    "sse": "Same request with stream=true and stream_options.include_usage=true",
+    "negative_case": "Unknown model must return structured HTTP404"
+  },
+  "attempts": [
+    {
+      "number": 1,
+      "outcome": "Harness startup failure before inference; obsolete --disable-log-requests rejected by vLLM0.23. Corrected to --no-enable-log-requests; no such flag existed in product source.",
+      "raw": "raw/attempt-1",
+      "sandbox_id": "sb-pWeGkGsytaxVQbu6dQT3t5"
+    },
+    {
+      "number": 2,
+      "outcome": "640measured successes, zero failures; real KV offload observed; exposed production client/server token-count mismatch.",
+      "raw": "raw/attempt-2",
+      "sandbox_id": "sb-vDgqj0LRoR7m4kfTmff8Rt",
+      "output_token_throughput_semantics": "Historical values are client re-tokenized text tokens/s, not generated-token/s. Do not rescale or present them as server throughput.",
+      "analysis_correction": "Original temporary classifier matched lowercase transfer labels; actual GPU_to_CPU/CPU_to_GPU counters were present. Files ending in -report.corrected.json re-derive only that classification from preserved raw data; no extra GPU run was used for this correction."
+    },
+    {
+      "number": 3,
+      "outcome": "Corrected production adapter passed the real fixed-16-token invariant for all four measured stages; 640successes, zero failures.",
+      "raw": "raw/attempt-3",
+      "sandbox_id": "sb-SuGS5VMOSfNnzXyEyCXBPo",
+      "phases": {
+        "baseline": {
+          "report": "raw/attempt-3/baseline-report.json",
+          "measured_successes": 320,
+          "measured_failures": 0,
+          "tokens_per_successful_request_by_stage": [
+            16.0,
+            16.0
+          ],
+          "independent_server_token_evidence": {
+            "expected_successful_requests_including_protocol_and_warmup": 324,
+            "length_finishes": 324.0,
+            "metrics": {
+              "vllm:generation_tokens_total": 5184.0,
+              "vllm:request_generation_tokens_count": 324.0,
+              "vllm:request_generation_tokens_sum": 5184.0
+            },
+            "per_request_output_cap": 16
+          },
+          "offload_transfer_bytes_delta": {
+            "cpu_to_gpu": null,
+            "gpu_to_cpu": null
+          },
+          "cpu_offload_round_trip_observed": false,
+          "protocol": {
+            "completion_calls": 3,
+            "json": {
+              "finish_reason": "length",
+              "text_sha256": "df457abb89225b4b0c98368c3a2bbb7d6f3acc98209b031047deeebc4a3a6a6f",
+              "usage": {
+                "completion_tokens": 16,
+                "prompt_tokens": 16,
+                "prompt_tokens_details": null,
+                "total_tokens": 32
+              }
+            },
+            "sse": {
+              "done": true,
+              "events": 17,
+              "finish_reason": "length",
+              "matches_json_text": true,
+              "usage": {
+                "completion_tokens": 16,
+                "prompt_tokens": 16,
+                "total_tokens": 32
+              },
+              "wire_bytes": 4084
+            },
+            "successful_input_plus_output_tokens": 64,
+            "unknown_model_status": 404
+          }
+        },
+        "offload": {
+          "report": "raw/attempt-3/offload-report.json",
+          "measured_successes": 320,
+          "measured_failures": 0,
+          "tokens_per_successful_request_by_stage": [
+            16.0,
+            16.0
+          ],
+          "independent_server_token_evidence": {
+            "expected_successful_requests_including_protocol_and_warmup": 324,
+            "length_finishes": 324.0,
+            "metrics": {
+              "vllm:generation_tokens_total": 5184.0,
+              "vllm:request_generation_tokens_count": 324.0,
+              "vllm:request_generation_tokens_sum": 5184.0
+            },
+            "per_request_output_cap": 16
+          },
+          "offload_transfer_bytes_delta": {
+            "cpu_to_gpu": 1588396032.0,
+            "gpu_to_cpu": 1665073152.0
+          },
+          "cpu_offload_round_trip_observed": true,
+          "protocol": {
+            "completion_calls": 3,
+            "json": {
+              "finish_reason": "length",
+              "text_sha256": "df457abb89225b4b0c98368c3a2bbb7d6f3acc98209b031047deeebc4a3a6a6f",
+              "usage": {
+                "completion_tokens": 16,
+                "prompt_tokens": 16,
+                "prompt_tokens_details": null,
+                "total_tokens": 32
+              }
+            },
+            "sse": {
+              "done": true,
+              "events": 17,
+              "finish_reason": "length",
+              "matches_json_text": true,
+              "usage": {
+                "completion_tokens": 16,
+                "prompt_tokens": 16,
+                "total_tokens": 32
+              },
+              "wire_bytes": 4082
+            },
+            "successful_input_plus_output_tokens": 64,
+            "unknown_model_status": 404
+          }
+        }
+      }
+    }
+  ],
+  "verification": {
+    "adapter_unit_suite": {
+      "command": "python3 -m unittest discover -s scripts/inference-perf -p 'test_*.py'",
+      "passed": 25,
+      "failed": 0
+    },
+    "production_runner_build": {
+      "command": "docker build --network=none -t thalamus-inference-perf:qa-modal-a498cb1f28 -f scripts/inference-perf/Dockerfile .",
+      "exit_code": 0,
+      "local_image_config_digest": "sha256:53b6f6c311393ddddcdb048fad4009d643a1f243eb6129fed77e80d14c05cf56",
+      "local_oci_index_digest": "sha256:5c8b64fe3d920da56ee327cb2f196119b1077f7f31dda4b3d6a61790e1a34301",
+      "pushed_registry_identity": false
+    },
+    "ci": {
+      "commit": "9e62049a3f7dab6e9eb2177f766eb85dfb2e0308",
+      "url": "https://github.com/oplik0/thalamus/actions/runs/41617178483",
+      "conclusion": "success",
+      "jobs": {
+        "rust": "success",
+        "ui": "success",
+        "kcl": "success"
+      }
+    },
+    "no_tautological_flag_test_added": true,
+    "regression_method": "Real upstream adapter/reporting on real vLLM responses with divergent client/server token counts; normalized tokenTPS/requestTPS equals16 and independent server counters show324length completions and5184generated tokens per phase under a16-token per-request cap."
+  },
+  "budget": {
+    "authorized_usd": 10,
+    "allocations": 3,
+    "gpu_per_allocation": "one H100",
+    "timeout_seconds_per_allocation": 1200,
+    "cpu_request_and_limit": [
+      2,
+      8
+    ],
+    "memory_request_and_limit_mib": [
+      8192,
+      32768
+    ],
+    "runtime_list_cost_ceiling_usd_per_allocation": "1.95096",
+    "all_three_planned_runtime_envelopes_usd": "5.85288",
+    "ceiling_excludes": "Image preparation and egress; image preparation completed before GPU allocations, no persistent volumes or public endpoints. No provider-enforced workspace budget was changed or claimed.",
+    "published_rate_source": "https://modal.com/pricing",
+    "published_rates_usd_per_second": {
+      "H100": "0.001097",
+      "sandbox_physical_cpu_core": "0.00003942",
+      "sandbox_memory_gib": "0.00000667"
+    },
+    "reported_metered_usd": "0.58568109",
+    "reported_at": "2026-11-03T10:15:37.127481+00:00",
+    "billing_final": false,
+    "billing_caveat": "Current-hour report can still lag; not a final invoice.",
+    "billing_evidence": "raw/cleanup-and-billing-final.json"
+  },
+  "cleanup": {
+    "all_sandboxes_termination_confirmed": true,
+    "sandboxes": [
+      {
+        "id": "sb-pWeGkGsytaxVQbu6dQT3t5",
+        "terminated_at": "2026-11-03T09:23:44.464621+00:00",
+        "wall_seconds_including_creation_and_cleanup": 45.866689229995245
+      },
+      {
+        "id": "sb-vDgqj0LRoR7m4kfTmff8Rt",
+        "terminated_at": "2026-11-03T09:32:17.408588+00:00",
+        "wall_seconds_including_creation_and_cleanup": 208.71781417100283
+      },
+      {
+        "id": "sb-SuGS5VMOSfNnzXyEyCXBPo",
+        "terminated_at": "2026-11-03T10:08:19.432008+00:00",
+        "wall_seconds_including_creation_and_cleanup": 272.36359465799615
+      }
+    ],
+    "apps_stopped": [
+      {
+        "id": "ap-y2lGkR7oz6lD87eGdV1ESi",
+        "method": "modal app stop --yes",
+        "exit_code": 0
+      },
+      {
+        "id": "ap-A80zhayVC4TdFiwMjFvr44",
+        "method": "modal app stop --yes",
+        "exit_code": 0
+      }
+    ],
+    "persistent_volumes_created": false,
+    "public_endpoints_created": false,
+    "schedules_or_autoscaling_created": false,
+    "user_sdk_or_credentials_modified": false,
+    "image_cache_deletion_not_claimed": true
+  },
+  "limitations": [
+    "This does not sign off any full live Kubernetes milestone. Standalone GPU checks are not KServe/Flux/Kueue integration or accepted worker provenance.",
+    "Native KV recipe exercised on one small Qwen/H100 profile; agentic-api and encrypted full serving-chain GPU validation remain open.",
+    "Short synthetic cache-pressure experiment, not a tuned production performance benchmark or proof of speedup/SLO. Different allocations are not controlled for host placement or CPU availability.",
+    "Current normalized output is server-preferred, not guaranteed server-only when upstream usage is missing. Historical client-count artifacts are preserved, not retroactively rewritten.",
+    "Protocol output equivalence and cache-transfer evidence do not establish model quality or semantic correctness for every workload prompt."
+  ],
+  "files": {
+    "raw/attempt-1/model-observation.json": {
+      "bytes": 4499,
+      "sha256": "3cbd0b2e57e3c228608f0d9f0272ae06bbc7e89d501be433d39b5ea8793bcb80"
+    },
+    "raw/attempt-1/baseline-server.json": {
+      "bytes": 1270,
+      "sha256": "e72c445ceaa4111de65f189069eee90b0a5eb2e7db9e3c7f3e1b3af27c4db94c"
+    },
+    "raw/attempt-1/baseline-server.log": {
+      "bytes": 19156,
+      "sha256": "50993a48fd81dba67842633bb3abe6e5a5f0dbc83424967ecff6b70dd61ae45f"
+    },
+    "raw/attempt-1/attempt-state.json": {
+      "bytes": 7292,
+      "sha256": "9f997d100e055b07db3e5362d77047f29d79f25718a4d8dfe3fc737087efe62f"
+    },
+    "raw/attempt-2/model-observation.json": {
+      "bytes": 4499,
+      "sha256": "17b846ea4b9e73847250719df48e58fe4c983b75e664d39537d04444d2051abc"
+    },
+    "raw/attempt-2/attempt-state.json": {
+      "bytes": 14143,
+      "sha256": "960a3da0b08a2abe15b601727ffe5c687b82d3783b41f429104a506357747c27"
+    },
+    "raw/attempt-2/baseline-report.json": {
+      "bytes": 9772,
+      "sha256": "1d4e4ae2f5b96656b61a04e74a168798a1c663be833bb4558dee6dee91074e93"
+    },
+    "raw/attempt-2/baseline-report.corrected.json": {
+      "bytes": 13576,
+      "sha256": "598590824a645e09b92f3b78cdf305a04722d61961caf594ec3997af530a60f3"
+    },
+    "raw/attempt-2/baseline-benchmark.json": {
+      "bytes": 1993,
+      "sha256": "cd21b83446c233df1c40966f13583f7216024ee1f9e9e4b7dde2b8c1e240c6ae"
+    },
+    "raw/attempt-2/baseline-metrics-before.prom": {
+      "bytes": 51568,
+      "sha256": "9027d99fceb226da2cfa3b010b08befb24c5d3f4abc0083c7bc83374f49ba5a8"
+    },
+    "raw/attempt-2/baseline-metrics-after.prom": {
+      "bytes": 53712,
+      "sha256": "eb608f1eb49d0b9c06de4487ed8ae1439abda2c2b6dcf3518c6d55442221dc9e"
+    },
+    "raw/attempt-2/baseline-metrics-during.jsonl": {
+      "bytes": 1690899,
+      "sha256": "505b83a83d4e8deac7c0266f38196f8d3070042fd15506e771cfb8d33f34bf58"
+    },
+    "raw/attempt-2/baseline-server.json": {
+      "bytes": 1267,
+      "sha256": "83b3ee9317ea51c6f87b902d6426d156468077fad1fd926062c5020989ef1992"
+    },
+    "raw/attempt-2/baseline-server.log": {
+      "bytes": 48180,
+      "sha256": "ef4e26dd338ff4abf27137d49cca26c221ad2c4bb20b861b0071b18557a8976f"
+    },
+    "raw/attempt-2/offload-report.json": {
+      "bytes": 16749,
+      "sha256": "ffd936a893689006c849f621da118c5f4469d5b501c539aee4566eff337de212"
+    },
+    "raw/attempt-2/offload-report.corrected.json": {
+      "bytes": 22802,
+      "sha256": "961a23422a923a7bd92ed1d58c5c5032872bc12028ef328e566fdcaab000279a"
+    },
+    "raw/attempt-2/offload-benchmark.json": {
+      "bytes": 1991,
+      "sha256": "edee14d003a41420f214849a961ce5b35dc561792cc00e34a6b9b46d10b96a9c"
+    },
+    "raw/attempt-2/offload-metrics-before.prom": {
+      "bytes": 51950,
+      "sha256": "a9d0fbb6d603a82a55bef147304d1c471fbda1b09240f7bbc8ad50c62c5eb017"
+    },
+    "raw/attempt-2/offload-metrics-after.prom": {
+      "bytes": 58779,
+      "sha256": "f9f5cea784c0596e5f6c389a14baa07e87a9dfd118b0b3f8129c0d851ed5bfa4"
+    },
+    "raw/attempt-2/offload-metrics-during.jsonl": {
+      "bytes": 1619432,
+      "sha256": "5796e110b9a3f4a80ed481e02f767b2cf11931b6561433f38d46b94983fadc7b"
+    },
+    "raw/attempt-2/offload-server.json": {
+      "bytes": 1353,
+      "sha256": "8ddd2bd28cefabfc91dba9f41783eaa5fbc099e8a84fd1ae0082e92b93748270"
+    },
+    "raw/attempt-2/offload-server.log": {
+      "bytes": 49765,
+      "sha256": "a7d75335c6a8b25201cd3e02f0becda8884a3f1ec8ec2ca975aefd448cc3fba3"
+    },
+    "raw/attempt-3/model-observation.json": {
+      "bytes": 4496,
+      "sha256": "a8639a4f73d6f9db779961476203abbb3f420d77b2834f29ac718ec7f2bef5b7"
+    },
+    "raw/attempt-3/baseline-report.json": {
+      "bytes": 12953,
+      "sha256": "4ec6e5616670680b0cd2a6e9228f4348cf568155bcc5a965697f906e423b1df7"
+    },
+    "raw/attempt-3/baseline-benchmark.json": {
+      "bytes": 1986,
+      "sha256": "a8f2fb4980a8cfa130a14b1e5536c1c82d01abe26d8ab555fbc7dbcc8cc1a61d"
+    },
+    "raw/attempt-3/baseline-metrics-before.prom": {
+      "bytes": 51563,
+      "sha256": "bd927e825f202ec8d26de2f8cab2f3b8bb2fa590af178cb35ec693ec7fd451ff"
+    },
+    "raw/attempt-3/baseline-metrics-after.prom": {
+      "bytes": 53703,
+      "sha256": "68cef7dbcf5ebd52f3b661900bb53b059f5aa914fdaf6c052d3fb40e2981fe0d"
+    },
+    "raw/attempt-3/baseline-metrics-during.jsonl": {
+      "bytes": 2332394,
+      "sha256": "942d47f68e7a9be89a83e911103cb0749688fa89d1cbb4214cd9fe5f1bbc0fe8"
+    },
+    "raw/attempt-3/baseline-server.json": {
+      "bytes": 1267,
+      "sha256": "7357a92c5daad088420aa96978dd705384276a01a53e785f5bfa0fa2205d718f"
+    },
+    "raw/attempt-3/baseline-server.log": {
+      "bytes": 49447,
+      "sha256": "d098644da3dade4aed3f1286dc9558ff1c40b7b30121a327999884cfdefb7070"
+    },
+    "raw/attempt-3/offload-report.json": {
+      "bytes": 19931,
+      "sha256": "4b35ef213b3aea687b7112b9e977ba0fdc4d7e54586bd84ab6481a28e0da7013"
+    },
+    "raw/attempt-3/offload-benchmark.json": {
+      "bytes": 1988,
+      "sha256": "020ce0a63c4361517df234df751a07929d393fcbe23fe1707671aaccb7414de1"
+    },
+    "raw/attempt-3/offload-metrics-before.prom": {
+      "bytes": 51946,
+      "sha256": "df6ea2177eada80610f933739eef00a33b9e1f8863a95bae29b90eb351bbe88b"
+    },
+    "raw/attempt-3/offload-metrics-after.prom": {
+      "bytes": 58766,
+      "sha256": "c20d13d31a5899fa5a1c8df3379bc9b9e7dcb49cd92182fc222b5b6df3f4e684"
+    },
+    "raw/attempt-3/offload-metrics-during.jsonl": {
+      "bytes": 2275762,
+      "sha256": "851beeea8447ed3c0fb6bba5a82d0a8c018b8f501435e3d3ef893aee9ab45888"
+    },
+    "raw/attempt-3/offload-server.json": {
+      "bytes": 1353,
+      "sha256": "12890fe12f16f4c5cea48c9e546cd0279c3a0ad9d7d835433742457c2949296a"
+    },
+    "raw/attempt-3/offload-server.log": {
+      "bytes": 52557,
+      "sha256": "6a22f1373315c0e2dafcdf4ac13872c5c73d6d2a7ac87707b2bbd1f72b3b988f"
+    },
+    "raw/modal-state.json": {
+      "bytes": 21694,
+      "sha256": "54c17dc47f545655dada79783bd2b023e0548f80e7422c0f742270fe56784baa"
+    },
+    "raw/cleanup-and-billing-final.json": {
+      "bytes": 1354,
+      "sha256": "477082dd52ab0165994849b7beaae70ccbf07cab026e89ad983bdd1ebc04b5eb"
+    },
+    "raw/kv-flags.json": {
+      "bytes": 286,
+      "sha256": "fefcd89abf3eeba694afb893cb5e6e8beae9e9ec9579446bb9c8fddd8fd00495"
+    }
+  }
+}

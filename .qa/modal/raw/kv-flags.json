@@ -1,0 +1,15 @@
+{
+    "phases": {
+        "baseline": {
+            "kv_flags": []
+        },
+        "offload": {
+            "kv_flags": [
+                "--kv-offloading-size",
+                "1",
+                "--kv-offloading-backend",
+                "native"
+            ]
+        }
+    }
+}
