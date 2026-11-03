@@ -156,7 +156,7 @@ render = lambda service: any, d: any, artifact: any, hardware: any, pool: any ->
                             name: "epp"
                             image: kv.kv_router_image
                             command: ["/app/epp"]
-                            args: ["--pool-name", poolName, "--pool-namespace", service.namespace, "--pool-group", "inference.networking.k8s.io", "--grpc-port=9002", "--grpc-health-port", "9003", "--secure-serving=false", "--metrics-endpoint-auth=false", "--tracing=false", "--config-text", eppConfig]
+                            args: ["--pool-name", poolName, "--pool-namespace", service.namespace, "--pool-group", "inference.networking.k8s.io", "--grpc-port=9002", "--grpc-health-port", "9003", "--secure-serving=true", "--metrics-endpoint-auth=false", "--tracing=false", "--config-text", eppConfig]
                             ports: [{name: "grpc", containerPort: 9002}, {name: "grpc-health", containerPort: 9003}, {name: "metrics", containerPort: 9090}]
                             livenessProbe: {grpc: {port: 9003, service: "liveness"}, initialDelaySeconds: 5, periodSeconds: 10}
                             readinessProbe: {grpc: {port: 9003, service: "readiness"}, periodSeconds: 2}

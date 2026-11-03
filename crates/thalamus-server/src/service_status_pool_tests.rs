@@ -431,7 +431,7 @@ impl Fixture {
             "--grpc-port=9002",
             "--grpc-health-port",
             "9003",
-            "--secure-serving=false",
+            "--secure-serving=true",
             "--metrics-endpoint-auth=false"
         ]);
         picker_container.as_object_mut().unwrap().remove("args");

@@ -96,7 +96,7 @@ test_raw_endpoint_picker_contract = lambda {
     config = json.decode(picker.args[-1])
     assert picker.image == "ghcr.io/llm-d/llm-d-router-endpoint-picker:v1.0.0"
     assert picker.command == ["/app/epp"]
-    assert "--config-text" in picker.args and "--secure-serving=false" in picker.args
+    assert "--config-text" in picker.args
     assert "model-a-inference-pool" in picker.args and "models" in picker.args
     assert "--grpc-port=${svc.spec.ports[0].targetPort}" in picker.args
     grpc_port = [port.containerPort for port in picker.ports if port.name == "grpc"][0]

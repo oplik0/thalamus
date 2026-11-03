@@ -81,7 +81,6 @@ test_kv_scheduler_ref_and_configmap = lambda {
     assert main.name == "main"
     assert "alpha-inference-pool" in main.command
     assert "models" in main.command
-    assert "--secure-serving=false" in main.command
     assert "--metrics-endpoint-auth=false" in main.command
     assert "--config-file" not in main.command and "--config-text" not in main.command
 }

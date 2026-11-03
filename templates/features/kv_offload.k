@@ -91,8 +91,8 @@ resources = lambda namespace: str, deployment: str, cfg: any -> [any] {
 
 # KServe v0.21's preset uses router v0.10 and a command tailored to that
 # binary. Override both image and command for v1; preserve the preset's
-# ports, probes, security context, and ownership. Agentgateway's documented
-# EPP integration uses plaintext ext_proc; isolate it with network controls.
+# ports, probes, security context, and ownership. The pinned Kubernetes
+# controller expects TLS for its ext_proc connection.
 # The controller appends --config-text from config.ref and handles updates.
 # Before use, configure KServe's scheduler preset with a native Kubernetes
 # preStop.sleep action instead of exec /bin/sleep: the v1 EPP image is
@@ -113,7 +113,7 @@ scheduler = lambda namespace: str, deployment: str -> any {
                 "--zap-encoder", "json",
                 "--grpc-port=9002",
                 "--grpc-health-port", "9003",
-                "--secure-serving=false",
+                "--secure-serving=true",
                 "--metrics-endpoint-auth=false",
             ]
         }]}

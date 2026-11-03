@@ -63,6 +63,7 @@ python3 scripts/render-catalog.py --check
 python3 -B -m unittest discover -s scripts -p 'test_render_catalog.py'
 kcl main.k -D service_file=catalog/services/example-service.yaml -o /tmp/thalamus-service.yaml
 kcl main.k -D service_file=catalog/services/example-pool-service.yaml -o /tmp/thalamus-pool-service.yaml
+kcl main.k -D service_file=catalog/fixtures/kserve-traffic-classes-service.yaml -o /tmp/thalamus-kserve-traffic-classes-service.yaml
 kcl deploy/install.k -D config_file=install.fixture.yaml -o /tmp/thalamus-install.yaml
 kcl limits.k -D limit_file=catalog/limits/example-shared.yaml -o /tmp/thalamus-limits.yaml
 kcl pool.k -D pool_file=catalog/pools/example-pool.yaml -o /tmp/thalamus-pool.yaml
@@ -71,7 +72,7 @@ kcl test ./templates/features
 kcl test ./templates/gateway
 kcl test ./templates/platform
 python3 deploy/prepare-schema-bundle.py /tmp/thalamus-schemas
-/tmp/thalamus-schemas/validate --bundle /tmp/thalamus-schemas/schemas.json /tmp/thalamus-service.yaml /tmp/thalamus-pool-service.yaml /tmp/thalamus-install.yaml /tmp/thalamus-limits.yaml /tmp/thalamus-pool.yaml
+/tmp/thalamus-schemas/validate --bundle /tmp/thalamus-schemas/schemas.json /tmp/thalamus-service.yaml /tmp/thalamus-pool-service.yaml /tmp/thalamus-kserve-traffic-classes-service.yaml /tmp/thalamus-install.yaml /tmp/thalamus-limits.yaml /tmp/thalamus-pool.yaml
 ```
 
 `render-catalog.py --check` is read-only: it compares both complete generated trees, including their `kustomization.yaml` files, and fails on missing, modified or extra files. For a manual PR, use `python3 scripts/render-catalog.py --write` instead, then review and commit the catalog source and all changes in `rendered/inference` and `rendered/pools` together in the same proposal commit; it removes stale generated files and prints a deterministic combined Kubernetes `List` to stdout. For a non-default workload namespace, pass the same `--workload-namespace <namespace>` to rendering and checking, and configure Thalamus to use it too. Source service and limit namespaces and pool member namespaces must already match. See [README.md](README.md#catalog-publication-and-flux) for the site repository, credentials and branch-protection requirements.
@@ -81,6 +82,8 @@ These commands use the checked-in renderer. Thalamus server and worker instead i
 This repository's GitHub CI runs the read-only catalog check; operators must install and require an equivalent check in a separate site catalog repository, including on merge-queue candidates if used. It is a consistency check, not a publisher that commits files or proves deployment.
 
 The catalog publication unit suite uses temporary worktrees; the real-catalog `--check` is a separate check. The pinned validator uses Go 1.27.3 and Kubernetes 1.34.2 and CRD schemas. Preparing the bundle may fetch pinned upstream inputs; validation itself uses the prepared offline bundle. Schema validation is not live admission, reconciliation, policy conversion or Kubernetes execution. `mise run ci` covers the read-only catalog check, publication unit suite, renders and KCL suites; GitHub CI also runs the offline validator and standalone gateway smoke.
+
+The unpooled KServe traffic-class fixture exercises production rendering against the independent KServe CRD schema. It guards a live-admission regression: specifying only `endpointPickerRef.failureMode` is invalid; the override must also contain the workload selector, target ports and complete picker Service reference. The raw shared-pool branch has different selectors and picker names.
 
 `python3 scripts/gateway-policy-smoke.py` requires KCL, Python 3, Docker and Linux host networking. It exercises real standalone agentgateway, Redis and Envoy RLS auth, scope, headers, request-budget exhaustion and fail-closed behavior. It does not establish Kubernetes conversion, AI token accounting, metrics or EPP behavior.
 
@@ -108,6 +111,44 @@ python3 -m unittest discover -s scripts/inference-perf -p 'test_*.py'
 The output path must not already exist. This runs the real inference-perf adapter and llm-d-inference-sim Docker image; a local adapter image ID is identified as local, not as a pushed registry digest. Measurements describe the simulator, not GPU performance, a Kubernetes Job, gateway, live provenance or production readiness.
 
 No real cluster or previous deployment history is needed for these local checks. Live acceptance still requires explicitly approved infrastructure and independently collected evidence; fixtures are not evidence of deployed behavior.
+
+## Approved isolated Kubernetes verification
+
+An explicitly approved k3d run used Kubernetes `v1.34.2+k3s1`, a four-CPU node capped at 6 GiB, a loopback-only API and a private kubeconfig. No existing context was contacted or modified. Use `--kubeconfig-update-default=false` and `--kubeconfig-switch-context=false` when creating a disposable cluster, then export only that cluster's kubeconfig and pass it explicitly to every command. Use a version-matched client; this run used the client from the pinned k3s image rather than the host's newer client.
+
+The controller versions and installation inputs are in `deploy/upstreams.yaml`. Wait for controllers and webhooks before dependents. The local Kueue configuration restricted plain-Pod integration and workload webhook selectors to `thalamus-inference`, enabled `QuotaCheckStrategy` with `IgnoreUndeclared`, and disabled Fair Sharing. That namespace scoping was a local configuration choice, not an upstream default. The complete upstream aggregation-authentication RoleBindings are required, including the named readers in `kube-system`.
+
+Observed checks:
+
+- All pinned Flux, cert-manager, KServe, agentgateway, Kueue and KEDA controllers became ready; KServe accepted a valid webhook request and rejected conflicting route parents. The checked-in catalog and the additional managed traffic-class fixture passed actual API-server dry-run admission. Synthetic model fixtures were never persisted.
+- All five Thalamus admission policies compiled without type-check warnings. Real impersonated requests admitted ordinary namespaced writes and administrator pool writes, denied cross-boundary/Secret writes and reserved ownership spoofing, and restricted worker writes to owned objects. A bounded approved Job completed and disappeared after its TTL was set to zero; host networking, unapproved commands, unpinned images and service-account token mounting were rejected. This was a policy/lifecycle probe, not a submitted Thalamus run.
+- A private agentgateway → InferencePool → real EPP → CPU simulator chain completed JSON and SSE requests, with actual picker invocation counters increasing. Plaintext EPP serving had failed closed with HTTP 500 and `InvalidContentType`; enabling EPP TLS fixed the same chain without changing `FailClose`. TLS compatibility does not establish authenticated peer verification.
+- A separate upstream KServe probe used zero model replicas. The controller created owner-bound pool, picker Service and scheduler resources; the real v1.0.0 EPP became ready with explicit gRPC port 9002, TLS and native `preStop.sleep`. No model Pod ran, and the overall service was not Ready. Zero replicas are not a supported Thalamus catalog deployment.
+- The production Flux identity/dependency templates reconciled nonempty ConfigMap and PriorityClass probes from one shared source, with `wait: true` and `prune: true` unchanged. Only the paths were redirected to the probe directories. Source, attempted and applied revisions matched for both ready reconcilers. Holding the pool reconciler at the previous revision blocked the dependent catalog update; resuming it applied both new markers. PriorityClass values are immutable, so the revision marker uses an annotation. Probe source and generated objects are retained on [`qa/k3d-bcc5c4c2`](https://github.com/oplik0/thalamus/tree/1617c4a79444b14b2e5f2b052b82cc86b2a5b94d). This unprotected branch does not establish protected-forge rollout guarantees or full production-catalog reconciliation.
+- The official simulator ran as a private Deployment and was reached through Service DNS by a real HTTP-probe Job. A native-sidecar Job also ran the exact repository inference-perf scripts from an immutable ConfigMap on the pinned upstream image: 12 measured requests across concurrency stages 2 and 4 succeeded, with no measured failures. The artifact identified the base image, was not uploaded, and was not accepted as Thalamus worker evidence. Paired allowed/denied Jobs exercised the test namespace's NetworkPolicy.
+
+After verification, the disposable cluster's containers, network and image volume were removed; its loopback API stopped accepting connections and the private kubeconfig was deleted. No existing Kubernetes context was used or modified.
+
+These checks do not establish GPU/model execution, model/tokenizer attestation, full control-plane deployment, GitHub App promotion, live usage/revocation acceptance, KV performance, preemption or production SLOs. The CPU simulator cannot be represented as a supported GPU catalog workload; do not fabricate node capacity or weaken evidence checks to make it one.
+
+### KServe v0.21 scheduler lifecycle prerequisite
+
+The published runtime-configs chart still supplies EPP v0.10.0 and an exec `/bin/sleep` preStop. Thalamus overrides the image and command for the distroless v1.0.0 picker, but a per-service lifecycle overlay cannot reliably remove the inherited exec handler. The published chart has no lifecycle value hook. This guarded patch was exercised against the pinned preset before the zero-model-replica probe:
+
+```sh
+kubectl --kubeconfig "$QA_KUBECONFIG" -n kserve patch llminferenceserviceconfig \
+  kserve-config-llm-scheduler --type=json --patch='[
+  {"op":"test","path":"/metadata/name","value":"kserve-config-llm-scheduler"},
+  {"op":"test","path":"/metadata/namespace","value":"kserve"},
+  {"op":"test","path":"/metadata/annotations/meta.helm.sh~1release-name","value":"kserve-runtime-configs"},
+  {"op":"test","path":"/spec/router/scheduler/template/containers/0/name","value":"main"},
+  {"op":"test","path":"/spec/router/scheduler/template/containers/0/image","value":"ghcr.io/llm-d/llm-d-router-endpoint-picker:v0.10.0"},
+  {"op":"test","path":"/spec/router/scheduler/template/containers/0/lifecycle/preStop","value":{"exec":{"command":["/bin/sleep","15"]}}},
+  {"op":"replace","path":"/spec/router/scheduler/template/containers/0/lifecycle/preStop","value":{"sleep":{"seconds":15}}}
+]'
+```
+
+This changes a Helm-owned well-known preset; KServe warns against that, and chart reconciliation may restore it. Manage and reverify the required lifecycle with the installation/upgrade process. The guards intentionally reject an unexpected or already-modified preset rather than blindly overwrite it. A custom-config `baseRefs` alternative was not exercised.
 
 ## Bounded mutation testing
 

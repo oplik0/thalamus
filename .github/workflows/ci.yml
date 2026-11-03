@@ -89,6 +89,7 @@ jobs:
           kcl main.k -D service_file=catalog/services/example-service.yaml -o /tmp/thalamus-service.yaml
           kcl main.k -D service_file=catalog/services/example-pool-service.yaml -o /tmp/thalamus-pool-service.yaml
           kcl main.k -D service_file=catalog/fixtures/agentic-service.yaml -D workload_namespace=thalamus-inference -o /tmp/thalamus-agentic-service.yaml
+          kcl main.k -D service_file=catalog/fixtures/kserve-traffic-classes-service.yaml -o /tmp/thalamus-kserve-traffic-classes-service.yaml
           kcl deploy/install.k -D config_file=install.fixture.yaml -o /tmp/thalamus-install.yaml
           kcl limits.k -D limit_file=catalog/limits/example-shared.yaml -o /tmp/thalamus-limits.yaml
           kcl pool.k -D pool_file=catalog/pools/example-pool.yaml -o /tmp/thalamus-pool.yaml
@@ -104,7 +105,7 @@ jobs:
           GOFLAGS: -p=4
         run: |
           python3 deploy/prepare-schema-bundle.py /tmp/thalamus-schemas
-          /tmp/thalamus-schemas/validate --bundle /tmp/thalamus-schemas/schemas.json /tmp/thalamus-service.yaml /tmp/thalamus-pool-service.yaml /tmp/thalamus-agentic-service.yaml /tmp/thalamus-install.yaml /tmp/thalamus-limits.yaml /tmp/thalamus-pool.yaml
+          /tmp/thalamus-schemas/validate --bundle /tmp/thalamus-schemas/schemas.json /tmp/thalamus-service.yaml /tmp/thalamus-pool-service.yaml /tmp/thalamus-agentic-service.yaml /tmp/thalamus-kserve-traffic-classes-service.yaml /tmp/thalamus-install.yaml /tmp/thalamus-limits.yaml /tmp/thalamus-pool.yaml
       - name: Test offline schema and CEL boundaries
         working-directory: deploy/schema-validator
         env:

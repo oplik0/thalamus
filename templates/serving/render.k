@@ -42,8 +42,28 @@ serving_annotations = lambda d: Deployment -> {str:str} {
 }
 
 kserve_workload = lambda service: Service, d: Deployment, artifact: Artifact, hardware: Hardware -> any {
-    # Fail closed rather than bypassing flow control when the picker is absent.
-    scheduler = kv.scheduler(service.namespace, d.name) | ({pool: {spec: {endpointPickerRef: {failureMode: "FailClose"}}}} if service.trafficClasses != Undefined else {})
+    # An explicit pool spec replaces KServe's generated spec, so retain its
+    # workload selector and picker binding while failing closed for flow control.
+    scheduler = kv.scheduler(service.namespace, d.name) | ({
+        pool: {
+            spec: {
+                selector: {
+                    matchLabels: {
+                        "app.kubernetes.io/name": d.name
+                        "app.kubernetes.io/part-of": "llminferenceservice"
+                        "kserve.io/component": "workload"
+                    }
+                }
+                targetPorts: [{number: 8000}]
+                endpointPickerRef: {
+                    name: "${d.name}-epp-service"
+                    kind: "Service"
+                    port: {number: 9002}
+                    failureMode: "FailClose"
+                }
+            }
+        }
+    } if service.trafficClasses != Undefined else {})
     template = pod_spec(service, d, hardware)
     {
         apiVersion: "serving.kserve.io/v1alpha2"
