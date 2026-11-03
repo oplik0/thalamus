@@ -1,7 +1,16 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "study": "Bounded standalone Modal real-GPU validation and output-token accounting correction",
   "recorded_at": "2026-11-03T10:21:09.601099+00:00",
+  "raw_storage": {
+    "archive": "observations.tar.gz",
+    "bytes": 775234,
+    "sha256": "ab0dc4312d996f7910b18ed3d50084b91f60ccdac2ba55d3f2896ccbe53c4843",
+    "member_count": 40,
+    "reference_resolution": "Every raw/... path in this manifest, including keys in files, denotes a member inside observations.tar.gz rather than a loose repository file.",
+    "preservation": "Canonical original captures are archived byte-for-byte; the original per-member hashes below are unchanged.",
+    "publication_correction": "Commit9546a4f published text copies that repository hooks normalized by adding final newlines and trimming trailing whitespace. This archive replaces those altered copies with the retained original bytes. No measurements were changed, no expected hashes were repinned, and no GPU run was repeated."
+  },
   "source": {
     "before_commit": "95e2933b4d0219ba624dc45d24ebc605bab51c7a",
     "fixed_commit": "9e62049a3f7dab6e9eb2177f766eb85dfb2e0308",
