@@ -243,7 +243,8 @@ def upstream_config(config, request, spec, stage, load_type, tokenizer_path, out
         "tokenizer": {"pretrained_model_name_or_path": str(tokenizer_path), "trust_remote_code": False, "load_timeout": 120},
         "data": upstream_data,
         "load": {"type": load_type, "stages": [stage], "num_workers": 1, "worker_max_concurrency": request["workload"]["concurrency"], "worker_max_tcp_connections": request["workload"]["concurrency"], "request_timeout": request["workload"]["duration_seconds"], "request_retries": 0, "stage_teardown_grace_seconds": 0, "base_seed": seed, "interval": 0},
-        "report": {"request_lifecycle": {"summary": False, "per_stage": True, "per_request": False, "per_adapter": False, "per_adapter_stage": False, "percentiles": [50, 95], "max_error_messages": 0}, "goodput": {"constraints": spec["goodput"]}, "prometheus": None, "session_lifecycle": {"summary": False, "per_stage": False, "per_session": False}},
+        # Prefer generated-token usage; upstream falls back to client counts when usage is absent.
+        "report": {"request_lifecycle": {"summary": False, "per_stage": True, "per_request": False, "per_adapter": False, "per_adapter_stage": False, "percentiles": [50, 95], "use_server_output_tokens": True, "max_error_messages": 0}, "goodput": {"constraints": spec["goodput"]}, "prometheus": None, "session_lifecycle": {"summary": False, "per_stage": False, "per_session": False}},
         "storage": {"local_storage": {"path": str(output_path)}},
     }
 

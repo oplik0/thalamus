@@ -112,6 +112,37 @@ The output path must not already exist. This runs the real inference-perf adapte
 
 No real cluster or previous deployment history is needed for these local checks. Live acceptance still requires explicitly approved infrastructure and independently collected evidence; fixtures are not evidence of deployed behavior.
 
+### Output-token accounting regression
+
+The adapter enables inference-perf 0.7.0's `report.request_lifecycle.use_server_output_tokens`. For each successful response, upstream uses captured server `usage.completion_tokens` (or its supported `output_tokens` spelling) when non-null, including a reported zero; if neither count is provided, it falls back to client-side re-tokenization of the complete response text. Thus output throughput is **server-preferred, not guaranteed server-only**, and a stage can mix sources. Streaming requests already request usage. See the pinned upstream [selection logic](https://github.com/kubernetes-sigs/inference-perf/blob/v0.7.0/inference_perf/reportgen/base.py#L318-L337) and [metric definitions](https://github.com/kubernetes-sigs/inference-perf/blob/v0.7.0/docs/metrics.md#token-accounting-and-provenance).
+
+A real H100 run with vLLM 0.23.0 and Qwen2.5-0.5B-Instruct reproduced the previous mismatch across 640 measured requests: server usage and generation counters showed 16 generated tokens per completion, while output throughput divided by successful-request throughput implied about 29.6 client-re-tokenized tokens per completion. The adapter previously left upstream's client-count default enabled. This was not a multi-turn request-count or throughput-duration correction; both rates use the same duration. Do not scale old results by an empirical factor or present those historical values as server-generation throughput.
+
+The stdlib boundary suite above parses upstream-shaped reports and mocks runner execution; it does not execute the upstream reporting library, so a config-field assertion would not guard this bug. The simulator smoke exercises the real library, but does not guarantee divergent client/server counts. For a meaningful regression, repeat the explicitly approved, bounded real-server smoke with the rebuilt adapter image, pinned model/tokenizer, streaming usage enabled, and completions constrained to exactly 16 generated tokens. Keep independent usage and server-counter evidence, with warmup/protocol requests separated from measured stage counts. Require no measured failures and verify **every** measured completion reports 16; a single protocol probe alone does not establish that for the full run.
+
+For that fixed-16-token smoke, check each normalized stage artifact as follows (substitute its actual path):
+
+```sh
+python3 - /path/to/benchmark.json <<'PY'
+import json
+import math
+import sys
+
+with open(sys.argv[1]) as source:
+    result = json.load(source)
+assert result["points"], "no measured stages"
+for point in result["points"]:
+    assert point["successes"] > 0 and point["failures"] == 0
+    rates = point["throughput"]
+    requests = rates["requests_per_second"]
+    tokens = rates["output_tokens_per_second"]
+    assert requests > 0 and tokens is not None
+    assert math.isclose(tokens / requests, 16, rel_tol=1e-6), rates
+PY
+```
+
+This ratio checks the normalized result, not the independent per-request usage prerequisite. When usage is missing, the expected result instead follows upstream's per-request client fallback; it must not be asserted to equal 16. Upstream lifecycle reports expose `client_fallback_requests.output` for inspecting that condition, but the normalized adapter artifact does not retain it or raw per-request usage. Preserve separate upstream/server evidence when verifying provenance. The option also selects server counts for upstream per-token latency and token-goodput calculations; the product still maps the same request throughput, TTFT, ITL and request-goodput fields, with no schema or unit conversion.
+
 ## Approved isolated Kubernetes verification
 
 An explicitly approved k3d run used Kubernetes `v1.34.2+k3s1`, a four-CPU node capped at 6 GiB, a loopback-only API and a private kubeconfig. No existing context was contacted or modified. Use `--kubeconfig-update-default=false` and `--kubeconfig-switch-context=false` when creating a disposable cluster, then export only that cluster's kubeconfig and pass it explicitly to every command. Use a version-matched client; this run used the client from the pinned k3s image rather than the host's newer client.
