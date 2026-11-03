@@ -1,0 +1,1436 @@
+{
+  "captured_at": "2026-11-03T00:04:58.899390+00:00",
+  "scope": "Approved isolated local Kubernetes/controller/admission/Flux/upstream-simulator checks; not complete M1-M8 live acceptance",
+  "cluster": {
+    "name": "thalamus-v2-bcc5c4c2",
+    "k3s_image": "rancher/k3s:v1.34.2-k3s1@sha256:331ec2db7e78a5ccc5da6a744003079045e0b0ecc35b7d1733b7185c5f48829e",
+    "api": "loopback only",
+    "private_kubeconfig": true,
+    "default_kubeconfig_changed": false,
+    "docker_memory_limit": "6GiB",
+    "node_allocatable": {
+      "cpu": "4",
+      "ephemeral-storage": "904010280047",
+      "hugepages-2Mi": "0",
+      "memory": "6442450Ki",
+      "pods": "110"
+    }
+  },
+  "controllers": [
+    {
+      "namespace": "flux-system",
+      "name": "helm-controller",
+      "uid": "a543129e-d18c-4e67-8a4b-4b5feab97348",
+      "generation": 1,
+      "observedGeneration": 1,
+      "desired": 1,
+      "ready": 1,
+      "images": [
+        "ghcr.io/fluxcd/helm-controller:v1.3.0"
+      ]
+    },
+    {
+      "namespace": "flux-system",
+      "name": "kustomize-controller",
+      "uid": "5c46ddaa-0591-4f10-8af2-a9ae97868f92",
+      "generation": 1,
+      "observedGeneration": 1,
+      "desired": 1,
+      "ready": 1,
+      "images": [
+        "ghcr.io/fluxcd/kustomize-controller:v1.6.1"
+      ]
+    },
+    {
+      "namespace": "flux-system",
+      "name": "source-controller",
+      "uid": "f845f6af-dc1d-4ed1-abab-908eaff1e9b1",
+      "generation": 1,
+      "observedGeneration": 1,
+      "desired": 1,
+      "ready": 1,
+      "images": [
+        "ghcr.io/fluxcd/source-controller:v1.6.2"
+      ]
+    },
+    {
+      "namespace": "cert-manager",
+      "name": "cert-manager",
+      "uid": "242ee522-e9ae-4790-959d-8e749752fb5d",
+      "generation": 1,
+      "observedGeneration": 1,
+      "desired": 1,
+      "ready": 1,
+      "images": [
+        "quay.io/jetstack/cert-manager-controller:v1.20.2"
+      ]
+    },
+    {
+      "namespace": "cert-manager",
+      "name": "cert-manager-cainjector",
+      "uid": "c437a457-9472-48c2-b863-6e93627eb8f8",
+      "generation": 1,
+      "observedGeneration": 1,
+      "desired": 1,
+      "ready": 1,
+      "images": [
+        "quay.io/jetstack/cert-manager-cainjector:v1.20.2"
+      ]
+    },
+    {
+      "namespace": "cert-manager",
+      "name": "cert-manager-webhook",
+      "uid": "6da58ce6-8661-442d-bb5c-bec9f6083d9d",
+      "generation": 1,
+      "observedGeneration": 1,
+      "desired": 1,
+      "ready": 1,
+      "images": [
+        "quay.io/jetstack/cert-manager-webhook:v1.20.2"
+      ]
+    },
+    {
+      "namespace": "agentgateway-system",
+      "name": "agentgateway",
+      "uid": "857dff9f-f222-4bea-bdc1-9f42c2c8d9dd",
+      "generation": 1,
+      "observedGeneration": 1,
+      "desired": 1,
+      "ready": 1,
+      "images": [
+        "cr.agentgateway.dev/controller:v1.7.0"
+      ]
+    },
+    {
+      "namespace": "kserve",
+      "name": "llmisvc-controller-manager",
+      "uid": "d17e6569-8c93-48a1-bdb3-d1dc7337b5f1",
+      "generation": 1,
+      "observedGeneration": 1,
+      "desired": 1,
+      "ready": 1,
+      "images": [
+        "kserve/llmisvc-controller:v0.21.0"
+      ]
+    },
+    {
+      "namespace": "kueue-system",
+      "name": "kueue-controller-manager",
+      "uid": "8679c6ee-8cdd-4e97-8636-4780f3ead1b0",
+      "generation": 1,
+      "observedGeneration": 1,
+      "desired": 1,
+      "ready": 1,
+      "images": [
+        "registry.k8s.io/kueue/kueue:v0.18.0"
+      ]
+    },
+    {
+      "namespace": "keda",
+      "name": "keda-admission",
+      "uid": "87b6e553-4bc5-4675-a4c8-a30156171c4e",
+      "generation": 1,
+      "observedGeneration": 1,
+      "desired": 1,
+      "ready": 1,
+      "images": [
+        "ghcr.io/kedacore/keda-admission-webhooks:2.20.2"
+      ]
+    },
+    {
+      "namespace": "keda",
+      "name": "keda-metrics-apiserver",
+      "uid": "3d7b0e95-b66d-4f07-bdc4-29d1fc2ad214",
+      "generation": 1,
+      "observedGeneration": 1,
+      "desired": 1,
+      "ready": 1,
+      "images": [
+        "ghcr.io/kedacore/keda-metrics-apiserver:2.20.2"
+      ]
+    },
+    {
+      "namespace": "keda",
+      "name": "keda-operator",
+      "uid": "005f1750-0f87-4eda-a781-3564936168f6",
+      "generation": 1,
+      "observedGeneration": 1,
+      "desired": 1,
+      "ready": 1,
+      "images": [
+        "ghcr.io/kedacore/keda:2.20.2"
+      ]
+    }
+  ],
+  "live_admission": {
+    "catalog_resources": 38,
+    "managed_traffic_fixture_resources": 12,
+    "mode": "server-side dry run only; synthetic model fixtures not persisted",
+    "policy_type_warnings": 0,
+    "identity_and_job_decisions": [
+      {
+        "case": "ordinary namespaced write",
+        "identity": "system:serviceaccount:thalamus-inference:catalog-reconciler",
+        "exit": 0,
+        "stdout": "configmap/qa-admission-ordinary created",
+        "stderr": "",
+        "dry_run": false
+      },
+      {
+        "case": "ordinary reserved-name denial",
+        "identity": "system:serviceaccount:thalamus-inference:catalog-reconciler",
+        "exit": 1,
+        "stdout": "",
+        "stderr": "The configmaps \"thalamus-admission-reserved\" is invalid: : ValidatingAdmissionPolicy 'live-ownership.thalamus.dev' with binding 'live-ownership.thalamus.dev' denied request: worker writes require a thalamus- name and managed-by=thalamus; reserved objects are otherwise restricted",
+        "dry_run": true
+      },
+      {
+        "case": "ordinary reserved-label denial",
+        "identity": "system:serviceaccount:thalamus-inference:catalog-reconciler",
+        "exit": 1,
+        "stdout": "",
+        "stderr": "The configmaps \"qa-admission-label\" is invalid: : ValidatingAdmissionPolicy 'live-ownership.thalamus.dev' with binding 'live-ownership.thalamus.dev' denied request: worker writes require a thalamus- name and managed-by=thalamus; reserved objects are otherwise restricted",
+        "dry_run": true
+      },
+      {
+        "case": "ordinary cluster-write denial",
+        "identity": "system:serviceaccount:thalamus-inference:catalog-reconciler",
+        "exit": 1,
+        "stdout": "",
+        "stderr": "Error from server (Forbidden): error when creating \"STDIN\": priorityclasses.scheduling.k8s.io is forbidden: User \"system:serviceaccount:thalamus-inference:catalog-reconciler\" cannot create resource \"priorityclasses\" in API group \"scheduling.k8s.io\" at the cluster scope",
+        "dry_run": true
+      },
+      {
+        "case": "pool cluster-write admission",
+        "identity": "system:serviceaccount:thalamus-system:pool-reconciler",
+        "exit": 0,
+        "stdout": "priorityclass.scheduling.k8s.io/qa-admission-priority created (server dry run)",
+        "stderr": "",
+        "dry_run": true
+      },
+      {
+        "case": "ordinary Secret-write denial",
+        "identity": "system:serviceaccount:thalamus-inference:catalog-reconciler",
+        "exit": 1,
+        "stdout": "",
+        "stderr": "Error from server (Forbidden): error when creating \"STDIN\": secrets is forbidden: User \"system:serviceaccount:thalamus-inference:catalog-reconciler\" cannot create resource \"secrets\" in API group \"\" in the namespace \"thalamus-inference\"",
+        "dry_run": true
+      },
+      {
+        "case": "pool Secret-write denial",
+        "identity": "system:serviceaccount:thalamus-system:pool-reconciler",
+        "exit": 1,
+        "stdout": "",
+        "stderr": "Error from server (Forbidden): error when creating \"STDIN\": secrets is forbidden: User \"system:serviceaccount:thalamus-system:pool-reconciler\" cannot create resource \"secrets\" in API group \"\" in the namespace \"thalamus-inference\"",
+        "dry_run": true
+      },
+      {
+        "case": "pool namespaced-write denial",
+        "identity": "system:serviceaccount:thalamus-system:pool-reconciler",
+        "exit": 1,
+        "stdout": "",
+        "stderr": "Error from server (Forbidden): error when creating \"STDIN\": configmaps is forbidden: User \"system:serviceaccount:thalamus-system:pool-reconciler\" cannot create resource \"configmaps\" in API group \"\" in the namespace \"thalamus-inference\"",
+        "dry_run": true
+      },
+      {
+        "case": "worker unreserved-write denial",
+        "identity": "system:serviceaccount:thalamus-system:thalamus-worker",
+        "exit": 1,
+        "stdout": "",
+        "stderr": "The configmaps \"qa-worker-unreserved\" is invalid: : ValidatingAdmissionPolicy 'live-ownership.thalamus.dev' with binding 'live-ownership.thalamus.dev' denied request: worker writes require a thalamus- name and managed-by=thalamus; reserved objects are otherwise restricted",
+        "dry_run": true
+      },
+      {
+        "case": "worker bounded owned-write admission",
+        "identity": "system:serviceaccount:thalamus-system:thalamus-worker",
+        "exit": 0,
+        "stdout": "configmap/thalamus-admission-reserved created",
+        "stderr": "",
+        "dry_run": false
+      },
+      {
+        "case": "approved pinned Job admission",
+        "identity": "system:serviceaccount:thalamus-system:thalamus-worker",
+        "exit": 0,
+        "stdout": "job.batch/thalamus-run-080fd149-9040-406b-a8bf-f4f56b8874b5 created (server dry run)",
+        "stderr": "",
+        "dry_run": true
+      },
+      {
+        "case": "host network rejected",
+        "identity": "system:serviceaccount:thalamus-system:thalamus-worker",
+        "exit": 1,
+        "stdout": "",
+        "stderr": "The jobs \"thalamus-run-080fd149-9040-406b-a8bf-f4f56b8874b5\" is invalid: : ValidatingAdmissionPolicy 'live-worker-jobs.thalamus.dev' with binding 'live-worker-jobs.thalamus.dev' denied request: worker Jobs must use approved run/debug templates, tokenless accounts and session-scoped Secrets",
+        "dry_run": true
+      },
+      {
+        "case": "unapproved command rejected",
+        "identity": "system:serviceaccount:thalamus-system:thalamus-worker",
+        "exit": 1,
+        "stdout": "",
+        "stderr": "The jobs \"thalamus-run-080fd149-9040-406b-a8bf-f4f56b8874b5\" is invalid: : ValidatingAdmissionPolicy 'live-worker-jobs.thalamus.dev' with binding 'live-worker-jobs.thalamus.dev' denied request: worker Jobs must use approved run/debug templates, tokenless accounts and session-scoped Secrets",
+        "dry_run": true
+      },
+      {
+        "case": "unpinned image rejected",
+        "identity": "system:serviceaccount:thalamus-system:thalamus-worker",
+        "exit": 1,
+        "stdout": "",
+        "stderr": "The jobs \"thalamus-run-080fd149-9040-406b-a8bf-f4f56b8874b5\" is invalid: : ValidatingAdmissionPolicy 'live-worker-jobs.thalamus.dev' with binding 'live-worker-jobs.thalamus.dev' denied request: worker Jobs must use approved run/debug templates, tokenless accounts and session-scoped Secrets",
+        "dry_run": true
+      },
+      {
+        "case": "service-account token mount rejected",
+        "identity": "system:serviceaccount:thalamus-system:thalamus-worker",
+        "exit": 1,
+        "stdout": "",
+        "stderr": "The jobs \"thalamus-run-080fd149-9040-406b-a8bf-f4f56b8874b5\" is invalid: : ValidatingAdmissionPolicy 'live-worker-jobs.thalamus.dev' with binding 'live-worker-jobs.thalamus.dev' denied request: worker Jobs must use approved run/debug templates, tokenless accounts and session-scoped Secrets",
+        "dry_run": true
+      },
+      {
+        "case": "approved Job actually created",
+        "identity": "system:serviceaccount:thalamus-system:thalamus-worker",
+        "exit": 0,
+        "stdout": "job.batch/thalamus-run-080fd149-9040-406b-a8bf-f4f56b8874b5 created",
+        "stderr": "",
+        "dry_run": false
+      }
+    ],
+    "job_uid": "d2b5879e-3365-49eb-a9a2-54983469b43b",
+    "job_completed": true,
+    "job_disappeared_after_ttl_zero": true
+  },
+  "flux": {
+    "baseline_commit": "9eee1a7a8215d75c3bc5ef07b01713b8f55cdf23",
+    "held_source_commit": "a1c3f87cb4a469fb1c9af733525936ac25b535a3",
+    "final_commit": "1617c4a79444b14b2e5f2b052b82cc86b2a5b94d",
+    "final_source_applied_attempted_revision": "refs/heads/qa/k3d-bcc5c4c2@sha1:1617c4a79444b14b2e5f2b052b82cc86b2a5b94d",
+    "paths": [
+      ".qa/k3d/inference",
+      ".qa/k3d/pools"
+    ],
+    "wait_and_prune": true,
+    "held_dependency_message": "dependency 'thalamus-system/pool-sync' revision is not up to date",
+    "held_pool_generation": 2,
+    "held_pool_observed_generation": 2,
+    "both_final_ready": true,
+    "probe_marker": "PriorityClass annotation; value immutable",
+    "protected_branch": false
+  },
+  "routed_simulator": {
+    "events": [
+      {
+        "phase": "routed_completion",
+        "status": 200,
+        "response": {
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "text": "Testing"
+            }
+          ],
+          "created": 1793661962,
+          "id": "cmpl-97ead59a-dd0b-5d9e-9f5f-baff399b983d-0",
+          "model": "thalamus-sim",
+          "object": "text_completion",
+          "usage": {
+            "completion_tokens": 1,
+            "prompt_tokens": 5,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "total_tokens": 6
+          }
+        },
+        "chunks": null
+      },
+      {
+        "phase": "routed_stream",
+        "status": 200,
+        "response": null,
+        "chunks": [
+          "{\"id\":\"cmpl-ecd82705-5722-5c59-94c4-c04ef0e76dc1-0\",\"model\":\"thalamus-sim\",\"object\":\"text_completion\",\"created\":1793661962,\"usage\":null,\"choices\":[{\"index\":0,\"finish_reason\":null,\"text\":\"The \"}]}",
+          "{\"id\":\"cmpl-ecd82705-5722-5c59-94c4-c04ef0e76dc1-0\",\"model\":\"thalamus-sim\",\"object\":\"text_completion\",\"created\":1793661962,\"usage\":null,\"choices\":[{\"index\":0,\"finish_reason\":null,\"text\":\"rest \"}]}",
+          "{\"id\":\"cmpl-ecd82705-5722-5c59-94c4-c04ef0e76dc1-0\",\"model\":\"thalamus-sim\",\"object\":\"text_completion\",\"created\":1793661962,\"usage\":null,\"choices\":[{\"index\":0,\"finish_reason\":\"stop\",\"text\":\"\"}]}",
+          "[DONE]"
+        ]
+      }
+    ],
+    "picker_count_deltas": {
+      "llm_d_epp_plugin_duration_seconds_count{extension_point=\"Picker\",plugin_name=\"max-score-picker\",plugin_type=\"max-score-picker\"}": 2.0
+    },
+    "ready_endpoints_after": {
+      "llm_d_epp_ready_endpoints{name=\"sim-pool\"}": 1.0
+    }
+  },
+  "managed_scheduler": {
+    "scope": "upstream-controller probe, not Thalamus catalog/model/GPU acceptance",
+    "llmisvc": {
+      "name": "qa-scheduler-overlay",
+      "namespace": "thalamus-kserve-qa",
+      "uid": "dfabec89-fb6f-4c4d-8c5f-5c038f3befce",
+      "modelReplicas": 0,
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-11-02T23:45:45Z",
+          "message": "Inference Pool thalamus-kserve-qa/qa-scheduler-overlay-inference-pool exists but no Gateway controller has accepted it yet",
+          "reason": "WaitingForGateway",
+          "severity": "Info",
+          "status": "False",
+          "type": "InferencePoolReady"
+        },
+        {
+          "lastTransitionTime": "2026-11-02T23:45:49Z",
+          "severity": "Info",
+          "status": "True",
+          "type": "MainWorkloadReady"
+        },
+        {
+          "lastTransitionTime": "2026-11-02T23:43:11Z",
+          "status": "True",
+          "type": "PresetsCombined"
+        },
+        {
+          "lastTransitionTime": "2026-11-02T23:45:45Z",
+          "message": "Inference Pool thalamus-kserve-qa/qa-scheduler-overlay-inference-pool exists but no Gateway controller has accepted it yet",
+          "reason": "WaitingForGateway",
+          "status": "False",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-11-02T23:45:45Z",
+          "message": "Inference Pool thalamus-kserve-qa/qa-scheduler-overlay-inference-pool exists but no Gateway controller has accepted it yet",
+          "reason": "WaitingForGateway",
+          "status": "False",
+          "type": "RouterReady"
+        },
+        {
+          "lastTransitionTime": "2026-11-02T23:46:18Z",
+          "severity": "Info",
+          "status": "True",
+          "type": "SchedulerWorkloadReady"
+        },
+        {
+          "lastTransitionTime": "2026-11-02T23:45:49Z",
+          "status": "True",
+          "type": "WorkloadsReady"
+        }
+      ]
+    },
+    "modelDeployment": {
+      "name": "qa-scheduler-overlay-kserve",
+      "replicas": 0,
+      "modelPodCount": 0
+    },
+    "scheduler": {
+      "name": "qa-scheduler-overlay-kserve-router-scheduler",
+      "ownerReferences": [
+        {
+          "apiVersion": "serving.kserve.io/v1alpha2",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "LLMInferenceService",
+          "name": "qa-scheduler-overlay",
+          "uid": "dfabec89-fb6f-4c4d-8c5f-5c038f3befce"
+        }
+      ],
+      "replicas": 1,
+      "readyReplicas": 1,
+      "image": "ghcr.io/llm-d/llm-d-router-endpoint-picker:v1.0.0@sha256:024188e998f516879f68532016ca24fabca00afbdcc2af9a61b17634e197df2c",
+      "command": [
+        "/app/epp",
+        "--pool-name",
+        "qa-scheduler-overlay-inference-pool",
+        "--pool-namespace",
+        "thalamus-kserve-qa",
+        "--zap-encoder",
+        "json",
+        "--grpc-port=9002",
+        "--grpc-health-port",
+        "9003",
+        "--secure-serving=true",
+        "--metrics-endpoint-auth=false"
+      ],
+      "args": [
+        "--config-text",
+        "apiVersion: llm-d.ai/v1\nkind: EndpointPickerConfig\nplugins:\n- type: single-profile-handler\n- type: decode-filter\n- type: load-aware-scorer\n- type: max-score-picker\n- parameters:\n    autoTune: false\n    blockSizeTokens: 64\n    lruCapacityPerServer: 31250\n  type: approx-prefix-cache-producer\n- type: prefix-cache-scorer\nschedulingProfiles:\n- name: default\n  plugins:\n  - pluginRef: decode-filter\n  - pluginRef: load-aware-scorer\n    weight: 1\n  - pluginRef: prefix-cache-scorer\n    weight: 1\n  - pluginRef: max-score-picker\n"
+      ],
+      "lifecycle": {
+        "preStop": {
+          "sleep": {
+            "seconds": 15
+          }
+        }
+      },
+      "ports": [
+        {
+          "containerPort": 9002,
+          "name": "grpc",
+          "protocol": "TCP"
+        },
+        {
+          "containerPort": 9003,
+          "name": "grpc-health",
+          "protocol": "TCP"
+        },
+        {
+          "containerPort": 9090,
+          "name": "metrics",
+          "protocol": "TCP"
+        },
+        {
+          "containerPort": 5557,
+          "name": "zmq",
+          "protocol": "TCP"
+        }
+      ],
+      "securityContext": {
+        "allowPrivilegeEscalation": false,
+        "capabilities": {
+          "drop": [
+            "ALL"
+          ]
+        },
+        "readOnlyRootFilesystem": true,
+        "runAsNonRoot": true,
+        "seccompProfile": {
+          "type": "RuntimeDefault"
+        }
+      }
+    },
+    "pods": [
+      {
+        "name": "qa-scheduler-overlay-kserve-router-scheduler-67cf6ddb5b-qbpn5",
+        "uid": "aaf0ef01-e620-442a-b389-147c2a68a3cc",
+        "phase": "Running",
+        "containers": [
+          {
+            "name": "main",
+            "ready": true,
+            "imageID": "ghcr.io/llm-d/llm-d-router-endpoint-picker@sha256:024188e998f516879f68532016ca24fabca00afbdcc2af9a61b17634e197df2c"
+          }
+        ]
+      }
+    ]
+  },
+  "simulator_artifact_sha256": "375a3f5aee6c722bd212d4018714cdd12090c5096a87c0bc4e43d1791a4622ac",
+  "source_fixes": [
+    "Enable EPP TLS for pinned Kubernetes agentgateway integration",
+    "Emit complete KServe InferencePool override for unpooled traffic classes",
+    "Preserve external GIE pin and document verified controller prerequisites"
+  ],
+  "limits": [
+    "No GPU resources or model execution",
+    "No Thalamus worker evidence ingestion or result upload",
+    "No protected-forge promotion or complete control-plane deployment",
+    "No GPU KV/cache, preemption or production SLO evidence",
+    "Simulator scripts mounted on pinned base image, not a release adapter image",
+    "Native scheduler preset patch is Helm-owned and may be restored by reconciliation"
+  ],
+  "cleanup": {
+    "completed_at": "2026-11-03T00:06:03.806785+00:00",
+    "owned_containers": "",
+    "named_containers": "",
+    "network": "",
+    "image_volume": "",
+    "loopback_api_connect_errno": 111,
+    "private_kubeconfig_removed": true,
+    "default_kubeconfig_read_or_changed": false,
+    "disposable_final_check_database_removed": true
+  },
+  "offline_schema_regression": {
+    "schemas_sha256": "45b1b0de02aa999c35b52bcf5df8432d63aeba27fc0aa1b5483818a67bc11801",
+    "counterexample_cases": [
+      {
+        "name": "fixed permanent managed traffic-class fixture",
+        "success_expected": true,
+        "exit_code": 0,
+        "stdout": "validated 12 resources using Kubernetes v1.34.2 and pinned CRDs (offline schema and bounded CEL compilation only)\n",
+        "stderr": ""
+      },
+      {
+        "name": "original live probe with complete pool",
+        "success_expected": true,
+        "exit_code": 0,
+        "stdout": "validated 13 resources using Kubernetes v1.34.2 and pinned CRDs (offline schema and bounded CEL compilation only)\n",
+        "stderr": ""
+      },
+      {
+        "name": "preserved pre-fix incomplete pool",
+        "success_expected": false,
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "schema validation: /tmp/thalamus-k3d-lti9evha/serving/kserve-traffic-classes-rendered.json:document 1.items[5]: group=\"serving.kserve.io\" kind=\"LLMInferenceService\" version=\"v1alpha2\": [resource.spec.router.scheduler.pool.spec.endpointPickerRef.name: Required value, resource.spec.router.scheduler.pool.spec.selector: Required value, resource.spec.router.scheduler.pool.spec.targetPorts: Required value]\n"
+      }
+    ],
+    "current_source_fixtures": [
+      "/tmp/thalamus-k3d-lti9evha/schema-fixtures/service.yaml",
+      "/tmp/thalamus-k3d-lti9evha/schema-fixtures/pool-service.yaml",
+      "/tmp/thalamus-k3d-lti9evha/schema-fixtures/managed-traffic.yaml",
+      "/tmp/thalamus-k3d-lti9evha/schema-fixtures/install.yaml",
+      "/tmp/thalamus-k3d-lti9evha/schema-fixtures/limits.yaml",
+      "/tmp/thalamus-k3d-lti9evha/schema-fixtures/pool.yaml"
+    ],
+    "current_validation": "validated 132 resources using Kubernetes v1.34.2 and pinned CRDs (offline schema and bounded CEL compilation only)\n"
+  },
+  "local_project_gate": {
+    "command": "mise run ci",
+    "exit_code": 0,
+    "cargo_build": "workspace all targets all features",
+    "rust": {
+      "passed": 452,
+      "failed": 0,
+      "ignored": 4
+    },
+    "additional_postgres_store_tests_passed": 3,
+    "clippy_warnings_denied": true,
+    "rustfmt_check": true,
+    "python_tests_passed": 29,
+    "kcl_tests_passed": 189,
+    "ui_tests_passed": 22,
+    "ui_build": true,
+    "catalog_and_schema_freshness": true,
+    "ignored_scope": "Three store tests exercised separately; one Keycloak integration test requires its fixture. Real OIDC smoke was exercised previously, not repeated for these serving-template fixes.",
+    "ui_typecheck": {
+      "files": 289,
+      "errors": 0,
+      "warnings": 0
+    }
+  },
+  "simulator_jobs": {
+    "namespace": "thalamus-sim-qa",
+    "simulator": {
+      "image_tag_resolved": "ghcr.io/llm-d/llm-d-inference-sim:v1.0.0",
+      "image": "ghcr.io/llm-d/llm-d-inference-sim@sha256:1908c421cbb44130a3212934a0dd1e279dacfe3480be93f4c28b45cd29b93ec8",
+      "linux_amd64_child_digest": "sha256:702709d40cee6a31268733f5a3d47f2720eb36d0db41687a799c27cb71d32cf3",
+      "pod_name": "llm-d-sim-5479d589d6-xfn74",
+      "pod_uid": "e155a73b-3f57-4ce6-b632-bf7c50458c80",
+      "pod_ip": "10.42.0.11",
+      "node": "k3d-thalamus-v2-bcc5c4c2-server-0",
+      "imageID": "ghcr.io/llm-d/llm-d-inference-sim@sha256:1908c421cbb44130a3212934a0dd1e279dacfe3480be93f4c28b45cd29b93ec8",
+      "ready": "True",
+      "restart_count": 0,
+      "resources": {
+        "limits": {
+          "cpu": "500m",
+          "memory": "256Mi"
+        },
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi"
+        }
+      },
+      "args": [
+        "--port",
+        "8000",
+        "--model",
+        "thalamus-sim",
+        "--max-waiting-queue-length",
+        "1000"
+      ]
+    },
+    "service": {
+      "name": "llm-d-sim",
+      "uid": "4784082b-f87f-4cd1-9906-35e5f19417c2",
+      "dns_name": "llm-d-sim.thalamus-sim-qa.svc.cluster.local",
+      "port": 8000,
+      "type": "ClusterIP",
+      "ip": "10.43.82.149"
+    },
+    "http_probe": {
+      "name": "sim-http-probe",
+      "uid": "d8d4b269-b84c-4317-8b76-98eb10a60989",
+      "conditions": [
+        {
+          "lastProbeTime": "2026-11-02T23:17:26Z",
+          "lastTransitionTime": "2026-11-02T23:17:26Z",
+          "message": "Reached expected number of succeeded pods",
+          "reason": "CompletionsReached",
+          "status": "True",
+          "type": "SuccessCriteriaMet"
+        },
+        {
+          "lastProbeTime": "2026-11-02T23:17:26Z",
+          "lastTransitionTime": "2026-11-02T23:17:26Z",
+          "message": "Reached expected number of succeeded pods",
+          "reason": "CompletionsReached",
+          "status": "True",
+          "type": "Complete"
+        }
+      ],
+      "pod_name": "sim-http-probe-q47gl",
+      "pod_uid": "54f80b4e-56ef-49c7-99a0-0269728ce3ca",
+      "pod_phase": "Succeeded",
+      "containers": [
+        {
+          "name": "probe",
+          "imageID": "quay.io/inference-perf/inference-perf@sha256:d247e6ad725dc5bb56df71d115abc8ca455bba9f0ccd4110e14bbb56504250ec",
+          "restart_count": 0,
+          "state": {
+            "terminated": {
+              "containerID": "containerd://ff2c4cbacc25a16ddf6b258133c9f9b333a40c301bc8c8bc89c023205fb092e6",
+              "exitCode": 0,
+              "finishedAt": "2026-11-02T23:17:23Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-02T23:17:20Z"
+            }
+          }
+        }
+      ],
+      "observed_events": [
+        {
+          "event": "client_identity",
+          "pod_name": "sim-http-probe-q47gl",
+          "pod_uid": "54f80b4e-56ef-49c7-99a0-0269728ce3ca",
+          "pod_ip": "10.42.0.14",
+          "dns_name": "llm-d-sim.thalamus-sim-qa.svc.cluster.local",
+          "dns_addresses": [
+            "10.43.82.149"
+          ],
+          "target": "http://llm-d-sim.thalamus-sim-qa.svc.cluster.local:8000"
+        },
+        {
+          "event": "health",
+          "status": 200,
+          "content_type": "application/json",
+          "body": ""
+        },
+        {
+          "event": "models",
+          "status": 200,
+          "body": {
+            "object": "list",
+            "data": [
+              {
+                "id": "thalamus-sim",
+                "object": "model",
+                "created": 1793661443,
+                "owned_by": "vllm",
+                "root": "thalamus-sim",
+                "parent": null,
+                "max_model_len": 1024
+              }
+            ]
+          }
+        },
+        {
+          "event": "completion",
+          "status": 200,
+          "content_type": "application/json",
+          "elapsed_seconds": 0.008201601999644481,
+          "body": {
+            "id": "cmpl-5a61ed19-d332-5ba4-a732-ebd5f57d6bfb-0",
+            "model": "thalamus-sim",
+            "object": "text_completion",
+            "created": 1793661443,
+            "usage": {
+              "prompt_tokens": 6,
+              "completion_tokens": 8,
+              "total_tokens": 14,
+              "prompt_tokens_details": {
+                "cached_tokens": 0
+              }
+            },
+            "choices": [
+              {
+                "index": 0,
+                "finish_reason": "length",
+                "text": "I am fine, how are you today"
+              }
+            ]
+          }
+        },
+        {
+          "event": "streaming_completion",
+          "status": 200,
+          "content_type": "text/event-stream",
+          "elapsed_seconds": 0.00614322900037223,
+          "done": true,
+          "finish_reason_seen": true,
+          "chunk_count": 10,
+          "text": "Testing, testing 1,2,3",
+          "usage": [
+            {
+              "prompt_tokens": 6,
+              "completion_tokens": 8,
+              "total_tokens": 14,
+              "prompt_tokens_details": {
+                "cached_tokens": 0
+              }
+            }
+          ],
+          "chunks": [
+            {
+              "id": "cmpl-d49ac0e4-02ed-5322-8afb-96ee0687cbe7-0",
+              "model": "thalamus-sim",
+              "object": "text_completion",
+              "created": 1793661443,
+              "usage": null,
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "text": "Testing"
+                }
+              ]
+            },
+            {
+              "id": "cmpl-d49ac0e4-02ed-5322-8afb-96ee0687cbe7-0",
+              "model": "thalamus-sim",
+              "object": "text_completion",
+              "created": 1793661443,
+              "usage": null,
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "text": ", "
+                }
+              ]
+            },
+            {
+              "id": "cmpl-d49ac0e4-02ed-5322-8afb-96ee0687cbe7-0",
+              "model": "thalamus-sim",
+              "object": "text_completion",
+              "created": 1793661443,
+              "usage": null,
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "text": "testing "
+                }
+              ]
+            },
+            {
+              "id": "cmpl-d49ac0e4-02ed-5322-8afb-96ee0687cbe7-0",
+              "model": "thalamus-sim",
+              "object": "text_completion",
+              "created": 1793661443,
+              "usage": null,
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "text": "1"
+                }
+              ]
+            },
+            {
+              "id": "cmpl-d49ac0e4-02ed-5322-8afb-96ee0687cbe7-0",
+              "model": "thalamus-sim",
+              "object": "text_completion",
+              "created": 1793661443,
+              "usage": null,
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "text": ","
+                }
+              ]
+            },
+            {
+              "id": "cmpl-d49ac0e4-02ed-5322-8afb-96ee0687cbe7-0",
+              "model": "thalamus-sim",
+              "object": "text_completion",
+              "created": 1793661443,
+              "usage": null,
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "text": "2"
+                }
+              ]
+            },
+            {
+              "id": "cmpl-d49ac0e4-02ed-5322-8afb-96ee0687cbe7-0",
+              "model": "thalamus-sim",
+              "object": "text_completion",
+              "created": 1793661443,
+              "usage": null,
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "text": ","
+                }
+              ]
+            },
+            {
+              "id": "cmpl-d49ac0e4-02ed-5322-8afb-96ee0687cbe7-0",
+              "model": "thalamus-sim",
+              "object": "text_completion",
+              "created": 1793661443,
+              "usage": null,
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "text": "3"
+                }
+              ]
+            },
+            {
+              "id": "cmpl-d49ac0e4-02ed-5322-8afb-96ee0687cbe7-0",
+              "model": "thalamus-sim",
+              "object": "text_completion",
+              "created": 1793661443,
+              "usage": null,
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": "length",
+                  "text": ""
+                }
+              ]
+            },
+            {
+              "id": "cmpl-d49ac0e4-02ed-5322-8afb-96ee0687cbe7-0",
+              "model": "thalamus-sim",
+              "object": "text_completion",
+              "created": 1793661443,
+              "usage": {
+                "prompt_tokens": 6,
+                "completion_tokens": 8,
+                "total_tokens": 14,
+                "prompt_tokens_details": {
+                  "cached_tokens": 0
+                }
+              },
+              "choices": []
+            }
+          ]
+        },
+        {
+          "event": "probe_complete",
+          "assertions": "service DNS, health, model discovery, JSON completion model/text/usage/finish, streaming SSE/DONE/text/finish, metrics"
+        }
+      ],
+      "metrics_http_status": 200,
+      "metric_names": [
+        "process_cpu_seconds_total",
+        "process_max_fds",
+        "process_network_receive_bytes_total",
+        "process_network_transmit_bytes_total",
+        "process_open_fds",
+        "process_resident_memory_bytes",
+        "process_start_time_seconds",
+        "process_virtual_memory_bytes",
+        "process_virtual_memory_max_bytes",
+        "vllm:cache_config_info",
+        "vllm:e2e_request_latency_seconds_bucket",
+        "vllm:e2e_request_latency_seconds_count",
+        "vllm:e2e_request_latency_seconds_sum",
+        "vllm:generation_tokens_total",
+        "vllm:inter_token_latency_seconds_bucket",
+        "vllm:inter_token_latency_seconds_count",
+        "vllm:inter_token_latency_seconds_sum",
+        "vllm:kv_cache_usage_perc",
+        "vllm:max_num_generation_tokens_bucket",
+        "vllm:max_num_generation_tokens_count",
+        "vllm:max_num_generation_tokens_sum",
+        "vllm:num_requests_running",
+        "vllm:num_requests_waiting",
+        "vllm:prompt_tokens_total",
+        "vllm:request_decode_time_seconds_bucket",
+        "vllm:request_decode_time_seconds_count",
+        "vllm:request_decode_time_seconds_sum",
+        "vllm:request_generation_tokens_bucket",
+        "vllm:request_generation_tokens_count",
+        "vllm:request_generation_tokens_sum",
+        "vllm:request_inference_time_seconds_bucket",
+        "vllm:request_inference_time_seconds_count",
+        "vllm:request_inference_time_seconds_sum",
+        "vllm:request_params_max_tokens_bucket",
+        "vllm:request_params_max_tokens_count",
+        "vllm:request_params_max_tokens_sum",
+        "vllm:request_prefill_time_seconds_bucket",
+        "vllm:request_prefill_time_seconds_count",
+        "vllm:request_prefill_time_seconds_sum",
+        "vllm:request_prompt_tokens_bucket",
+        "vllm:request_prompt_tokens_count",
+        "vllm:request_prompt_tokens_sum",
+        "vllm:request_success_total",
+        "vllm:request_time_per_output_token_seconds_bucket",
+        "vllm:request_time_per_output_token_seconds_count",
+        "vllm:request_time_per_output_token_seconds_sum",
+        "vllm:time_per_output_token_seconds_bucket",
+        "vllm:time_per_output_token_seconds_count",
+        "vllm:time_per_output_token_seconds_sum",
+        "vllm:time_to_first_token_seconds_bucket",
+        "vllm:time_to_first_token_seconds_count",
+        "vllm:time_to_first_token_seconds_sum"
+      ]
+    },
+    "adapter": {
+      "name": "sim-inference-perf-adapter",
+      "uid": "dab4c048-e326-4f5f-aa73-ae860d71040d",
+      "conditions": [
+        {
+          "lastProbeTime": "2026-11-02T23:19:48Z",
+          "lastTransitionTime": "2026-11-02T23:19:48Z",
+          "message": "Reached expected number of succeeded pods",
+          "reason": "CompletionsReached",
+          "status": "True",
+          "type": "SuccessCriteriaMet"
+        },
+        {
+          "lastProbeTime": "2026-11-02T23:19:48Z",
+          "lastTransitionTime": "2026-11-02T23:19:48Z",
+          "message": "Reached expected number of succeeded pods",
+          "reason": "CompletionsReached",
+          "status": "True",
+          "type": "Complete"
+        }
+      ],
+      "pod_name": "sim-inference-perf-adapter-r2trm",
+      "pod_uid": "ec18c0ca-2493-40e6-bcb8-ccc16e818587",
+      "pod_phase": "Succeeded",
+      "containers": [
+        {
+          "name": "simulator-sidecar",
+          "imageID": "ghcr.io/llm-d/llm-d-inference-sim@sha256:1908c421cbb44130a3212934a0dd1e279dacfe3480be93f4c28b45cd29b93ec8",
+          "restart_count": 0,
+          "state": {
+            "terminated": {
+              "containerID": "containerd://4b37cf94560a4ed959807b786e645912cfadc5f5193614bd5986773ef2e39c02",
+              "exitCode": 0,
+              "finishedAt": "2026-11-02T23:19:44Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-02T23:18:28Z"
+            }
+          }
+        },
+        {
+          "name": "adapter",
+          "imageID": "quay.io/inference-perf/inference-perf@sha256:d247e6ad725dc5bb56df71d115abc8ca455bba9f0ccd4110e14bbb56504250ec",
+          "restart_count": 0,
+          "state": {
+            "terminated": {
+              "containerID": "containerd://fe086e057680960cee182d21c1097257d5d8249fbe4d4aa6f1dd3c8f7023f466",
+              "exitCode": 0,
+              "finishedAt": "2026-11-02T23:19:43Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-02T23:18:30Z"
+            }
+          }
+        }
+      ],
+      "run_id": "87f61711-b7de-49ee-9d3b-2be4c78c1214",
+      "production_source_sha256": {
+        "adapter.py": "349f9cfc59a5635be0addc35f038fefeebb0d31f24f4d0a5be81e1472f1df3d1",
+        "snapshot.py": "0825ed76bcfec10dc9ed61ba599348669c173136ba8107bb4e3312f3754215f4",
+        "upstream_entry.py": "0e54cb8b4bcf06386f97cb565afa56a25446e911798d6de5c0e2204d3c9c3506"
+      },
+      "configmap_immutable": true,
+      "invocation": "python /opt/thalamus-inference-perf/adapter.py --local --output /result/result.json",
+      "target": "http://127.0.0.1:8000/v1",
+      "sidecar": "Native restartable initContainer simulator-sidecar; automatically terminated successfully after adapter exit0",
+      "tokenizer": {
+        "repository": "HuggingFaceTB/SmolLM2-135M-Instruct",
+        "revision": "12fd25f77366fa6b3b4b768ec3050bf629380bac"
+      },
+      "warmup_seconds": 1,
+      "definition": {
+        "load": {
+          "type": "concurrent",
+          "stages": [
+            {
+              "concurrency_level": 2,
+              "num_requests": 6
+            },
+            {
+              "concurrency_level": 4,
+              "num_requests": 6
+            }
+          ]
+        },
+        "data": {
+          "type": "shared_prefix",
+          "num_groups": 1,
+          "num_prompts_per_group": 4,
+          "system_prompt_len": 16,
+          "question_len": 16,
+          "output_len": 8,
+          "enable_multi_turn_chat": true
+        },
+        "goodput": {
+          "ttft": 5,
+          "itl": 1
+        }
+      },
+      "points": [
+        {
+          "stage": {
+            "type": "concurrent",
+            "concurrency_level": 2,
+            "num_requests": 6
+          },
+          "successes": 6,
+          "failures": 0,
+          "ttft_seconds": {
+            "p50": 0.0011039005003112834,
+            "p95": 0.005000254999686149
+          },
+          "itl_seconds": {
+            "p50": 1.8805999843607424e-05,
+            "p95": 0.0002607873497254334
+          },
+          "throughput": {
+            "requests_per_second": 8.18253550007564,
+            "output_tokens_per_second": 72.27906358400148
+          },
+          "goodput": {
+            "requests_per_second": 8.18253550007564
+          },
+          "achieved_request_rate": 8.207851123960046
+        },
+        {
+          "stage": {
+            "type": "concurrent",
+            "concurrency_level": 4,
+            "num_requests": 6
+          },
+          "successes": 6,
+          "failures": 0,
+          "ttft_seconds": {
+            "p50": 0.0012453150002329494,
+            "p95": 0.004917134499692111
+          },
+          "itl_seconds": {
+            "p50": 0.0,
+            "p95": 0.0002134141999704289
+          },
+          "throughput": {
+            "requests_per_second": 6.724836419501494,
+            "output_tokens_per_second": 62.76513991534728
+          },
+          "goodput": {
+            "requests_per_second": 6.724836419501494
+          },
+          "achieved_request_rate": 6.739892240898179
+        }
+      ],
+      "result_file": "/tmp/thalamus-k3d-lti9evha/simulator/local-simulator-result.json",
+      "result_bytes": 2380,
+      "result_sha256": "375a3f5aee6c722bd212d4018714cdd12090c5096a87c0bc4e43d1791a4622ac",
+      "upload_performed": false,
+      "adapter_resources": {
+        "limits": {
+          "cpu": "1",
+          "memory": "1536Mi"
+        },
+        "requests": {
+          "cpu": "250m",
+          "memory": "768Mi"
+        }
+      },
+      "sidecar_resources": {
+        "limits": {
+          "cpu": "500m",
+          "memory": "256Mi"
+        },
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi"
+        }
+      },
+      "installation_deviation": "No adapter image build: exact unmodified production adapter.py/snapshot.py/upstream_entry.py mounted in immutable ConfigMap atop repository-pinned inference-perf base digest, with a private output-printing wrapper. runner.image is actual base image digest, not a packaged production adapter digest."
+    },
+    "network_policy": {
+      "default_deny": "Ingress and Egress all namespace Pods; additive policy permits selected same-namespace simulator clients, cluster DNS, adapter-only public TCP443 tokenizer acquisition excluding private/link-local/loopback ranges. Serving owner may add policies to own resources.",
+      "allowed_client_label": "thalamus.qa.client=sim-probe",
+      "gateway_label": "gateway.networking.k8s.io/gateway-name=sim-gateway",
+      "epp_label": "app.kubernetes.io/name=sim-epp",
+      "paired_confirmation": {
+        "allowed": {
+          "name": "sim-network-allowed-confirm",
+          "uid": "9a199e99-cbf5-4145-8454-223ada14a148",
+          "conditions": [
+            {
+              "lastProbeTime": "2026-11-02T23:21:29Z",
+              "lastTransitionTime": "2026-11-02T23:21:29Z",
+              "message": "Reached expected number of succeeded pods",
+              "reason": "CompletionsReached",
+              "status": "True",
+              "type": "SuccessCriteriaMet"
+            },
+            {
+              "lastProbeTime": "2026-11-02T23:21:29Z",
+              "lastTransitionTime": "2026-11-02T23:21:29Z",
+              "message": "Reached expected number of succeeded pods",
+              "reason": "CompletionsReached",
+              "status": "True",
+              "type": "Complete"
+            }
+          ],
+          "pod_name": "sim-network-allowed-confirm-6hnmh",
+          "pod_uid": "3b24237b-51d5-418f-b4c8-87715ec925e3",
+          "pod_phase": "Succeeded",
+          "containers": [
+            {
+              "name": "probe",
+              "imageID": "quay.io/inference-perf/inference-perf@sha256:d247e6ad725dc5bb56df71d115abc8ca455bba9f0ccd4110e14bbb56504250ec",
+              "restart_count": 0,
+              "state": {
+                "terminated": {
+                  "containerID": "containerd://8c5c39833cffe6e4b0fc511fd0d6e906859be4b0f55bc7639958a8e498281a0a",
+                  "exitCode": 0,
+                  "finishedAt": "2026-11-02T23:21:26Z",
+                  "reason": "Completed",
+                  "startedAt": "2026-11-02T23:21:23Z"
+                }
+              }
+            }
+          ],
+          "logs": "{\"event\": \"policy_client\", \"pod_uid\": \"3b24237b-51d5-418f-b4c8-87715ec925e3\", \"expect_denied\": false, \"dns_addresses\": [\"10.43.82.149\"]}\n{\"event\": \"network_policy_allowed\", \"http_status\": 200}\n"
+        },
+        "denied": {
+          "name": "sim-network-denied-confirm",
+          "uid": "6871c719-8096-4df3-84f8-79e9f3d67e7d",
+          "conditions": [
+            {
+              "lastProbeTime": "2026-11-02T23:21:29Z",
+              "lastTransitionTime": "2026-11-02T23:21:29Z",
+              "message": "Reached expected number of succeeded pods",
+              "reason": "CompletionsReached",
+              "status": "True",
+              "type": "SuccessCriteriaMet"
+            },
+            {
+              "lastProbeTime": "2026-11-02T23:21:29Z",
+              "lastTransitionTime": "2026-11-02T23:21:29Z",
+              "message": "Reached expected number of succeeded pods",
+              "reason": "CompletionsReached",
+              "status": "True",
+              "type": "Complete"
+            }
+          ],
+          "pod_name": "sim-network-denied-confirm-czv49",
+          "pod_uid": "d01a60e0-cde4-4ac4-b007-609ed6fa2f73",
+          "pod_phase": "Succeeded",
+          "containers": [
+            {
+              "name": "probe",
+              "imageID": "quay.io/inference-perf/inference-perf@sha256:d247e6ad725dc5bb56df71d115abc8ca455bba9f0ccd4110e14bbb56504250ec",
+              "restart_count": 0,
+              "state": {
+                "terminated": {
+                  "containerID": "containerd://31ebc2f69df3f7bd0c6211c932e7f4711d8a2c06d981da23c64e51ce5b5b1727",
+                  "exitCode": 0,
+                  "finishedAt": "2026-11-02T23:21:26Z",
+                  "reason": "Completed",
+                  "startedAt": "2026-11-02T23:21:23Z"
+                }
+              }
+            }
+          ],
+          "logs": "{\"event\": \"policy_client\", \"pod_uid\": \"d01a60e0-cde4-4ac4-b007-609ed6fa2f73\", \"expect_denied\": true, \"dns_addresses\": [\"10.43.82.149\"]}\n{\"event\": \"network_policy_denied\", \"error_type\": \"ConnectionRefusedError\", \"errno\": 111}\n"
+        }
+      },
+      "initial_failed_probe": {
+        "name": "sim-network-denied-probe",
+        "uid": "0492c94c-085b-44e8-8d64-1ac2604e7fde",
+        "conditions": [
+          {
+            "lastProbeTime": "2026-11-02T23:18:34Z",
+            "lastTransitionTime": "2026-11-02T23:18:34Z",
+            "message": "Job has reached the specified backoff limit",
+            "reason": "BackoffLimitExceeded",
+            "status": "True",
+            "type": "FailureTarget"
+          },
+          {
+            "lastProbeTime": "2026-11-02T23:18:34Z",
+            "lastTransitionTime": "2026-11-02T23:18:34Z",
+            "message": "Job has reached the specified backoff limit",
+            "reason": "BackoffLimitExceeded",
+            "status": "True",
+            "type": "Failed"
+          }
+        ],
+        "pod_name": "sim-network-denied-probe-nvgvk",
+        "pod_uid": "21c8a9e3-71e5-4e2a-9354-d14cff6a84fa",
+        "pod_phase": "Failed",
+        "containers": [
+          {
+            "name": "probe",
+            "imageID": "quay.io/inference-perf/inference-perf@sha256:d247e6ad725dc5bb56df71d115abc8ca455bba9f0ccd4110e14bbb56504250ec",
+            "restart_count": 0,
+            "state": {
+              "terminated": {
+                "containerID": "containerd://46102eb778452cea8c766a4d774dc23e1102d4120adb0f964f8bb26a5de1f583",
+                "exitCode": 1,
+                "finishedAt": "2026-11-02T23:18:32Z",
+                "reason": "Error",
+                "startedAt": "2026-11-02T23:18:28Z"
+              }
+            }
+          }
+        ],
+        "explanation": "Initial negative assertion incorrectly required a timeout; actual denied path returned ECONNREFUSED111. Failure retained. Subsequent concurrent allowed/denied Jobs confirmed HTTP200 for labeled client and ECONNREFUSED111 for denied client, both completed."
+      }
+    },
+    "limitations": [
+      "CPU simulator responses only, not model inference or GPU performance.",
+      "Very small 6-request stages at concurrency2 and4; timing includes simulator/client CPU scheduling on shared four-CPU6GiB node. No GPU/SLO claims.",
+      "Local result evidence fields are simulator.py local conventions (localhost, simulator), not independently observed Thalamus node/route/Flux/worker bindings.",
+      "Base image and mounted source are recorded separately; no baked adapter image provenance.",
+      "Simulator direct Service and sidecar checks do not establish Gateway/GIE/EPP path, TLS/auth, supported catalog, object-store upload or Thalamus acceptance.",
+      "Native sidecar shares loopback and adapter local mode was not changed; no fake GPU resources, model identities or production bindings."
+    ]
+  },
+  "pool_controller_checks": {
+    "integrity": {
+      "kueue": {
+        "version": "v0.18.0",
+        "sha256": "7b37d9dbba62b88f4691e91efe54607a5d680481f4467290efc5b176537c305d",
+        "verifiedAgainst": "deploy/upstreams.yaml:128"
+      },
+      "keda": {
+        "version": "v2.20.2",
+        "sha256": "9bae123eb64fab8f96c67bbd576bb5819e4794df346c5aaa402a01c68b0557ab",
+        "verifiedAgainst": "GitHub release asset digest (keda-release-v2.20.2.json)"
+      }
+    },
+    "aggregatedAPIs": [
+      {
+        "name": "v1beta1.visibility.kueue.x-k8s.io",
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-11-02T23:22:42Z",
+            "message": "all checks passed",
+            "reason": "Passed",
+            "status": "True",
+            "type": "Available"
+          }
+        ]
+      },
+      {
+        "name": "v1beta2.visibility.kueue.x-k8s.io",
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-11-02T23:22:42Z",
+            "message": "all checks passed",
+            "reason": "Passed",
+            "status": "True",
+            "type": "Available"
+          }
+        ]
+      },
+      {
+        "name": "v1beta1.external.metrics.k8s.io",
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-11-02T23:16:54Z",
+            "message": "all checks passed",
+            "reason": "Passed",
+            "status": "True",
+            "type": "Available"
+          }
+        ]
+      }
+    ],
+    "crdCountEstablished": 17,
+    "configuredKueue": {
+      "apiVersion": "config.kueue.x-k8s.io/v1beta2",
+      "kind": "Configuration",
+      "health": {
+        "healthProbeBindAddress": ":8081"
+      },
+      "metrics": {
+        "bindAddress": ":8443"
+      },
+      "webhook": {
+        "port": 9443
+      },
+      "leaderElection": {
+        "leaderElect": true,
+        "resourceName": "c1f6bfd2.kueue.x-k8s.io"
+      },
+      "controller": {
+        "groupKindConcurrency": {
+          "Job.batch": 5,
+          "Pod": 5,
+          "Workload.kueue.x-k8s.io": 5,
+          "LocalQueue.kueue.x-k8s.io": 1,
+          "Cohort.kueue.x-k8s.io": 1,
+          "ClusterQueue.kueue.x-k8s.io": 1,
+          "ResourceFlavor.kueue.x-k8s.io": 1
+        }
+      },
+      "clientConnection": {
+        "qps": 50,
+        "burst": 100
+      },
+      "integrations": {
+        "frameworks": [
+          "batch/job",
+          "kubeflow.org/mpijob",
+          "ray.io/rayjob",
+          "ray.io/raycluster",
+          "ray.io/rayservice",
+          "jobset.x-k8s.io/jobset",
+          "kubeflow.org/paddlejob",
+          "kubeflow.org/pytorchjob",
+          "kubeflow.org/tfjob",
+          "kubeflow.org/xgboostjob",
+          "kubeflow.org/jaxjob",
+          "workload.codeflare.dev/appwrapper",
+          "trainer.kubeflow.org/trainjob",
+          "pod",
+          "deployment",
+          "statefulset",
+          "leaderworkerset.x-k8s.io/leaderworkerset"
+        ]
+      },
+      "managedJobsNamespaceSelector": {
+        "matchLabels": {
+          "kubernetes.io/metadata.name": "thalamus-inference"
+        }
+      },
+      "featureGates": {
+        "QuotaCheckStrategy": true
+      },
+      "resources": {
+        "quotaCheckStrategy": "IgnoreUndeclared"
+      },
+      "fairSharing": null,
+      "admissionFairSharing": null
+    },
+    "sourceFairSharingPredicates": {
+      "fairSharing": "kueue-fairsharing-strategy.go:50-51: pfs != nil",
+      "admissionFairSharing": "kueue-admission-fairsharing.go:56-57: afsConfig != nil && feature enabled"
+    },
+    "installationDeviations": [
+      "Kueue managedJobsNamespaceSelector.matchLabels restricts Pod-based integrations to kubernetes.io/metadata.name=thalamus-inference (local config, not upstream default).",
+      "Kueue featureGates.QuotaCheckStrategy=true and resources.quotaCheckStrategy=IgnoreUndeclared set as requested.",
+      "FairSharing and AdmissionFairSharing config explicitly null; feature gates remain upstream defaults, but upstream enabled predicates require nonnil config, so classical preemption is selected.",
+      "All Kueue workload webhooks with original namespace selectors locally restricted to thalamus-inference; Kueue resource/CRD webhooks unchanged. Local scoping is recorded in *-scope.json patch files and applied after kueue-configured.yaml.",
+      "Two exact upstream kube-system extension-apiserver-authentication-reader RoleBindings applied separately with parent authorization; subjects unchanged.",
+      "Versions, images, replica counts, resource requests/limits and KEDA configuration unchanged from pinned release manifests."
+    ],
+    "transientFailures": [
+      "Initial KEDA Deployment writes failed while upstream broad Kueue Deployment webhook had no endpoints; resolved by scoped webhook patches and reapplying KEDA.",
+      "Kueue initial rollout timed out/restarted before required kube-system visibility auth-reader RoleBinding was authorized and applied; final rollout succeeded."
+    ],
+    "limits": [
+      "No GPU resources, node/device spoofing, fake model workloads, queues, quotas, pool resources or sample autoscaling workloads were created.",
+      "No catalog/GPU scheduling, preemption execution or KEDA scaling behavior is established by controller readiness/discovery. Parent owns meaningful source-derived admission/GitOps checks.",
+      "Kueue skips ProvisioningRequest admission-check/provisioning controllers because cluster-autoscaler ProvisioningRequest API is absent; optional integrations whose APIs are absent defer their controller setup.",
+      "KEDA upstream admission webhooks retain failurePolicy=Ignore.",
+      "No public services/ingress created; all owned services are ClusterIP.",
+      "Resources retained for parent cleanup; no repository modifications or project builds/tests/lint/formatters."
+    ]
+  },
+  "implementation": {
+    "repository": "https://github.com/oplik0/thalamus",
+    "branch": "redesign/v2",
+    "commit": "95e2933b4d0219ba624dc45d24ebc605bab51c7a",
+    "scope": "The live checks used this source state before it was committed. The separate QA catalog branch contains non-model reconciliation probes, not the product cutover."
+  }
+}
