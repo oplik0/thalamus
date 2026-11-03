@@ -8,7 +8,24 @@ use axum::{
     extract::FromRequestParts,
     http::{header::AUTHORIZATION, request::Parts},
 };
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
+use sha2::{Digest, Sha256};
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 use uuid::Uuid;
+
+const API_KEY_AUTH_CACHE_TTL: Duration = Duration::from_secs(30);
+const API_KEY_AUTH_CACHE_MAX_ENTRIES: usize = 10_000;
+
+#[derive(Clone)]
+struct CachedAuth {
+    auth: Auth,
+    valid_until: Instant,
+}
+
+static API_KEY_AUTH_CACHE: Lazy<DashMap<[u8; 32], CachedAuth>> = Lazy::new(DashMap::new);
+static API_KEY_AUTH_CACHE_MISS_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Authenticated user/service information
 ///
@@ -117,6 +134,79 @@ impl FromRequestParts<AppState> for ApiKeyAuth {
 }
 
 impl ApiKeyAuth {
+    fn api_key_cache_key(token: &str, state: &AppState) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(state.config.database.url.as_bytes());
+        hasher.update([0]);
+        hasher.update(state.config.security.api_key_secret.as_bytes());
+        hasher.update([0]);
+        hasher.update(token.as_bytes());
+        hasher.finalize().into()
+    }
+
+    fn cached_api_key_auth(cache_key: &[u8; 32]) -> Option<Auth> {
+        let cached = API_KEY_AUTH_CACHE.get(cache_key)?;
+        if cached.valid_until > Instant::now() {
+            return Some(cached.auth.clone());
+        }
+        drop(cached);
+        API_KEY_AUTH_CACHE.remove(cache_key);
+        None
+    }
+
+    async fn authenticate_api_key(token: &str, state: &AppState) -> Result<Auth> {
+        let cache_key = Self::api_key_cache_key(token, state);
+        if let Some(auth) = Self::cached_api_key_auth(&cache_key) {
+            return Ok(auth);
+        }
+
+        // Collapse a burst of requests using the same cold key into one expensive
+        // database lookup and Argon2 verification.
+        let _miss_guard = API_KEY_AUTH_CACHE_MISS_LOCK.lock().await;
+        if let Some(auth) = Self::cached_api_key_auth(&cache_key) {
+            return Ok(auth);
+        }
+
+        let validated = validate_key(token, state).await?;
+        let cache_ttl = validated
+            .expires_at
+            .and_then(|expires_at| (expires_at - chrono::Utc::now()).to_std().ok())
+            .map_or(API_KEY_AUTH_CACHE_TTL, |until_expiry| {
+                until_expiry.min(API_KEY_AUTH_CACHE_TTL)
+            });
+        let priority = parse_priority(validated.default_priority.as_ref()).or(team_priority(
+            validated.team_id,
+            state,
+        )
+        .await?);
+        let auth = Auth {
+            user_id: validated.user_id,
+            team_id: validated.team_id,
+            project_id: validated.project_id,
+            scopes: validated.scopes,
+            roles: None,
+            key_id: Some(validated.key_id),
+            token_id: None,
+            priority,
+        };
+
+        if API_KEY_AUTH_CACHE.len() >= API_KEY_AUTH_CACHE_MAX_ENTRIES {
+            let now = Instant::now();
+            API_KEY_AUTH_CACHE.retain(|_, cached| cached.valid_until > now);
+        }
+        if API_KEY_AUTH_CACHE.len() < API_KEY_AUTH_CACHE_MAX_ENTRIES {
+            API_KEY_AUTH_CACHE.insert(
+                cache_key,
+                CachedAuth {
+                    auth: auth.clone(),
+                    valid_until: Instant::now() + cache_ttl,
+                },
+            );
+        }
+
+        Ok(auth)
+    }
+
     /// Authenticate using Bearer token (PASETO or API key)
     async fn authenticate_bearer(parts: &mut Parts, state: &AppState) -> Result<Self> {
         // Extract the Authorization header
@@ -154,23 +244,9 @@ impl ApiKeyAuth {
         } else {
             // API Key (assume API key if not PASETO)
             // We could check for specific prefixes like "thl_" but let validate_key handle that
-            let validated = validate_key(token_str, state).await?;
-            let priority = parse_priority(validated.default_priority.as_ref()).or(team_priority(
-                validated.team_id,
-                state,
-            )
-            .await?);
-
-            Ok(ApiKeyAuth(Auth {
-                user_id: validated.user_id,
-                team_id: validated.team_id,
-                project_id: validated.project_id,
-                scopes: validated.scopes,
-                roles: None, // API keys don't currently carry roles, but could be fetched
-                key_id: Some(validated.key_id),
-                token_id: None,
-                priority,
-            }))
+            Ok(ApiKeyAuth(
+                Self::authenticate_api_key(token_str, state).await?,
+            ))
         }
     }
 
@@ -240,25 +316,16 @@ impl FromRequestParts<AppState> for OptionalApiKeyAuth {
             }
         } else {
             // API Key
-            match validate_key(token_str, state).await {
-                Ok(validated) => {
-                    let priority = parse_priority(validated.default_priority.as_ref())
-                        .or(team_priority(validated.team_id, state).await.ok().flatten());
-                    Ok(OptionalApiKeyAuth(Some(Auth {
-                        user_id: validated.user_id,
-                        team_id: validated.team_id,
-                        project_id: validated.project_id,
-                        scopes: validated.scopes,
-                        roles: None,
-                        key_id: Some(validated.key_id),
-                        token_id: None,
-                        priority,
-                    })))
-                }
+            match ApiKeyAuth::authenticate_api_key(token_str, state).await {
+                Ok(auth) => Ok(OptionalApiKeyAuth(Some(auth))),
                 Err(_) => Ok(OptionalApiKeyAuth(None)),
             }
         }
     }
+}
+
+pub(crate) fn invalidate_api_key_auth_cache(key_id: &str) {
+    API_KEY_AUTH_CACHE.retain(|_, cached| cached.auth.key_id.as_deref() != Some(key_id));
 }
 
 /// Middleware to check if a key has a specific scope

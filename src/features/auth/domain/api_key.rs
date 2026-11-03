@@ -58,6 +58,7 @@ pub struct ValidatedApiKey {
     pub project_id: Option<Uuid>,
     pub scopes: Option<Vec<String>>,
     pub default_priority: Option<String>,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[cfg(test)]
@@ -163,6 +164,7 @@ mod tests {
             project_id: None,
             scopes: Some(vec!["admin".to_string()]),
             default_priority: Some("realtime".to_string()),
+            expires_at: None,
         };
 
         assert_eq!(validated.id, id);

@@ -233,6 +233,7 @@ pub async fn validate_key(key: &str, state: &AppState) -> Result<ValidatedApiKey
         project_id: api_key.project_id,
         scopes: api_key.scopes,
         default_priority: api_key.default_priority,
+        expires_at: api_key.expires_at,
     })
 }
 
@@ -249,6 +250,8 @@ pub async fn revoke_key(key_id: &str, state: &AppState) -> Result<()> {
     )
     .execute(&state.db_pool)
     .await?;
+
+    crate::middleware::auth::invalidate_api_key_auth_cache(key_id);
 
     Ok(())
 }
