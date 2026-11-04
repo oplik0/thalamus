@@ -1,0 +1,16 @@
+{
+  "apiVersion": "llm-d.ai/v1",
+  "kind": "InferenceObjective",
+  "metadata": {
+    "name": "example-pool-service-standard",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "poolRefs": [
+      {
+        "name": "example-pool-deployment-inference-pool"
+      }
+    ],
+    "priority": 0
+  }
+}

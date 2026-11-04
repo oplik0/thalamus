@@ -1,0 +1,5 @@
+# Opt-in browser mode only; the default compose file publishes no ports.
+services:
+  proxy:
+    ports:
+      - "127.0.0.1:${SMOKE_PORT:?}:${SMOKE_PORT:?}"

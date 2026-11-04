@@ -1,0 +1,93 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "example-pool-deployment-epp",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "replicas": 1,
+    "selector": {
+      "matchLabels": {
+        "app.kubernetes.io/name": "example-pool-deployment-epp"
+      }
+    },
+    "strategy": {
+      "type": "Recreate"
+    },
+    "template": {
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/name": "example-pool-deployment-epp"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "args": [
+              "--pool-name",
+              "example-pool-deployment-inference-pool",
+              "--pool-namespace",
+              "thalamus-inference",
+              "--pool-group",
+              "inference.networking.k8s.io",
+              "--grpc-port=9002",
+              "--grpc-health-port",
+              "9003",
+              "--secure-serving=true",
+              "--metrics-endpoint-auth=false",
+              "--tracing=false",
+              "--config-text",
+              "{\"apiVersion\": \"llm-d.ai/v1\", \"kind\": \"EndpointPickerConfig\", \"plugins\": [{\"type\": \"single-profile-handler\"}, {\"type\": \"decode-filter\"}, {\"type\": \"load-aware-scorer\"}, {\"type\": \"max-score-picker\"}, {\"type\": \"approx-prefix-cache-producer\", \"parameters\": {\"autoTune\": false, \"blockSizeTokens\": 64, \"lruCapacityPerServer\": 31250}}, {\"type\": \"prefix-cache-scorer\"}, {\"type\": \"round-robin-fairness-policy\"}, {\"type\": \"fcfs-ordering-policy\"}, {\"type\": \"utilization-detector\"}], \"schedulingProfiles\": [{\"name\": \"default\", \"plugins\": [{\"pluginRef\": \"decode-filter\"}, {\"pluginRef\": \"load-aware-scorer\", \"weight\": 1.0}, {\"pluginRef\": \"prefix-cache-scorer\", \"weight\": 1.0}, {\"pluginRef\": \"max-score-picker\"}]}], \"featureGates\": [\"flowControl\"], \"requestHandler\": {\"propagatePriority\": true}, \"flowControl\": {\"defaultRequestTTL\": \"30s\", \"saturationDetector\": {\"pluginRef\": \"utilization-detector\"}, \"defaultPriorityBand\": {\"fairnessPolicyRef\": \"round-robin-fairness-policy\", \"orderingPolicyRef\": \"fcfs-ordering-policy\"}, \"priorityBands\": [{\"priority\": 0, \"maxRequests\": \"32\", \"maxBytes\": \"10Mi\", \"fairnessPolicyRef\": \"round-robin-fairness-policy\", \"orderingPolicyRef\": \"fcfs-ordering-policy\"}]}}"
+            ],
+            "command": [
+              "/app/epp"
+            ],
+            "image": "ghcr.io/llm-d/llm-d-router-endpoint-picker:v1.0.0",
+            "livenessProbe": {
+              "grpc": {
+                "port": 9003,
+                "service": "liveness"
+              },
+              "initialDelaySeconds": 5,
+              "periodSeconds": 10
+            },
+            "name": "epp",
+            "ports": [
+              {
+                "containerPort": 9002,
+                "name": "grpc"
+              },
+              {
+                "containerPort": 9003,
+                "name": "grpc-health"
+              },
+              {
+                "containerPort": 9090,
+                "name": "metrics"
+              }
+            ],
+            "readinessProbe": {
+              "grpc": {
+                "port": 9003,
+                "service": "readiness"
+              },
+              "periodSeconds": 2
+            },
+            "resources": {
+              "limits": {
+                "memory": "16Gi"
+              },
+              "requests": {
+                "cpu": "8",
+                "memory": "8Gi"
+              }
+            }
+          }
+        ],
+        "serviceAccountName": "thalamus-epp",
+        "terminationGracePeriodSeconds": 130
+      }
+    }
+  }
+}

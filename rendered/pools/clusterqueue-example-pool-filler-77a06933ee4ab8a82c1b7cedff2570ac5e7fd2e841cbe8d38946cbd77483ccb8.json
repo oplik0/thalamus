@@ -1,0 +1,39 @@
+{
+  "apiVersion": "kueue.x-k8s.io/v1beta2",
+  "kind": "ClusterQueue",
+  "metadata": {
+    "name": "example-pool-filler"
+  },
+  "spec": {
+    "cohortName": "example-pool",
+    "namespaceSelector": {
+      "matchExpressions": [
+        {
+          "key": "kubernetes.io/metadata.name",
+          "operator": "In",
+          "values": [
+            "thalamus-inference"
+          ]
+        }
+      ]
+    },
+    "resourceGroups": [
+      {
+        "coveredResources": [
+          "nvidia.com/gpu"
+        ],
+        "flavors": [
+          {
+            "name": "example-pool-example-gpu",
+            "resources": [
+              {
+                "name": "nvidia.com/gpu",
+                "nominalQuota": "0"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

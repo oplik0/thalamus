@@ -1,0 +1,45 @@
+{
+  "apiVersion": "agentgateway.dev/v1alpha1",
+  "kind": "AgentgatewayBackend",
+  "metadata": {
+    "annotations": {
+      "thalamus.ai/deployment": "example-pool-deployment",
+      "thalamus.ai/revision": "5555555555555555555555555555555555555555555555555555555555555555",
+      "thalamus.ai/serving-kind": "raw"
+    },
+    "name": "example-pool-deployment-backend",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "ai": {
+      "provider": {
+        "custom": {
+          "backendRef": {
+            "group": "inference.networking.k8s.io",
+            "kind": "InferencePool",
+            "name": "example-pool-deployment-inference-pool"
+          },
+          "formats": [
+            {
+              "path": "/v1/chat/completions",
+              "type": "Completions"
+            }
+          ],
+          "model": "example-pool-service"
+        }
+      }
+    },
+    "policies": {
+      "transformation": {
+        "response": {
+          "set": [
+            {
+              "name": "x-thalamus-backend",
+              "value": "\"example-pool-service/example-pool-deployment/5555555555555555555555555555555555555555555555555555555555555555\""
+            }
+          ]
+        }
+      }
+    }
+  }
+}

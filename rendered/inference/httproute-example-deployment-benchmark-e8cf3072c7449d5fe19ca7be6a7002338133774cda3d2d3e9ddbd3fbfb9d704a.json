@@ -1,0 +1,64 @@
+{
+  "apiVersion": "gateway.networking.k8s.io/v1",
+  "kind": "HTTPRoute",
+  "metadata": {
+    "name": "example-deployment-benchmark",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "hostnames": [
+      "inference.example.invalid"
+    ],
+    "parentRefs": [
+      {
+        "group": "gateway.networking.k8s.io",
+        "kind": "Gateway",
+        "name": "inference-serving",
+        "namespace": "thalamus-inference"
+      }
+    ],
+    "rules": [
+      {
+        "backendRefs": [
+          {
+            "group": "inference.networking.k8s.io",
+            "kind": "InferencePool",
+            "name": "example-deployment-inference-pool",
+            "weight": 1
+          }
+        ],
+        "filters": [
+          {
+            "type": "URLRewrite",
+            "urlRewrite": {
+              "path": {
+                "replaceFullPath": "/v1/completions",
+                "type": "ReplaceFullPath"
+              }
+            }
+          },
+          {
+            "responseHeaderModifier": {
+              "set": [
+                {
+                  "name": "x-thalamus-backend",
+                  "value": "example-service/example-deployment/0000000000000000000000000000000000000000000000000000000000000000"
+                }
+              ]
+            },
+            "type": "ResponseHeaderModifier"
+          }
+        ],
+        "matches": [
+          {
+            "method": "POST",
+            "path": {
+              "type": "Exact",
+              "value": "/candidates/example-deployment/v1/completions"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

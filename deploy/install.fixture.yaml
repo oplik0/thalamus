@@ -1,0 +1,258 @@
+# OFFLINE RENDER FIXTURE ONLY: example.invalid endpoints and repeated digests
+# are intentionally unusable. This file contains no credentials and is not a
+# cluster configuration. Replace every example input with verified real values.
+workloadNamespace: thalamus-inference
+images:
+  thalamus: registry.example.invalid/thalamus@sha256:1111111111111111111111111111111111111111111111111111111111111111
+  postgresClient: registry.example.invalid/postgres-client@sha256:2222222222222222222222222222222222222222222222222222222222222222
+secrets:
+  database: database-runtime
+  databaseAdmin: database-bootstrap
+  oidc: oidc-login
+  signing: session-signing
+  s3: result-storage
+  gitAuth: catalog-readonly
+  oidcCA: oidc-ca
+  s3CA: result-storage-ca
+  databaseCA: database-ca
+  keycloakAdmin: identity-readonly
+  workflows: workflows
+catalog:
+  url: https://git.example.invalid/team/catalog.git
+  ref: refs/heads/main
+  commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  path: catalog
+  serviceSchemaPath: catalog/service.schema.json
+gateway:
+  create: true
+  name: control-plane
+  namespace: thalamus-system
+  className: agentgateway
+  hostname: ui.example.invalid
+  tlsSecret: control-plane-tls
+  listener: https
+  proxyNamespace: thalamus-system
+  proxyLabels:
+    gateway.networking.k8s.io/gateway-name: control-plane
+  proxyPort: 443
+  proxyIngress:
+    - ipBlock: {cidr: 192.0.2.0/24}
+  proxyEgress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: agentgateway-system}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: agentgateway}}
+      ports: [{protocol: TCP, port: 9978}]
+servingGateway:
+  name: inference-serving
+  className: agentgateway
+  hostname: '*.example.invalid'
+  tlsSecret: serving-tls
+  listener: https
+  port: 443
+  proxyLabels:
+    gateway.networking.k8s.io/gateway-name: inference-serving
+  proxyPort: 443
+  proxyIngress:
+    - ipBlock: {cidr: 192.0.2.0/24}
+  metricsPort: 15020
+  metricsIngress:
+    - ipBlock: {cidr: 192.0.2.0/24}
+  proxyEgress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: agentgateway-system}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: agentgateway}}
+      ports: [{protocol: TCP, port: 9978}]
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: example-ratelimit, app.kubernetes.io/component: global-rate-limiter}
+      ports: [{protocol: TCP, port: 8081}]
+agenticGateway:
+  enabled: true
+  name: agentic-internal
+  className: agentgateway
+  tlsSecret: agentic-internal-tls
+  caConfigMap: thalamus-agentic-ca
+  # Deliberately invalid public PEM-shaped fixture data, not a trust anchor.
+  caBundle: |
+    -----BEGIN CERTIFICATE-----
+    Zml4dHVyZS1vbmx5LW5vdC1hLWNlcnRpZmljYXRl
+    -----END CERTIFICATE-----
+  proxyLabels:
+    gateway.networking.k8s.io/gateway-name: agentic-internal
+  proxyPort: 443
+  metricsPort: 15020
+  metricsIngress:
+    - ipBlock: {cidr: 192.0.2.0/24}
+  proxyEgress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: agentgateway-system}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: agentgateway}}
+      ports: [{protocol: TCP, port: 9978}]
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: example-ratelimit, app.kubernetes.io/component: global-rate-limiter}
+      ports: [{protocol: TCP, port: 8081}]
+s3:
+  endpoint: https://s3.example.invalid
+  bucket: example-bucket
+  region: test-region-1
+  runSecretPrefix: thalamus-upload
+usage:
+  prometheusUrl: https://metrics.example.invalid
+  inputCounter: gateway_input_tokens_total
+  outputCounter: gateway_output_tokens_total
+  stepSeconds: 300
+  startDate: '2026-01-01'
+  retentionDays: 30
+network:
+  systemEgress:
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.0/24
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 5432}
+        - {protocol: TCP, port: 6443}
+  runnerEgress:
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.0/24
+      ports:
+        - {protocol: TCP, port: 443}
+  workloadPolicies: []
+  adminUsers: []
+  adminGroups: [system:masters]
+redis:
+  name: example-redis
+  # Real official Redis 7.4.3 digest; application/model fixture digests are fake.
+  image: docker.io/library/redis@sha256:236e397c1d5ab7a94adaf1a51eec3ca8333b05fafcd6d423c6c7cc5987e519a0
+  authSecret: example-redis
+  tlsSecret: example-redis-tls
+  storageClass: example-durable-storage
+  storageCapacity: 10Gi
+  port: 6379
+  limiterSelector: {app.kubernetes.io/name: example-ratelimit, app.kubernetes.io/component: global-rate-limiter}
+gitops:
+  enabled: true
+  # This system-namespace Secret is read by Flux for the shared catalog source.
+  secretName: flux-repository-readonly
+  # Protect the catalog ref and require administrator review for pool sources
+  # and rendered/pools; the pool reconciler can write cluster-scoped resources.
+  extraRules:
+    - apiGroups: [apps]
+      resources: [deployments]
+      verbs: [get, list, watch, create, update, patch, delete]
+    - apiGroups: [inference.networking.k8s.io]
+      resources: [inferencepools]
+      verbs: [get, list, watch, create, update, patch, delete]
+    - apiGroups: [llm-d.ai]
+      resources: [inferenceobjectives]
+      verbs: [get, list, watch, create, update, patch, delete]
+    - apiGroups: [kueue.x-k8s.io]
+      resources: [localqueues]
+      verbs: [get, list, watch, create, update, patch, delete]
+    - apiGroups: [keda.sh]
+      resources: [scaledobjects]
+      verbs: [get, list, watch, create, update, patch, delete]
+poolGitOps:
+  enabled: true
+  # Uses catalog.url/ref and the shared Flux source and Secret above.
+fluxMcp:
+  enabled: true
+  namespace: flux-system
+  imageRepository: ghcr.io/controlplaneio-fluxcd/flux-operator-mcp
+  imageDigest: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  apiEgress:
+    - to:
+        - ipBlock: {cidr: 192.0.2.0/24}
+      ports:
+        - {protocol: TCP, port: 6443}
+metricsGateways:
+  - {namespace: thalamus-inference, name: inference-serving}
+  - {namespace: thalamus-inference, name: agentic-internal}
+prometheusUrl: https://metrics.example.invalid
+runners:
+  candidate:
+    kind: validation
+    image: registry.example.invalid/runner@sha256:3333333333333333333333333333333333333333333333333333333333333333
+    command: [runner]
+    workloads: [functional]
+    service_account: thalamus-runner
+    key_secret: thalamus-key
+    route_target: candidate
+validationConfigs:
+  example-service:
+    candidate:
+      kind: validation
+      route_target: candidate
+      options:
+        forbidden_model: forbidden-example
+        context_prompt: fixture
+        context_tokens: 32
+        tool_parser: null
+        reasoning: false
+        responses: false
+        anthropic: false
+        responses_continuation: false
+        timeout_seconds: 20
+runtimeConfig:
+  namespace: thalamus-inference
+  route_version: v1
+  backend_version: v1alpha1
+  policy_version: v1alpha1
+  pool_version: v1
+  serving_version: v1alpha2
+  flux_version: v1
+  source_version: v1
+  helm_version: v2
+  # Offline example trust input only; operators must independently approve images.
+  trusted_agentic_images:
+    - docker.io/vllm/agentic-api@sha256:26a284e11865a21a51e71b8d2145817b76c96f36b92b18911719363d9a0075c4
+  routes: {}
+groupMapping: {}
+debugConfig:
+  opencode_image: registry.example.invalid/opencode@sha256:4444444444444444444444444444444444444444444444444444444444444444
+  checkout_image: registry.example.invalid/checkout@sha256:5555555555555555555555555555555555555555555555555555555555555555
+  checkout_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  allowed_models: [example-service]
+  gateway_model: example-service
+  model_policy_namespaces: {example-service: thalamus-inference}
+  git_repository: {url: https://git.example.invalid/team/catalog.git, address: 192.0.2.10}
+  model_gateway: {url: https://inference.example.invalid, address: 192.0.2.11}
+  thalamus_mcp: {url: https://ui.example.invalid/mcp, address: 192.0.2.12}
+  flux_mcp: {url: https://flux.example.invalid/mcp, address: 192.0.2.13}
+  mcp_audience: https://ui.example.invalid/mcp
+  proxy_namespace: thalamus-system
+  proxy_pod_labels: {app.kubernetes.io/name: thalamus-server}
+  max_duration_seconds: 3600
+  ttl_seconds_after_finished: 3600
+  max_model_tokens: 10000
+  max_tool_calls: 100
+  trusted_policy_sha256: {example-service: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc}
+  cni_contract: admin-verified-networkpolicy-service-dnat
+  gateway_namespace: thalamus-inference
+  gateway_name: inference-serving
+  gateway_service_namespace: thalamus-inference
+  gateway_service_name: inference-serving
+  gateway_endpoint_port: 443
+  rate_limit_namespace: thalamus-inference
+  rate_limit_service: example-ratelimit
+  rate_limit_domain: example-shared
+  rate_limit_configmap: example-shared-ratelimit-config
+  rate_limit_deployment: example-ratelimit
+  trusted_rate_limit_config_sha256: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+debugServerConfig:
+  namespace: thalamus-inference
+  checkout_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  allowed_models: [example-service]
+  duration_seconds: 1800
+  model_budget: 1000
+  tool_budget: 25
+  service_cidrs: [192.0.2.0/24]
+  flux_mcp_url: http://flux-operator-mcp.flux-system.svc:9090/mcp
+projectionName: thalamus-keys
+projectionLabels: {thalamus.dev/gateway-keys: 'true'}
+leaseName: thalamus-worker-lease
+bootstrapRevision: v1
+observationNamespaces: [flux-system, agentgateway-system]
+agenticSecretNames: [agentic-example-db]

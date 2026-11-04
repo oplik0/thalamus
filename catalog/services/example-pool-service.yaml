@@ -1,0 +1,68 @@
+# Illustrative only. Replace the synthetic image/model/tokenizer identities,
+# revision, team UUID, limits, DNS, and hardware with independently verified
+# values. The placeholder image does not exist and is not runtime evidence.
+name: example-pool-service
+namespace: thalamus-inference
+access:
+  teams:
+    - "00000000-0000-4000-8000-000000000001"
+pool: example-pool
+gateway:
+  name: inference-serving
+  namespace: thalamus-inference
+  hostname: pool-inference.example.invalid
+  keySelector:
+    thalamus.dev/gateway-keys: "true"
+  rateLimit: example-shared
+network:
+  # Replace these documentation-only CIDRs and selectors with the actual
+  # administrator-verified Kubernetes API, DNS, and Prometheus destinations.
+  gatewayPodSelector:
+    gateway.networking.k8s.io/gateway-name: inference-serving
+  dns:
+    namespaceSelector:
+      kubernetes.io/metadata.name: kube-system
+    podSelector:
+      k8s-app: kube-dns
+  prometheus:
+    namespaceSelector:
+      kubernetes.io/metadata.name: monitoring
+    podSelector:
+      app.kubernetes.io/name: prometheus
+  apiServer:
+    - cidr: 192.0.2.0/24
+      ports: [6443]
+versions:
+  kserve: v0.21.0
+  agentgateway: v1.7.0
+  inferenceExtension: v1.6.2
+  vllm: v0.23.0
+trafficClasses:
+  ttl: 30s
+  classes:
+    - name: standard
+      priority: 0
+      enginePriority: 0
+      maxRequests: 32
+      maxBytes: 10Mi
+deployments:
+  - name: example-pool-deployment
+    artifact: example-packaged-model
+    hardware: example-gpu
+    image: "example.invalid/engine-with-model@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    revision: "5555555555555555555555555555555555555555555555555555555555555555"
+    role: stable
+    rolloutStrategy: RollingUpdate
+    packagedModel: true
+    replicas: 1
+    contextLength: 4096
+    maxNumSeqs: 64
+    maxNumBatchedTokens: 4096
+    tensorParallelSize: 1
+    weight: 1
+    features:
+      toolParser: ""
+      reasoningParser: ""
+      prefixCaching: true
+      kvOffloadGi: 0
+      shmGi: 1

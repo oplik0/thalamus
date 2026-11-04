@@ -1,0 +1,59 @@
+{
+  "apiVersion": "networking.k8s.io/v1",
+  "kind": "NetworkPolicy",
+  "metadata": {
+    "name": "serving-example-deployment-gateway",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "egress": [
+      {
+        "ports": [
+          {
+            "port": 8000,
+            "protocol": "TCP"
+          }
+        ],
+        "to": [
+          {
+            "podSelector": {
+              "matchLabels": {
+                "app.kubernetes.io/component": "llminferenceservice-workload",
+                "app.kubernetes.io/name": "example-deployment",
+                "app.kubernetes.io/part-of": "llminferenceservice",
+                "kserve.io/component": "workload"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "ports": [
+          {
+            "port": 9002,
+            "protocol": "TCP"
+          }
+        ],
+        "to": [
+          {
+            "podSelector": {
+              "matchLabels": {
+                "app.kubernetes.io/component": "llminferenceservice-router-scheduler",
+                "app.kubernetes.io/name": "example-deployment",
+                "app.kubernetes.io/part-of": "llminferenceservice"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "podSelector": {
+      "matchLabels": {
+        "gateway.networking.k8s.io/gateway-name": "inference-serving"
+      }
+    },
+    "policyTypes": [
+      "Egress"
+    ]
+  }
+}

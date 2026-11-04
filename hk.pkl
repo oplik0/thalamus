@@ -11,7 +11,9 @@ local linters = new Mapping<String, Step> {
         glob = List("*.rs")
         check = "cargo clippy --all-targets --all-features -- -D warnings"
     }
-    ["editorconfig-checker"] = Builtins.editorconfig_checker
+    ["editorconfig-checker"] {
+        check = "editorconfig-checker"
+    }
     ["end-of-file-fixer"] = Builtins.newlines
     ["trim-trailing-whitespace"] = Builtins.trailing_whitespace
     ["mixed-line-endings"] = Builtins.mixed_line_ending

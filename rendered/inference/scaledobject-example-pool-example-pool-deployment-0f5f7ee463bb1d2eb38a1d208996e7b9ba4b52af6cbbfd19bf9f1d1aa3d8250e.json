@@ -1,0 +1,37 @@
+{
+  "apiVersion": "keda.sh/v1alpha1",
+  "kind": "ScaledObject",
+  "metadata": {
+    "name": "example-pool-example-pool-deployment",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "advanced": {
+      "horizontalPodAutoscalerConfig": {
+        "behavior": {
+          "scaleDown": {
+            "stabilizationWindowSeconds": 600
+          }
+        }
+      }
+    },
+    "maxReplicaCount": 2,
+    "minReplicaCount": 1,
+    "scaleTargetRef": {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "name": "example-pool-deployment"
+    },
+    "triggers": [
+      {
+        "metadata": {
+          "ignoreNullValues": "false",
+          "query": "sum(llm_d_epp_flow_control_queue_size{inference_pool=\"example-pool-deployment-inference-pool\"}) or (0 * max(up{namespace=\"thalamus-inference\",service=\"example-pool-deployment-epp\",endpoint=\"http-metrics\"} == 1))",
+          "serverAddress": "http://prometheus.monitoring.svc.cluster.local:9090",
+          "threshold": "4"
+        },
+        "type": "prometheus"
+      }
+    ]
+  }
+}

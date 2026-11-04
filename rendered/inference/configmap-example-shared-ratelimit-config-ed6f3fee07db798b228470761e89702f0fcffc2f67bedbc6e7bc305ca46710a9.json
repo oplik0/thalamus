@@ -1,0 +1,11 @@
+{
+  "apiVersion": "v1",
+  "data": {
+    "config.yaml": "domain: example-shared\ndescriptors:\n- key: key_id\n  rate_limit:\n    unit: day\n    requests_per_unit: 1\n- key: project\n  rate_limit:\n    unit: day\n    requests_per_unit: 1\n- key: team\n  rate_limit:\n    unit: day\n    requests_per_unit: 1\n- key: benchmark_key\n  rate_limit:\n    unit: day\n    requests_per_unit: 1\n"
+  },
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "example-shared-ratelimit-config",
+    "namespace": "thalamus-inference"
+  }
+}

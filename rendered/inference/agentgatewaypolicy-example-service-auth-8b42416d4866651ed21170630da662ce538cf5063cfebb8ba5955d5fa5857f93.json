@@ -1,0 +1,120 @@
+{
+  "apiVersion": "agentgateway.dev/v1alpha1",
+  "kind": "AgentgatewayPolicy",
+  "metadata": {
+    "name": "example-service-auth",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "targetRefs": [
+      {
+        "group": "gateway.networking.k8s.io",
+        "kind": "HTTPRoute",
+        "name": "example-service"
+      }
+    ],
+    "traffic": {
+      "apiKeyAuthentication": {
+        "configMapSelector": {
+          "matchLabels": {
+            "thalamus.dev/gateway-keys": "true"
+          }
+        },
+        "mode": "Strict"
+      },
+      "authorization": {
+        "action": "Require",
+        "policy": {
+          "matchExpressions": [
+            "type(apiKey.key_id) == string && apiKey.key_id.matches(\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\")",
+            "type(apiKey.user) == string && apiKey.user.matches(\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\")",
+            "type(apiKey.creator) == string && apiKey.creator.matches(\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\")",
+            "type(apiKey.team) == string && apiKey.team.matches(\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\") && apiKey.team in {\"00000000-0000-4000-8000-000000000001\": 1000000}",
+            "type(apiKey.kind) == string && apiKey.kind in [\"personal\", \"project\", \"job\", \"debug\"]",
+            "(apiKey.project == null && apiKey.kind == \"personal\") || (type(apiKey.project) == string && apiKey.project.matches(\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\"))",
+            "type(apiKey.allowed_services) == list && \"example-service\" in apiKey.allowed_services",
+            "apiKey.expiry == null || (type(apiKey.expiry) == string && request.startTime < timestamp(apiKey.expiry))",
+            "(apiKey.budget == null || (type(apiKey.budget) == int && apiKey.budget > 0)) && (apiKey.project_budget == null || (type(apiKey.project_budget) == int && apiKey.project_budget > 0))",
+            "(apiKey.project != null || apiKey.project_budget == null) && type(apiKey.team_budget) == int && apiKey.team_budget == {\"00000000-0000-4000-8000-000000000001\": 1000000}[apiKey.team] && apiKey.budget_window == {\"00000000-0000-4000-8000-000000000001\": \"day\"}[apiKey.team]",
+            "apiKey.kind != \"job\" || (type(apiKey.run_id) == string && apiKey.run_id.matches(\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\") && type(apiKey.deployment) == string && apiKey.deployment != \"\" && apiKey.run_kind in [\"validation\", \"benchmark\"] && apiKey.expiry != null && apiKey.budget != null)",
+            "apiKey.kind != \"debug\" || (type(apiKey.debug_session_id) == string && apiKey.debug_session_id.matches(\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\") && type(apiKey.debug_model) == string && apiKey.debug_model == \"example-service\" && apiKey.expiry != null && apiKey.budget != null && (request.method != \"POST\" || !(request.path in [\"/v1/chat/completions\", \"/v1/completions\", \"/v1/responses\", \"/v1/embeddings\", \"/v1/messages\", \"/v1/messages/count_tokens\"]) || json(request.body).model == apiKey.debug_model))",
+            "request.headers.all(h, (!h.startsWith(\"x-thalamus-\") && !h.startsWith(\"x-llm-d-inference-\")) || h in [\"x-thalamus-user\", \"x-thalamus-project\", \"x-thalamus-team\", \"x-thalamus-class\", \"x-thalamus-backend\", \"x-llm-d-inference-objective\", \"x-llm-d-inference-fairness-id\"])",
+            "apiKey.kind != \"job\" || apiKey.run_kind == \"validation\""
+          ]
+        }
+      },
+      "rateLimit": {
+        "global": {
+          "backendRef": {
+            "name": "example-ratelimit",
+            "namespace": "thalamus-inference",
+            "port": 8081
+          },
+          "descriptors": [
+            {
+              "entries": [
+                {
+                  "expression": "apiKey.key_id",
+                  "name": "key_id"
+                }
+              ],
+              "limitOverride": "{\"unit\":{\"00000000-0000-4000-8000-000000000001\": \"day\"}[apiKey.team],\"requestsPerUnit\":(apiKey.budget == null || apiKey.budget > {\"00000000-0000-4000-8000-000000000001\": 1000000}[apiKey.team] ? {\"00000000-0000-4000-8000-000000000001\": 1000000}[apiKey.team] : apiKey.budget)}",
+              "unit": "Tokens"
+            },
+            {
+              "entries": [
+                {
+                  "expression": "apiKey.project",
+                  "name": "project"
+                }
+              ],
+              "limitOverride": "{\"unit\":{\"00000000-0000-4000-8000-000000000001\": \"day\"}[apiKey.team],\"requestsPerUnit\":(apiKey.project_budget == null || apiKey.project_budget > {\"00000000-0000-4000-8000-000000000001\": 1000000}[apiKey.team] ? {\"00000000-0000-4000-8000-000000000001\": 1000000}[apiKey.team] : apiKey.project_budget)}",
+              "unit": "Tokens"
+            },
+            {
+              "entries": [
+                {
+                  "expression": "apiKey.team",
+                  "name": "team"
+                }
+              ],
+              "limitOverride": "{\"unit\":{\"00000000-0000-4000-8000-000000000001\": \"day\"}[apiKey.team],\"requestsPerUnit\":{\"00000000-0000-4000-8000-000000000001\": 1000000}[apiKey.team]}",
+              "unit": "Tokens"
+            }
+          ],
+          "domain": "example-shared",
+          "failureMode": "FailClosed"
+        }
+      },
+      "transformation": {
+        "request": {
+          "metadata": {
+            "thalamus_service": "\"example-service\""
+          },
+          "remove": [
+            "x-api-key",
+            "connection",
+            "x-thalamus-backend",
+            "x-thalamus-class",
+            "x-llm-d-inference-objective",
+            "x-llm-d-inference-fairness-id"
+          ],
+          "set": [
+            {
+              "name": "x-thalamus-user",
+              "value": "apiKey.user"
+            },
+            {
+              "name": "x-thalamus-project",
+              "value": "apiKey.project"
+            },
+            {
+              "name": "x-thalamus-team",
+              "value": "apiKey.team"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

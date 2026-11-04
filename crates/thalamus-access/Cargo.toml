@@ -1,0 +1,22 @@
+[package]
+name = "thalamus-access"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+thiserror = "2"
+thalamus-identity = { path = "../thalamus-identity" }
+uuid = { version = "1", features = ["serde"] }
+
+[dev-dependencies]
+base64 = "0.22"
+chrono = "0.4"
+hmac = "0.12"
+rustls-pemfile = "1"
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "migrate", "macros"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+tokio-rustls = "0.24"
+tempfile = "3"

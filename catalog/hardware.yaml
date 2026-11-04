@@ -1,0 +1,9 @@
+# Illustrative values only; replace with measured per-node capacity and labels.
+example-gpu:
+  nodeSelector:
+    accelerator: example-gpu
+  gpuCount: 1
+  cpu: "4"
+  memoryGi: 16
+  hostMemoryGi: 32
+  sharedGpuMemory: false

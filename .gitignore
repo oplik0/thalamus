@@ -7,13 +7,17 @@
 # direnv
 .direnv
 
+# Python bytecode
+__pycache__/
+*.pyc
+
 # pre-commit
 .pre-commit-config.yaml
 
 # Frontend (ui/)
 ui/node_modules/
-ui/.expo/
-ui/dist/
+ui/.svelte-kit/
+ui/build/
 .old
 
 docs/.gen

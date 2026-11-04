@@ -1,0 +1,131 @@
+{
+  "apiVersion": "serving.kserve.io/v1alpha2",
+  "kind": "LLMInferenceService",
+  "metadata": {
+    "annotations": {
+      "thalamus.ai/deployment": "example-deployment",
+      "thalamus.ai/revision": "0000000000000000000000000000000000000000000000000000000000000000",
+      "thalamus.ai/serving-kind": "kserve"
+    },
+    "name": "example-deployment",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "labels": {
+      "llm-d.ai/engine-type": "vllm"
+    },
+    "model": {
+      "name": "example-service",
+      "uri": "hf://Qwen/Qwen2.5-0.5B-Instruct"
+    },
+    "replicas": 1,
+    "rolloutStrategy": {
+      "maxSurge": 1,
+      "maxUnavailable": 0
+    },
+    "router": {
+      "scheduler": {
+        "annotations": {
+          "app.kubernetes.io/version": "1.0.0"
+        },
+        "config": {
+          "ref": {
+            "key": "endpoint-picker.yaml",
+            "name": "example-deployment-epp-config"
+          }
+        },
+        "template": {
+          "containers": [
+            {
+              "command": [
+                "/app/epp",
+                "--pool-name",
+                "example-deployment-inference-pool",
+                "--pool-namespace",
+                "thalamus-inference",
+                "--zap-encoder",
+                "json",
+                "--grpc-port=9002",
+                "--grpc-health-port",
+                "9003",
+                "--secure-serving=true",
+                "--metrics-endpoint-auth=false"
+              ],
+              "image": "ghcr.io/llm-d/llm-d-router-endpoint-picker:v1.0.0",
+              "name": "main"
+            }
+          ]
+        }
+      }
+    },
+    "storageInitializer": {
+      "enabled": true
+    },
+    "template": {
+      "containers": [
+        {
+          "args": [
+            "--served-model-name",
+            "example-service",
+            "--max-model-len",
+            "4096",
+            "--max-num-seqs",
+            "64",
+            "--max-num-batched-tokens",
+            "4096",
+            "--tensor-parallel-size",
+            "1",
+            "--enable-prefix-caching"
+          ],
+          "image": "vllm/vllm-openai:v0.23.0",
+          "name": "main",
+          "ports": [
+            {
+              "containerPort": 8000,
+              "name": "http",
+              "protocol": "TCP"
+            }
+          ],
+          "readinessProbe": {
+            "httpGet": {
+              "path": "/health",
+              "port": 8000
+            },
+            "periodSeconds": 10,
+            "timeoutSeconds": 5
+          },
+          "resources": {
+            "limits": {
+              "cpu": "4",
+              "memory": "16Gi",
+              "nvidia.com/gpu": "1"
+            },
+            "requests": {
+              "cpu": "4",
+              "memory": "16Gi",
+              "nvidia.com/gpu": "1"
+            }
+          },
+          "volumeMounts": [
+            {
+              "mountPath": "/dev/shm",
+              "name": "shm"
+            }
+          ]
+        }
+      ],
+      "nodeSelector": {
+        "accelerator": "example-gpu"
+      },
+      "volumes": [
+        {
+          "emptyDir": {
+            "medium": "Memory",
+            "sizeLimit": "1Gi"
+          },
+          "name": "shm"
+        }
+      ]
+    }
+  }
+}

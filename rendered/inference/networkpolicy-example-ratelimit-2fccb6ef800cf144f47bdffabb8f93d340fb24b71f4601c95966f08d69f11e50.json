@@ -1,0 +1,97 @@
+{
+  "apiVersion": "networking.k8s.io/v1",
+  "kind": "NetworkPolicy",
+  "metadata": {
+    "name": "example-ratelimit",
+    "namespace": "thalamus-inference"
+  },
+  "spec": {
+    "egress": [
+      {
+        "ports": [
+          {
+            "port": 53,
+            "protocol": "UDP"
+          },
+          {
+            "port": 53,
+            "protocol": "TCP"
+          }
+        ],
+        "to": [
+          {
+            "namespaceSelector": {
+              "matchLabels": {
+                "kubernetes.io/metadata.name": "kube-system"
+              }
+            },
+            "podSelector": {
+              "matchLabels": {
+                "k8s-app": "kube-dns"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "ports": [
+          {
+            "port": 6379,
+            "protocol": "TCP"
+          }
+        ],
+        "to": [
+          {
+            "podSelector": {
+              "matchLabels": {
+                "app.kubernetes.io/component": "global-rate-limit-store",
+                "app.kubernetes.io/name": "example-redis"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "ingress": [
+      {
+        "from": [
+          {
+            "namespaceSelector": {
+              "matchLabels": {
+                "kubernetes.io/metadata.name": "thalamus-inference"
+              }
+            },
+            "podSelector": {
+              "matchLabels": {
+                "gateway.networking.k8s.io/gateway-name": "inference-serving"
+              }
+            }
+          },
+          {
+            "podSelector": {
+              "matchLabels": {
+                "gateway.networking.k8s.io/gateway-name": "agentic-internal"
+              }
+            }
+          }
+        ],
+        "ports": [
+          {
+            "port": 8081,
+            "protocol": "TCP"
+          }
+        ]
+      }
+    ],
+    "podSelector": {
+      "matchLabels": {
+        "app.kubernetes.io/component": "global-rate-limiter",
+        "app.kubernetes.io/name": "example-ratelimit"
+      }
+    },
+    "policyTypes": [
+      "Ingress",
+      "Egress"
+    ]
+  }
+}

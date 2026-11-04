@@ -1,0 +1,55 @@
+# OFFLINE schema regression fixture only; identities and destinations are illustrative.
+# Exercise the production unpooled RollingUpdate renderer with flow control enabled.
+# Validate the rendered List against the independently pinned KServe CRD bundle.
+name: kserve-traffic-classes-fixture
+namespace: thalamus-inference
+access:
+  teams:
+    - "00000000-0000-4000-8000-000000000001"
+gateway:
+  name: inference-serving
+  namespace: thalamus-inference
+  hostname: kserve-traffic-classes.example.invalid
+  keySelector:
+    thalamus.dev/gateway-keys: "true"
+  rateLimit: example-shared
+network:
+  gatewayPodSelector:
+    gateway.networking.k8s.io/gateway-name: inference-serving
+  dns:
+    namespaceSelector:
+      kubernetes.io/metadata.name: kube-system
+    podSelector:
+      k8s-app: kube-dns
+  prometheus:
+    namespaceSelector:
+      kubernetes.io/metadata.name: monitoring
+    podSelector:
+      app.kubernetes.io/name: prometheus
+  apiServer:
+    - cidr: 192.0.2.0/24
+      ports: [6443]
+  storageEgress:
+    - cidr: 198.51.100.0/24
+      ports: [443]
+versions:
+  kserve: v0.21.0
+  agentgateway: v1.7.0
+  inferenceExtension: v1.6.2
+  vllm: v0.23.0
+trafficClasses:
+  ttl: 30s
+  classes:
+    - name: standard
+      priority: 0
+      enginePriority: 0
+      maxRequests: 32
+      maxBytes: 10Mi
+deployments:
+  - name: kserve-traffic-classes
+    artifact: example-model
+    hardware: example-gpu
+    image: vllm/vllm-openai:v0.23.0
+    revision: "0000000000000000000000000000000000000000000000000000000000000000"
+    rolloutStrategy: RollingUpdate
+    replicas: 1

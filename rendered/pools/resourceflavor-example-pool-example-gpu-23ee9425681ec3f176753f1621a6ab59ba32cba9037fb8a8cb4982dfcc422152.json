@@ -1,0 +1,17 @@
+{
+  "apiVersion": "kueue.x-k8s.io/v1beta2",
+  "kind": "ResourceFlavor",
+  "metadata": {
+    "annotations": {
+      "thalamus.ai/keda-version": "2.20.2",
+      "thalamus.ai/kueue-version": "v0.18.0",
+      "thalamus.ai/router-version": "v1.0.0"
+    },
+    "name": "example-pool-example-gpu"
+  },
+  "spec": {
+    "nodeLabels": {
+      "accelerator": "example-gpu"
+    }
+  }
+}

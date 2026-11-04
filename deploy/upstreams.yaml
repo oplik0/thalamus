@@ -1,0 +1,180 @@
+# Source-backed installation inputs, not a claim that the complete composition
+# has been deployed or tested. Apply in listed order, with administrative review
+# and the options appropriate to your cluster. All tags/versions below have
+# published upstream sources; pin and verify container/chart digests separately.
+# Wait for each controller and admission endpoint before applying dependents;
+# applying the next manifest immediately can fail during webhook startup.
+# KServe owns the llm-d scheduler/InferencePool; do not install a second EPP for
+# the same KServe service. Gateway CRDs and controllers precede deploy/install.k.
+# The current upstream integration guide tests KServe v0.20.0-rc0 and
+# agentgateway v1.4.1. These recipes require KServe v0.21.0, Inference Extension
+# v1.6.2 and agentgateway v1.7.0 instead; upstream has not established this exact
+# composition. Independently verify controller, policy and data-plane behavior.
+# The pinned Kubernetes agentgateway integration requires EPP TLS
+# (--secure-serving=true). See TESTING.md for the isolated, non-model k3d proof;
+# that proof does not establish GPU readiness or authenticated peer transport.
+# Before dependent service manifests, reconcile rendered/pools with the
+# administrator-owned pool GitOps identity. Both Flux paths use the same
+# protected catalog GitRepository and ref; require administrator approval for
+# pool inputs and output. The pool identity can write only ResourceFlavor,
+# ClusterQueue and PriorityClass, not namespaced resources, Secrets or RBAC.
+# rendered/inference includes limits from the same reviewed budget-caps commit.
+# The installer can create a single durable TLS Redis StatefulSet/Service; the
+# administrator supplies its authenticated credential, TLS keypair, RLS CA
+# Secret, storage class and verified image digest. The namespace Flux reconciler
+# can apply RLS when explicitly granted apps/deployments, but not cluster pools.
+# Confirm RLS loaded its domain and reaches Redis before exposing service routes.
+# KServe's scheduler preset may use an exec /bin/sleep preStop, while llm-d
+# Router v1's EPP image is distroless. Configure a native preStop.sleep preset
+# (or a validated EPP image that actually contains /bin/sleep).
+# KServe v0.21.0's published chart archives have Chart/appVersion v0.21.0,
+# while the Git release tag's Chart.yaml says v0.21.0-rc1 (upstream issue #6314).
+# Verify the archive hashes and keep the explicit kserve.version override.
+# That override does not upgrade the scheduler preset's independent EPP image.
+apiVersion: thalamus.dev/install-inputs/v1
+kind: UpstreamInputs
+sources:
+  integrationGuide: https://agentgateway.dev/docs/kubernetes/latest/integrations/llm/routing/kserve/
+  agentgatewayRelease: https://github.com/agentgateway/agentgateway/releases/tag/v1.7.0
+  rateLimitExample: https://github.com/agentgateway/agentgateway/blob/v1.7.0/controller/test/e2e/testdata/rate-limit/global/rate-limit-server.yaml
+  # Docker Hub library/redis:7.4.3 OCI index digest resolved from the registry:
+  # sha256:236e397c1d5ab7a94adaf1a51eec3ca8333b05fafcd6d423c6c7cc5987e519a0
+  redisDockerfile: https://github.com/redis/docker-library-redis/blob/27cd071c3e9d903a19c79577ddb82fb322ef5ed6/7.4/debian/Dockerfile
+  fluxRelease: https://github.com/fluxcd/flux2/releases/tag/v2.6.4
+  fluxInstall: https://fluxcd.io/flux/cmd/flux_install/
+  kserveRelease: https://github.com/kserve/kserve/releases/tag/v0.21.0
+  kserveChartMetadataIssue: https://github.com/kserve/kserve/issues/6314
+  kserveAssets: https://github.com/kserve/kserve/releases/expanded_assets/v0.21.0
+  routerRelease: https://github.com/llm-d/llm-d-router/releases/tag/v1.0.0
+  fluxMcpChart: https://raw.githubusercontent.com/controlplaneio-fluxcd/charts/v0.17.1/charts/flux-operator-mcp/Chart.yaml
+steps:
+  - name: gateway-api-standard-crds
+    method: kubectl-server-side
+    version: v1.6.0
+    manifest: https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
+  - name: cert-manager
+    method: kubectl-apply
+    version: v1.20.2
+    manifest: https://github.com/cert-manager/cert-manager/releases/download/v1.20.2/cert-manager.yaml
+    sha256: 1ce11cae912adecc69e6bb623435fafc9ed21505f9efff98bd71d7b80f01db1f
+  - name: flux
+    method: flux-install
+    version: v2.6.4
+    args: ["--version=v2.6.4", "--components=source-controller,kustomize-controller,helm-controller"]
+  - name: gateway-inference-extension-crds
+    method: kubectl-server-side
+    version: v1.6.2
+    manifest: https://github.com/kubernetes-sigs/gateway-api-inference-extension/releases/download/v1.6.2/manifests.yaml
+    sha256: 38bfba9c452ab54b1afd1f4df15e75b3238c788d8ab007d2f469e6f7ae16fc9f
+  - name: agentgateway-crds
+    method: helm-oci
+    namespace: agentgateway-system
+    release: agentgateway-crds
+    chart: oci://cr.agentgateway.dev/charts/agentgateway-crds
+    version: v1.7.0
+    # OCI manifest digest: sha256:946b739c0fcda4d47a72d1589d184b6fd507772e733cbedf02789bafd0468064
+  - name: agentgateway
+    method: helm-oci
+    namespace: agentgateway-system
+    release: agentgateway
+    chart: oci://cr.agentgateway.dev/charts/agentgateway
+    version: v1.7.0
+    # OCI manifest digest: sha256:40340d639e35206317c934e9af3e29575cf7c5377b2940679732baac6e108c15
+    values:
+      # Greenfield default without Istio CRDs; enable only with that integration.
+      istio:
+        enabled: false
+      inferenceExtension:
+        enabled: true
+  - name: kserve-llmisvc-crds
+    method: helm-archive
+    namespace: kserve
+    release: kserve-llmisvc-crd
+    chart: https://github.com/kserve/kserve/releases/download/v0.21.0/helm-chart-kserve-llmisvc-crd-v0.21.0.tgz
+    sha256: be27803c432cb8db70f1c9c1f72ee8f6d14eaa74393df572212b41f603db081e
+    version: v0.21.0
+  - name: kserve-llmisvc-resources
+    method: helm-archive
+    namespace: kserve
+    release: kserve-llmisvc-resources
+    chart: https://github.com/kserve/kserve/releases/download/v0.21.0/helm-chart-kserve-llmisvc-resources-v0.21.0.tgz
+    sha256: 2ae1edda48da4907d5d333972e60178cc8847a2db56f676d3adb6507777dd361
+    version: v0.21.0
+    # Set kserve.controller.gateway.ingressGateway.kserveGateway to the
+    # administrator's actual inference Gateway, and select its GatewayClass.
+    # The guide uses createGateway=false and Standard mode. This input does not
+    # invent an inference Gateway or assume one from a previous cluster.
+    values:
+      kserve:
+        version: v0.21.0
+        llmisvc:
+          # Preserve the separately pinned GIE CRD instead of the chart's
+          # bundled v1.5.0-rc.2 and legacy definitions.
+          createGIECRDs: false
+        controller:
+          deploymentMode: Standard
+          gateway:
+            ingressGateway:
+              enableGatewayApi: true
+              createGateway: false
+              # Match deploy/install.k inputs; change both for another site.
+              className: agentgateway
+              kserveGateway: thalamus-inference/inference-serving
+            disableIstioVirtualHost: true
+            disableIngressCreation: false
+            localGateway:
+              gateway: ""
+              gatewayService: ""
+          knativeAddressableResolver:
+            enabled: false
+  - name: kserve-runtime-configs
+    method: helm-archive
+    namespace: kserve
+    release: kserve-runtime-configs
+    chart: https://github.com/kserve/kserve/releases/download/v0.21.0/helm-chart-kserve-runtime-configs-v0.21.0.tgz
+    sha256: 6252708fa5bb8b3d80623706d48bff636a7cba9b264c40dcded848e9fa5148af
+    version: v0.21.0
+    values:
+      kserve:
+        version: v0.21.0
+        llmisvcConfigs:
+          enabled: true
+  - name: llm-d-inference-objective-crd
+    optional: true
+    method: kubectl-server-side
+    version: v1.0.0
+    # Required when rendering traffic-class InferenceObjective resources;
+    # this is a router API, not part of the GIE InferencePool bundle.
+    # The exact release file retains an upstream main-dev bundle annotation.
+    manifest: https://raw.githubusercontent.com/llm-d/llm-d-router/b9393d1a9f1d5a72ecd86f8d2b643ab54c2a9b92/config/crd/bases/llm-d.ai_inferenceobjectives.yaml
+    sha256: ff12ac55b79a8db719be4da2082b02cbf9b35e482cf20c040c9304f766beeaf4
+  - name: kueue
+    optional: true
+    method: kubectl-server-side
+    version: v0.18.0
+    manifest: https://github.com/kubernetes-sigs/kueue/releases/download/v0.18.0/manifests.yaml
+    sha256: 7b37d9dbba62b88f4691e91efe54607a5d680481f4467290efc5b176537c305d
+    # Shared pools need reviewed plain-Pod integration and quota settings.
+  - name: keda
+    optional: true
+    method: kubectl-server-side
+    version: v2.20.2
+    manifest: https://github.com/kedacore/keda/releases/download/v2.20.2/keda-2.20.2.yaml
+    sha256: 9bae123eb64fab8f96c67bbd576bb5819e4794df346c5aaa402a01c68b0557ab
+  - name: flux-operator-mcp
+    optional: true
+    method: helm-oci
+    namespace: flux-system
+    release: flux-operator-mcp
+    chart: oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator-mcp
+    version: 0.62.1
+    # deploy/install.k's optional fluxMcp module emits this HelmRelease with
+    # readonly, namespace-scoped RBAC and a server-pod-only NetworkPolicy.
+    # Supply a verified immutable image digest and Kubernetes API egress.
+    values:
+      transport: http
+      readonly: true
+      rbac:
+        create: false
+      networkPolicy:
+        create: false
